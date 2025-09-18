@@ -1,0 +1,11 @@
+# Env
+*.env
+
+# Logs
+*.log
+
+# Database
+*.db
+
+# Cache
+*.cache
