@@ -150,6 +150,7 @@ async def info():
 
 # Import des routes API
 from app.api.v1.endpoints import auth, users, jobs, applications, evaluations, notifications, interviews
+from app.api.v1.endpoints import optimized
 
 # Inclusion des routes dans l'application
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["🔐 Authentification"])
@@ -158,6 +159,7 @@ app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["💼 Offres d'empl
 app.include_router(applications.router, prefix="/api/v1/applications", tags=["📝 Candidatures", "📄 Documents PDF"])
 app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["📊 Évaluations"])
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["🔔 Notifications"])
+app.include_router(optimized.router, prefix="/api/v1/optimized", tags=["⚡ Requêtes Optimisées"])
 app.include_router(interviews.router, prefix="/api/v1/interviews", tags=["🎯 Entretiens"])
 
 # ============================================================================

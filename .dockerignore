@@ -1,80 +1,76 @@
 # Fichiers et dossiers à ignorer lors de la construction Docker
 
-# Git
-.git
-.gitignore
-
-# Python
-__pycache__
+# Environnements virtuels
+env/
+venv/
+.venv/
+__pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
-env
-pip-log.txt
-pip-delete-this-directory.txt
-.tox
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.git
-.mypy_cache
-.pytest_cache
-.hypothesis
 
-# Environnements virtuels
+# Fichiers de développement
+.git/
+.gitignore
+README.md
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+.coverage.*
+
+# Fichiers de configuration locale
 .env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+.env.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+*.log
+logs/
+
+# Fichiers temporaires
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
 
-# OS
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# Tests
+tests/
+test_*.py
+*_test.py
 
 # Documentation
 docs/
 *.md
-README.md
 
-# Tests
-tests/
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Scripts de développement
-scripts/
+# Fichiers de déploiement
+deploy-azure.sh
+azure-pipelines.yml
 docker-compose.yml
-Dockerfile
-.dockerignore
 
-# Logs
-logs/
-*.log
+# Fichiers de migration (garder seulement les versions finales)
+alembic/versions/*.py
+!alembic/versions/*_improve_relations_and_performance.py
 
-# Uploads (seront montés comme volume)
-uploads/
+# Fichiers de cache
+.cache/
+.pytest_cache/
+.mypy_cache/
 
-# Fichiers temporaires
-tmp/
-temp/
+# Fichiers de build
+build/
+dist/
+*.egg-info/
+
+# Fichiers de sauvegarde
+*.bak
+*.backup
