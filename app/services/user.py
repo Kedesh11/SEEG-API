@@ -1,0 +1,180 @@
+"""
+Service de gestion des utilisateurs
+"""
+import structlog
+from typing import Optional, List
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, update, delete
+from sqlalchemy.orm import selectinload
+from uuid import UUID
+
+from app.models.user import User
+from app.models.candidate_profile import CandidateProfile
+from app.schemas.user import UserCreate, UserUpdate, CandidateProfileCreate, CandidateProfileUpdate
+from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError
+
+logger = structlog.get_logger(__name__)
+
+class UserService:
+    """Service de gestion des utilisateurs"""
+    
+    def __init__(self, db: AsyncSession):
+        self.db = db
+    
+    async def get_user_by_id(self, user_id: UUID) -> Optional[User]:
+        """Récupérer un utilisateur par son ID"""
+        try:
+            result = await self.db.execute(
+                select(User).where(User.id == user_id)
+            )
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error("Erreur récupération utilisateur", error=str(e), user_id=str(user_id))
+            raise BusinessLogicError("Erreur lors de la récupération de l'utilisateur")
+    
+    async def get_user_by_email(self, email: str) -> Optional[User]:
+        """Récupérer un utilisateur par son email"""
+        try:
+            result = await self.db.execute(
+                select(User).where(User.email == email)
+            )
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error("Erreur récupération utilisateur par email", error=str(e), email=email)
+            raise BusinessLogicError("Erreur lors de la récupération de l'utilisateur")
+    
+    async def get_users(self, skip: int = 0, limit: int = 100) -> List[User]:
+        """Récupérer la liste des utilisateurs"""
+        try:
+            result = await self.db.execute(
+                select(User).offset(skip).limit(limit)
+            )
+            return result.scalars().all()
+        except Exception as e:
+            logger.error("Erreur récupération liste utilisateurs", error=str(e))
+            raise BusinessLogicError("Erreur lors de la récupération des utilisateurs")
+    
+    async def update_user(self, user_id: UUID, user_data: UserUpdate) -> User:
+        """Mettre à jour un utilisateur"""
+        try:
+            # Vérifier que l'utilisateur existe
+            user = await self.get_user_by_id(user_id)
+            if not user:
+                raise NotFoundError("Utilisateur non trouvé")
+            
+            # Mettre à jour les champs fournis
+            update_data = user_data.dict(exclude_unset=True)
+            if update_data:
+                await self.db.execute(
+                    update(User)
+                    .where(User.id == user_id)
+                    .values(**update_data)
+                )
+                await self.db.commit()
+                
+                # Récupérer l'utilisateur mis à jour
+                user = await self.get_user_by_id(user_id)
+            
+            logger.info("Utilisateur mis à jour", user_id=str(user_id))
+            return user
+            
+        except NotFoundError:
+            raise
+        except Exception as e:
+            logger.error("Erreur mise à jour utilisateur", error=str(e), user_id=str(user_id))
+            raise BusinessLogicError("Erreur lors de la mise à jour de l'utilisateur")
+    
+    async def delete_user(self, user_id: UUID) -> bool:
+        """Supprimer un utilisateur"""
+        try:
+            # Vérifier que l'utilisateur existe
+            user = await self.get_user_by_id(user_id)
+            if not user:
+                raise NotFoundError("Utilisateur non trouvé")
+            
+            await self.db.execute(
+                delete(User).where(User.id == user_id)
+            )
+            await self.db.commit()
+            
+            logger.info("Utilisateur supprimé", user_id=str(user_id))
+            return True
+            
+        except NotFoundError:
+            raise
+        except Exception as e:
+            logger.error("Erreur suppression utilisateur", error=str(e), user_id=str(user_id))
+            raise BusinessLogicError("Erreur lors de la suppression de l'utilisateur")
+    
+    async def get_candidate_profile(self, user_id: UUID) -> Optional[CandidateProfile]:
+        """Récupérer le profil candidat d'un utilisateur"""
+        try:
+            result = await self.db.execute(
+                select(CandidateProfile).where(CandidateProfile.user_id == user_id)
+            )
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error("Erreur récupération profil candidat", error=str(e), user_id=str(user_id))
+            raise BusinessLogicError("Erreur lors de la récupération du profil candidat")
+    
+    async def create_candidate_profile(self, user_id: UUID, profile_data: CandidateProfileCreate) -> CandidateProfile:
+        """Créer un profil candidat"""
+        try:
+            # Vérifier que l'utilisateur existe
+            user = await self.get_user_by_id(user_id)
+            if not user:
+                raise NotFoundError("Utilisateur non trouvé")
+            
+            # Vérifier qu'il n'y a pas déjà un profil
+            existing_profile = await self.get_candidate_profile(user_id)
+            if existing_profile:
+                raise ValidationError("Un profil candidat existe déjà pour cet utilisateur")
+            
+            # Créer le profil
+            profile = CandidateProfile(
+                user_id=user_id,
+                **profile_data.dict()
+            )
+            
+            self.db.add(profile)
+            await self.db.commit()
+            await self.db.refresh(profile)
+            
+            logger.info("Profil candidat créé", user_id=str(user_id), profile_id=str(profile.id))
+            return profile
+            
+        except (NotFoundError, ValidationError):
+            raise
+        except Exception as e:
+            logger.error("Erreur création profil candidat", error=str(e), user_id=str(user_id))
+            raise BusinessLogicError("Erreur lors de la création du profil candidat")
+    
+    async def update_candidate_profile(self, user_id: UUID, profile_data: CandidateProfileUpdate) -> CandidateProfile:
+        """Mettre à jour un profil candidat"""
+        try:
+            # Récupérer le profil existant
+            profile = await self.get_candidate_profile(user_id)
+            if not profile:
+                raise NotFoundError("Profil candidat non trouvé")
+            
+            # Mettre à jour les champs fournis
+            update_data = profile_data.dict(exclude_unset=True)
+            if update_data:
+                await self.db.execute(
+                    update(CandidateProfile)
+                    .where(CandidateProfile.user_id == user_id)
+                    .values(**update_data)
+                )
+                await self.db.commit()
+                
+                # Récupérer le profil mis à jour
+                profile = await self.get_candidate_profile(user_id)
+            
+            logger.info("Profil candidat mis à jour", user_id=str(user_id))
+            return profile
+            
+        except NotFoundError:
+            raise
+        except Exception as e:
+            logger.error("Erreur mise à jour profil candidat", error=str(e), user_id=str(user_id))
+            raise BusinessLogicError("Erreur lors de la mise à jour du profil candidat")

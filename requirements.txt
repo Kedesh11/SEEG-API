@@ -1,0 +1,51 @@
+# FastAPI et dépendances principales
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Base de données
+sqlalchemy==2.0.23
+alembic==1.13.1
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+
+# Authentification et sécurité
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+cryptography>=42.0.0
+
+# Email et notifications
+fastapi-mail==1.4.1
+celery==5.3.4
+redis==5.0.1
+
+# Validation et sérialisation
+email-validator==2.1.0
+phonenumbers==8.13.27
+
+# Monitoring et logging
+structlog==23.2.0
+sentry-sdk[fastapi]==1.38.0
+prometheus-client==0.19.0
+
+# Tests
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+httpx==0.25.2
+factory-boy==3.3.0
+
+# Développement
+black==23.11.0
+isort==5.12.0
+flake8==6.1.0
+mypy==1.7.1
+pre-commit==3.6.0
+
+# Utilitaires
+python-dotenv==1.0.0
+aiofiles==23.2.1
+Pillow==10.1.0
+openpyxl==3.1.2

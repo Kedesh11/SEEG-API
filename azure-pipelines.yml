@@ -1,0 +1,211 @@
+# Pipeline Azure DevOps pour le déploiement
+# Respecte les meilleures pratiques CI/CD
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - backend/*
+
+variables:
+  # Variables globales
+  pythonVersion: '3.11'
+  azureSubscription: 'SEEG-Azure-Subscription'
+  resourceGroupName: 'one-hcm-seeg-rg'
+  webAppName: 'one-hcm-seeg-backend'
+  containerRegistry: 'onehcmseeg.azurecr.io'
+  imageName: 'one-hcm-seeg-backend'
+  
+  # Variables de configuration
+  buildConfiguration: 'Release'
+  testResultsFormat: 'JUnit'
+  testResultsFiles: '**/test-results.xml'
+
+stages:
+  # Stage de build et test
+  - stage: Build
+    displayName: 'Build and Test'
+    jobs:
+      - job: BuildJob
+        displayName: 'Build and Test Job'
+        pool:
+          vmImage: 'ubuntu-latest'
+        
+        steps:
+          # Checkout du code
+          - checkout: self
+            fetchDepth: 0
+          
+          # Configuration de Python
+          - task: UsePythonVersion@0
+            inputs:
+              versionSpec: '$(pythonVersion)'
+            displayName: 'Use Python $(pythonVersion)'
+          
+          # Cache des dépendances
+          - task: Cache@2
+            inputs:
+              key: 'pip | "$(Agent.OS)" | requirements.txt'
+              restoreKeys: |
+                pip | "$(Agent.OS)"
+                pip
+              path: $(pipCacheDirectory)
+            displayName: 'Cache pip dependencies'
+          
+          # Installation des dépendances
+          - script: |
+              python -m pip install --upgrade pip
+              pip install -r requirements.txt
+            displayName: 'Install dependencies'
+          
+          # Linting et formatage
+          - script: |
+              flake8 app/ --count --select=E9,F63,F7,F82 --show-source --statistics
+              flake8 app/ --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+            displayName: 'Lint with flake8'
+          
+          # Formatage avec Black
+          - script: |
+              black --check app/
+            displayName: 'Check formatting with Black'
+          
+          # Tri des imports avec isort
+          - script: |
+              isort --check-only app/
+            displayName: 'Check import sorting with isort'
+          
+          # Tests unitaires
+          - script: |
+              pytest tests/ --cov=app --cov-report=xml --cov-report=html --junitxml=test-results.xml
+            displayName: 'Run tests'
+          
+          # Publication des résultats de tests
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: '$(testResultsFiles)'
+              testRunTitle: 'Publish test results for Python $(pythonVersion)'
+            displayName: 'Publish test results'
+          
+          # Publication de la couverture de code
+          - task: PublishCodeCoverageResults@1
+            inputs:
+              codeCoverageTool: Cobertura
+              summaryFileLocation: '$(System.DefaultWorkingDirectory)/**/coverage.xml'
+              reportDirectory: '$(System.DefaultWorkingDirectory)/**/htmlcov'
+            displayName: 'Publish code coverage results'
+          
+          # Construction de l'image Docker
+          - task: Docker@2
+            displayName: 'Build Docker image'
+            inputs:
+              command: 'build'
+              dockerfile: '$(System.DefaultWorkingDirectory)/Dockerfile'
+              tags: |
+                $(containerRegistry)/$(imageName):$(Build.BuildId)
+                $(containerRegistry)/$(imageName):latest
+          
+          # Push de l'image vers Azure Container Registry
+          - task: Docker@2
+            displayName: 'Push Docker image'
+            inputs:
+              command: 'push'
+              tags: |
+                $(containerRegistry)/$(imageName):$(Build.BuildId)
+                $(containerRegistry)/$(imageName):latest
+
+  # Stage de déploiement en développement
+  - stage: DeployDev
+    displayName: 'Deploy to Development'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/develop'))
+    jobs:
+      - deployment: DeployDevJob
+        displayName: 'Deploy to Development'
+        environment: 'Development'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                # Déploiement sur Azure App Service
+                - task: AzureWebAppContainer@1
+                  displayName: 'Deploy to Azure App Service'
+                  inputs:
+                    azureSubscription: '$(azureSubscription)'
+                    appName: '$(webAppName)-dev'
+                    containers: '$(containerRegistry)/$(imageName):$(Build.BuildId)'
+                    appSettings: |
+                      -DATABASE_URL "$(DATABASE_URL_DEV)"
+                      -SECRET_KEY "$(SECRET_KEY_DEV)"
+                      -ENVIRONMENT "development"
+                      -DEBUG "false"
+
+  # Stage de déploiement en production
+  - stage: DeployProd
+    displayName: 'Deploy to Production'
+    dependsOn: Build
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - deployment: DeployProdJob
+        displayName: 'Deploy to Production'
+        environment: 'Production'
+        pool:
+          vmImage: 'ubuntu-latest'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                # Déploiement sur Azure App Service
+                - task: AzureWebAppContainer@1
+                  displayName: 'Deploy to Azure App Service'
+                  inputs:
+                    azureSubscription: '$(azureSubscription)'
+                    appName: '$(webAppName)'
+                    containers: '$(containerRegistry)/$(imageName):$(Build.BuildId)'
+                    appSettings: |
+                      -DATABASE_URL "$(DATABASE_URL_PROD)"
+                      -SECRET_KEY "$(SECRET_KEY_PROD)"
+                      -ENVIRONMENT "production"
+                      -DEBUG "false"
+                      -SENTRY_DSN "$(SENTRY_DSN_PROD)"
+
+  # Stage de tests de régression
+  - stage: RegressionTests
+    displayName: 'Regression Tests'
+    dependsOn: DeployDev
+    condition: succeeded()
+    jobs:
+      - job: RegressionTestJob
+        displayName: 'Regression Tests Job'
+        pool:
+          vmImage: 'ubuntu-latest'
+        steps:
+          # Tests d'intégration
+          - script: |
+              pytest tests/integration/ --junitxml=integration-test-results.xml
+            displayName: 'Run integration tests'
+          
+          # Tests de performance
+          - script: |
+              pytest tests/performance/ --junitxml=performance-test-results.xml
+            displayName: 'Run performance tests'
+          
+          # Publication des résultats
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: '**/integration-test-results.xml'
+              testRunTitle: 'Integration Tests'
+            displayName: 'Publish integration test results'
+          
+          - task: PublishTestResults@2
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFiles: '**/performance-test-results.xml'
+              testRunTitle: 'Performance Tests'
+            displayName: 'Publish performance test results'
