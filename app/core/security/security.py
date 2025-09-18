@@ -7,7 +7,7 @@ from passlib.context import CryptContext
 from jose import JWTError, jwt
 import structlog
 
-from app.core.config import settings
+from app.core.config.config import settings
 
 logger = structlog.get_logger(__name__)
 
@@ -223,3 +223,58 @@ def verify_password_reset_token(token: str) -> Optional[str]:
         return payload.get("email")
     except JWTError:
         return None
+
+# Dépendances pour l'authentification
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.db.database import get_async_db
+from app.models.user import User
+from sqlalchemy import select
+
+# Configuration du bearer token
+security = HTTPBearer()
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: AsyncSession = Depends(get_async_db)
+) -> User:
+    """
+    Récupérer l'utilisateur actuel à partir du token JWT
+    
+    Args:
+        credentials: Credentials HTTP Bearer
+        db: Session de base de données
+        
+    Returns:
+        User: Utilisateur actuel
+        
+    Raises:
+        HTTPException: Si le token est invalide ou l'utilisateur n'existe pas
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    
+    try:
+        payload = TokenManager.verify_token(credentials.credentials)
+        if payload is None:
+            raise credentials_exception
+        
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+            
+    except JWTError:
+        raise credentials_exception
+    
+    # Récupérer l'utilisateur depuis la base de données
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    
+    if user is None:
+        raise credentials_exception
+        
+    return user

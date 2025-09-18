@@ -4,7 +4,7 @@ Configuration de la base de données
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import sessionmaker, Session
-from app.core.config import settings
+from app.core.config.config import settings
 
 # Moteur synchrone
 engine = create_engine(

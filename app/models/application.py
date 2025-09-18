@@ -1,8 +1,8 @@
 """
 Modèles Application basés sur le schéma Supabase
 """
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON, Integer
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON, Integer, LargeBinary
+from sqlalchemy.dialects.postgresql import UUID, BYTEA
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -16,12 +16,9 @@ class Application(BaseModel):
     candidate_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
     job_offer_id = Column(UUID(as_uuid=True), ForeignKey("job_offers.id", ondelete="CASCADE"))
     status = Column(String, default="pending")
-    cover_letter = Column(Text)
-    motivation = Column(Text)
+    
     reference_contacts = Column(Text)
     availability_start = Column(DateTime(timezone=True))
-    url_idee_projet = Column(String)
-    url_lettre_integrite = Column(String)
     
     # MTP Questions
     mtp_answers = Column(JSON)
@@ -53,10 +50,11 @@ class ApplicationDocument(BaseModel):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     application_id = Column(UUID(as_uuid=True), ForeignKey("applications.id", ondelete="CASCADE"))
-    document_type = Column(String, nullable=False)
+    document_type = Column(String, nullable=False)  # 'cover_letter', 'cv', 'certificats', 'diplome'
     file_name = Column(String, nullable=False)
-    file_url = Column(String, nullable=False)
-    file_size = Column(Integer)
+    file_data = Column(BYTEA, nullable=False)  # Fichier PDF stocké en binaire
+    file_size = Column(Integer, nullable=False)
+    file_type = Column(String, default="application/pdf")  # Type MIME
     uploaded_at = Column(DateTime(timezone=True), default=datetime.utcnow)
 
     # Relations

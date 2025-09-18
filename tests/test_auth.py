@@ -7,7 +7,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import PasswordManager, TokenManager
+from app.core.security.security import PasswordManager, TokenManager
 from app.services.auth import AuthService
 from app.services.user import UserService
 

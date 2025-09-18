@@ -12,7 +12,7 @@ from app.schemas.interview import (
     InterviewSlotCreate, InterviewSlotUpdate, InterviewSlotResponse,
     InterviewSlotListResponse, InterviewStatsResponse
 )
-from app.core.security import get_current_user
+from app.core.security.security import get_current_user
 from app.models.user import User
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError
 

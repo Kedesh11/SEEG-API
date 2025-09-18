@@ -13,9 +13,9 @@ from pathlib import Path
 # Ajouter le répertoire parent au path pour les imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.core.config import settings
+from app.core.config.config import settings
 from app.db.database import create_tables_async
-from app.core.logging import LoggingConfig
+from app.core.logging.logging import LoggingConfig
 
 
 async def setup_database():

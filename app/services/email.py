@@ -14,7 +14,7 @@ import aiofiles
 import os
 
 from app.models.email import EmailLog
-from app.core.config import settings
+from app.core.config.config import settings
 from app.core.exceptions import EmailError
 
 logger = structlog.get_logger(__name__)

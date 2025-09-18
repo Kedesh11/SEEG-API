@@ -72,7 +72,7 @@ class EmailLog(BaseModel):
     )
     
     # Métadonnées supplémentaires
-    metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
+    email_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
         JSONB,
         nullable=True,
         comment="Métadonnées supplémentaires"

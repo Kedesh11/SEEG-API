@@ -7,9 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional
 
-from app.db.session import get_async_db_session
+from app.db.session import get_async_session as get_async_db_session
 from app.models.user import User
-from app.core.security import TokenManager
+from app.core.security.security import TokenManager
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 

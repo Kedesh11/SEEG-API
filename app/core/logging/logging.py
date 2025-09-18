@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 import structlog
 from structlog.stdlib import LoggerFactory
 
-from app.core.config import settings
+from app.core.config.config import settings
 
 
 class LoggingConfig:
@@ -24,7 +24,7 @@ class LoggingConfig:
         logging.basicConfig(
             format="%(message)s",
             stream=sys.stdout,
-            level=getattr(logging, settings.log_level.upper()),
+            level=getattr(logging, settings.LOG_LEVEL.upper()),
         )
         
         # Configuration de structlog

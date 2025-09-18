@@ -14,7 +14,7 @@ from pathlib import Path
 import hashlib
 
 from app.models.application import ApplicationDocument
-from app.core.config import settings
+from app.core.config.config import settings
 from app.core.exceptions import FileError, ValidationError
 
 logger = structlog.get_logger(__name__)

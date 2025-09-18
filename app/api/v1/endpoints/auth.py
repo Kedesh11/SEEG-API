@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
 import structlog
 
-from app.db.session import get_async_db_session
+from app.db.session import get_async_session as get_async_db_session
 from app.schemas.auth import (
     LoginRequest, SignupRequest, TokenResponse, 
     RefreshTokenRequest, PasswordResetRequest, PasswordResetConfirm

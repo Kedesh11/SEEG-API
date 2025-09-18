@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.models.user import User
 from app.schemas.auth import LoginRequest, SignupRequest, TokenResponse, PasswordResetRequest
-from app.core.security import PasswordManager, TokenManager
+from app.core.security.security import PasswordManager, TokenManager
 from app.core.exceptions import UnauthorizedError, ValidationError, BusinessLogicError
 
 logger = structlog.get_logger(__name__)

@@ -2,7 +2,7 @@
 Schémas Pydantic pour les entretiens
 """
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, List, Dict
 from datetime import datetime
 from uuid import UUID
 
@@ -31,3 +31,17 @@ class InterviewSlotResponse(InterviewSlotBase):
     
     class Config:
         from_attributes = True
+
+class InterviewSlotListResponse(BaseModel):
+    slots: List[InterviewSlotResponse]
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+
+class InterviewStatsResponse(BaseModel):
+    total_interviews: int
+    scheduled_interviews: int
+    completed_interviews: int
+    cancelled_interviews: int
+    interviews_by_status: Dict[str, int]

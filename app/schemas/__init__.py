@@ -5,12 +5,14 @@ from .user import (
     UserBase, UserCreate, UserUpdate, UserResponse, UserWithProfile,
     CandidateProfileBase, CandidateProfileCreate, CandidateProfileUpdate, CandidateProfileResponse
 )
-from .job import JobOfferBase, JobOfferCreate, JobOfferUpdate, JobOfferResponse, JobOfferWithApplications
+from .job import JobOfferBase, JobOfferCreate, JobOfferUpdate, JobOfferResponse
 from .application import (
-    ApplicationBase, ApplicationCreate, ApplicationUpdate, ApplicationResponse, ApplicationWithDetails,
-    ApplicationDocumentBase, ApplicationDocumentCreate, ApplicationDocumentResponse,
-    ApplicationDraftBase, ApplicationDraftCreate, ApplicationDraftUpdate, ApplicationDraftResponse,
-    ApplicationHistoryBase, ApplicationHistoryCreate, ApplicationHistoryResponse
+    ApplicationBase, ApplicationCreate, ApplicationUpdate, ApplicationResponse, ApplicationListResponse,
+    ApplicationDocumentBase, ApplicationDocumentCreate, ApplicationDocumentUpdate, ApplicationDocumentResponse,
+    ApplicationDocumentWithData, ApplicationDocumentWithDataResponse, ApplicationDocumentListResponse,
+    ApplicationDraftBase, ApplicationDraftCreate, ApplicationDraftUpdate, ApplicationDraft,
+    ApplicationHistoryBase, ApplicationHistoryCreate, ApplicationHistory,
+    FileUploadRequest, MultipleFileUploadRequest
 )
 from .evaluation import (
     Protocol1EvaluationBase, Protocol1EvaluationCreate, Protocol1EvaluationUpdate, Protocol1EvaluationResponse,
@@ -26,13 +28,15 @@ __all__ = [
     "CandidateProfileBase", "CandidateProfileCreate", "CandidateProfileUpdate", "CandidateProfileResponse",
     
     # Job schemas
-    "JobOfferBase", "JobOfferCreate", "JobOfferUpdate", "JobOfferResponse", "JobOfferWithApplications",
+    "JobOfferBase", "JobOfferCreate", "JobOfferUpdate", "JobOfferResponse", 
     
     # Application schemas
-    "ApplicationBase", "ApplicationCreate", "ApplicationUpdate", "ApplicationResponse", "ApplicationWithDetails",
-    "ApplicationDocumentBase", "ApplicationDocumentCreate", "ApplicationDocumentResponse",
-    "ApplicationDraftBase", "ApplicationDraftCreate", "ApplicationDraftUpdate", "ApplicationDraftResponse",
-    "ApplicationHistoryBase", "ApplicationHistoryCreate", "ApplicationHistoryResponse",
+    "ApplicationBase", "ApplicationCreate", "ApplicationUpdate", "ApplicationResponse", "ApplicationListResponse",
+    "ApplicationDocumentBase", "ApplicationDocumentCreate", "ApplicationDocumentUpdate", "ApplicationDocumentResponse",
+    "ApplicationDocumentWithData", "ApplicationDocumentWithDataResponse", "ApplicationDocumentListResponse",
+    "ApplicationDraftBase", "ApplicationDraftCreate", "ApplicationDraftUpdate", "ApplicationDraft",
+    "ApplicationHistoryBase", "ApplicationHistoryCreate", "ApplicationHistory",
+    "FileUploadRequest", "MultipleFileUploadRequest",
     
     # Evaluation schemas
     "Protocol1EvaluationBase", "Protocol1EvaluationCreate", "Protocol1EvaluationUpdate", "Protocol1EvaluationResponse",

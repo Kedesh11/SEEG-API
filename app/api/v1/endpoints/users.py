@@ -10,8 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import TokenManager, SecurityManager
-from app.core.logging import security_logger
+from app.core.security.security import TokenManager
+from app.core.logging.logging import security_logger
 from app.db.database import get_async_db
 from app.schemas.base import ResponseSchema, PaginatedResponse
 from app.schemas.user import UserResponse, UserUpdate, CandidateProfileResponse
@@ -28,8 +28,9 @@ async def get_current_user(
 ):
     """Dépendance pour récupérer l'utilisateur actuel."""
     try:
-        user_id = TokenManager.extract_user_id_from_token(credentials.credentials)
-        user = await UserService.get_user_by_id(db, str(user_id))
+        user_id = TokenManager.get_user_id_from_token(credentials.credentials)
+        user_service = UserService(db)
+        user = await user_service.get_user_by_id(UUID(user_id))
         
         if not user:
             raise HTTPException(
@@ -120,7 +121,8 @@ async def get_user_by_id(
                 detail="Permission insuffisante"
             )
         
-        user = await UserService.get_user_by_id(db, str(user_id))
+        user_service = UserService(db)
+        user = await user_service.get_user_by_id(UUID(user_id))
         
         if not user:
             raise HTTPException(

@@ -7,8 +7,8 @@ from typing import List, Optional
 from uuid import UUID
 import structlog
 
-from app.db.session import get_async_db_session
-from app.schemas.job import JobOfferResponse, JobOfferCreate, JobOfferUpdate, JobOfferWithApplications
+from app.db.session import get_async_session as get_async_db_session
+from app.schemas.job import JobOfferResponse, JobOfferCreate, JobOfferUpdate
 from app.services.job import JobOfferService
 from app.core.dependencies import get_current_active_user, get_current_recruiter_user
 from app.models.user import User
@@ -161,7 +161,7 @@ async def delete_job_offer(
             detail="Erreur lors de la suppression de l'offre d'emploi"
         )
 
-@router.get("/{job_id}/applications", response_model=JobOfferWithApplications, summary="Candidatures d'une offre")
+@router.get("/{job_id}/applications", response_model=JobOfferResponse, summary="Candidatures d'une offre")
 async def get_job_offer_applications(
     job_id: UUID,
     db: AsyncSession = Depends(get_async_db_session),
@@ -187,11 +187,6 @@ async def get_job_offer_applications(
         
         job_with_applications = await job_service.get_job_offer_with_applications(job_id)
         
-        return JobOfferWithApplications(
-            **JobOfferResponse.from_orm(job_with_applications["job_offer"]).dict(),
-            applications=[],  # On pourrait ajouter les détails des candidatures ici
-            application_count=job_with_applications["application_count"]
-        )
     except HTTPException:
         raise
     except Exception as e:

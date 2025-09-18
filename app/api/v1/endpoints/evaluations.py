@@ -10,9 +10,8 @@ from app.services.evaluation import EvaluationService
 from app.schemas.evaluation import (
     Protocol1EvaluationCreate, Protocol1EvaluationUpdate, Protocol1EvaluationResponse,
     Protocol2EvaluationCreate, Protocol2EvaluationUpdate, Protocol2EvaluationResponse,
-    EvaluationStatsResponse
 )
-from app.core.security import get_current_user
+from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError
 
@@ -212,7 +211,6 @@ async def get_protocol2_evaluations_by_application(
 
 
 # Statistics Endpoint
-@router.get("/stats/overview", response_model=EvaluationStatsResponse)
 async def get_evaluation_statistics(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)

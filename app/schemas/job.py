@@ -59,7 +59,3 @@ class JobOfferResponse(JobOfferBase):
     
     class Config:
         from_attributes = True
-
-class JobOfferWithApplications(JobOfferResponse):
-    applications: List["ApplicationResponse"] = []
-    application_count: int = 0

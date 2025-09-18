@@ -1,15 +1,16 @@
 """
 Schémas de base pour l'API
 """
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Generic, TypeVar
 from pydantic import BaseModel
 
+T = TypeVar('T')
 
-class ResponseSchema(BaseModel):
+class ResponseSchema(BaseModel, Generic[T]):
     """Schéma de réponse de base"""
     success: bool = True
     message: str = ""
-    data: Optional[Any] = None
+    data: Optional[T] = None
     errors: Optional[Dict[str, Any]] = None
 
 
@@ -29,6 +30,6 @@ class PaginationSchema(BaseModel):
     pages: int = 0
 
 
-class PaginatedResponse(ResponseSchema):
+class PaginatedResponse(ResponseSchema[T]):
     """Schéma de réponse paginée"""
     pagination: Optional[PaginationSchema] = None
