@@ -1,17 +1,21 @@
 #!/bin/bash
 
-# Script de déploiement pour Azure avec optimisations
+# Script de déploiement pour Azure avec optimisations et gestion d'erreurs
+set -e  # Arrêter le script en cas d'erreur
+
 echo "🚀 Déploiement du backend FastAPI optimisé sur Azure..."
 
 # Variables de configuration
 RESOURCE_GROUP="seeg-backend-rg"
 APP_SERVICE_NAME="seeg-backend-api"
 LOCATION="France Central"
-SKU="B2"  # Augmenté pour les optimisations
-CONTAINER_REGISTRY="seegbackend.azurecr.io"
+SKU="B2"
+ACR_NAME="seegbackend"
 IMAGE_NAME="seeg-backend"
+DATABASE_PASSWORD="Azure%40Seeg"  # À externaliser dans un vault
 
 # Vérifier que l'utilisateur est connecté à Azure
+echo "🔐 Vérification de la connexion Azure..."
 if ! az account show &> /dev/null; then
     echo "❌ Vous devez être connecté à Azure CLI"
     echo "Exécutez: az login"
@@ -25,7 +29,7 @@ az group create --name $RESOURCE_GROUP --location "$LOCATION" --output table
 # Créer l'Azure Container Registry
 echo "🐳 Création du Container Registry..."
 az acr create \
-    --name seegbackend \
+    --name $ACR_NAME \
     --resource-group $RESOURCE_GROUP \
     --location "$LOCATION" \
     --sku Basic \
@@ -34,9 +38,9 @@ az acr create \
 
 # Obtenir les credentials du registry
 echo "🔑 Récupération des credentials du registry..."
-ACR_LOGIN_SERVER=$(az acr show --name seegbackend --resource-group $RESOURCE_GROUP --query loginServer --output tsv)
-ACR_USERNAME=$(az acr credential show --name seegbackend --resource-group $RESOURCE_GROUP --query username --output tsv)
-ACR_PASSWORD=$(az acr credential show --name seegbackend --resource-group $RESOURCE_GROUP --query passwords[0].value --output tsv)
+ACR_LOGIN_SERVER=$(az acr show --name $ACR_NAME --resource-group $RESOURCE_GROUP --query loginServer --output tsv)
+ACR_USERNAME=$(az acr credential show --name $ACR_NAME --resource-group $RESOURCE_GROUP --query username --output tsv)
+ACR_PASSWORD=$(az acr credential show --name $ACR_NAME --resource-group $RESOURCE_GROUP --query passwords[0].value --output tsv)
 
 # Construire et pousser l'image Docker
 echo "🔨 Construction et push de l'image Docker..."
@@ -60,7 +64,7 @@ az webapp create \
     --name $APP_SERVICE_NAME \
     --resource-group $RESOURCE_GROUP \
     --plan "${APP_SERVICE_NAME}-plan" \
-    --deployment-local-git \
+    --runtime "PYTHON:3.11" \
     --output table
 
 # Configurer l'App Service pour utiliser le container
@@ -73,14 +77,14 @@ az webapp config container set \
     --docker-registry-server-user $ACR_USERNAME \
     --docker-registry-server-password $ACR_PASSWORD
 
-# Configurer les variables d'environnement
+# Configurer les variables d'environnement (version sécurisée)
 echo "⚙️ Configuration des variables d'environnement..."
 az webapp config appsettings set \
     --name $APP_SERVICE_NAME \
     --resource-group $RESOURCE_GROUP \
     --settings \
-        DATABASE_URL="postgresql+asyncpg://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres" \
-        SECRET_KEY="CHANGE-THIS-SECRET-KEY-IN-PRODUCTION-$(date +%s)" \
+        DATABASE_URL="postgresql+asyncpg://Sevan:${DATABASE_PASSWORD}@seegrecruiter.postgres.database.azure.com:5432/postgres" \
+        SECRET_KEY="$(openssl rand -hex 32)" \
         ALLOWED_ORIGINS="https://www.seeg-talentsource.com,https://seeg-talentsource.com,https://seeg-backend-api.azurewebsites.net" \
         ENVIRONMENT="production" \
         DEBUG="false" \
@@ -98,22 +102,20 @@ echo "📝 Configuration des logs..."
 az webapp log config \
     --name $APP_SERVICE_NAME \
     --resource-group $RESOURCE_GROUP \
-    --application-logging filesystem \
-    --level information \
-    --web-server-logging filesystem
+    --docker-container-logging filesystem \
+    --level information
 
-# Configurer le scaling automatique
+# Configurer le scaling automatique (optionnel - seulement si nécessaire)
 echo "📈 Configuration du scaling automatique..."
 az monitor autoscale create \
     --resource-group $RESOURCE_GROUP \
-    --resource $APP_SERVICE_NAME \
-    --resource-type Microsoft.Web/sites \
+    --resource "${APP_SERVICE_NAME}-plan" \
+    --resource-type Microsoft.Web/serverfarms \
     --name "${APP_SERVICE_NAME}-autoscale" \
     --min-count 1 \
-    --max-count 10 \
-    --count 2
+    --max-count 3 \
+    --count 1
 
-# Configurer les règles d'autoscaling
 az monitor autoscale rule create \
     --resource-group $RESOURCE_GROUP \
     --autoscale-name "${APP_SERVICE_NAME}-autoscale" \
@@ -126,30 +128,31 @@ az monitor autoscale rule create \
     --condition "CpuPercentage < 30 avg 5m" \
     --scale in 1
 
-# Configurer le déploiement depuis GitHub
-echo "🔗 Configuration du déploiement GitHub..."
-az webapp deployment source config \
-    --name $APP_SERVICE_NAME \
-    --resource-group $RESOURCE_GROUP \
-    --repo-url "https://github.com/Kedesh11/SEEG-API" \
-    --branch main \
-    --manual-integration
-
 # Redémarrer l'App Service
 echo "🔄 Redémarrage de l'App Service..."
 az webapp restart --name $APP_SERVICE_NAME --resource-group $RESOURCE_GROUP
 
-# Afficher les informations de déploiement
-echo ""
-echo "✅ Déploiement terminé avec succès !"
-echo "🌐 URL de l'API: https://${APP_SERVICE_NAME}.azurewebsites.net"
-echo "📚 Documentation: https://${APP_SERVICE_NAME}.azurewebsites.net/docs"
-echo "🔍 Health Check: https://${APP_SERVICE_NAME}.azurewebsites.net/health"
-echo "📊 Endpoints optimisés:"
-echo "   - https://${APP_SERVICE_NAME}.azurewebsites.net/api/v1/optimized/applications/optimized"
-echo "   - https://${APP_SERVICE_NAME}.azurewebsites.net/api/v1/optimized/dashboard/stats/optimized"
-echo ""
-echo "🔧 Commandes utiles:"
-echo "   - Voir les logs: az webapp log tail --name $APP_SERVICE_NAME --resource-group $RESOURCE_GROUP"
-echo "   - Redémarrer: az webapp restart --name $APP_SERVICE_NAME --resource-group $RESOURCE_GROUP"
-echo "   - Mettre à jour l'image: docker push $ACR_LOGIN_SERVER/$IMAGE_NAME:latest && az webapp restart --name $APP_SERVICE_NAME --resource-group $RESOURCE_GROUP"
+# Attendre que l'application soit disponible
+echo "⏳ Attente du démarrage de l'application..."
+sleep 30
+
+# Vérifier le statut de déploiement
+echo "🔍 Vérification du déploiement..."
+DEPLOYMENT_STATUS=$(az webapp show --name $APP_SERVICE_NAME --resource-group $RESOURCE_GROUP --query state --output tsv)
+
+if [ "$DEPLOYMENT_STATUS" = "Running" ]; then
+    echo ""
+    echo "✅ Déploiement terminé avec succès !"
+    echo "🌐 URL de l'API: https://${APP_SERVICE_NAME}.azurewebsites.net"
+    echo "📚 Documentation: https://${APP_SERVICE_NAME}.azurewebsites.net/docs"
+    echo "🔍 Health Check: https://${APP_SERVICE_NAME}.azurewebsites.net/health"
+    echo ""
+    echo "🔧 Commandes utiles:"
+    echo "   - Voir les logs: az webapp log tail --name $APP_SERVICE_NAME --resource-group $RESOURCE_GROUP"
+    echo "   - Redémarrer: az webapp restart --name $APP_SERVICE_NAME --resource-group $RESOURCE_GROUP"
+    echo "   - Mettre à jour: docker push $ACR_LOGIN_SERVER/$IMAGE_NAME:latest && az webapp restart --name $APP_SERVICE_NAME --resource-group $RESOURCE_GROUP"
+else
+    echo "❌ Erreur lors du déploiement. Statut: $DEPLOYMENT_STATUS"
+    echo "📋 Vérifiez les logs: az webapp log tail --name $APP_SERVICE_NAME --resource-group $RESOURCE_GROUP"
+    exit 1
+fi
