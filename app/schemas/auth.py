@@ -3,6 +3,7 @@ Schémas Pydantic pour l'authentification
 """
 from typing import Optional
 from pydantic import BaseModel, Field, EmailStr
+from datetime import date
 
 
 class LoginRequest(BaseModel):
@@ -11,13 +12,25 @@ class LoginRequest(BaseModel):
     password: str = Field(..., min_length=1, description="Mot de passe")
 
 
-class SignupRequest(BaseModel):
-    """Schéma pour l'inscription"""
+class CandidateSignupRequest(BaseModel):
+    """Schéma pour l'inscription des candidats uniquement"""
     email: EmailStr = Field(..., description="Adresse email")
     password: str = Field(..., min_length=8, description="Mot de passe")
     first_name: str = Field(..., min_length=1, max_length=100, description="Prénom")
     last_name: str = Field(..., min_length=1, max_length=100, description="Nom")
-    matricule: Optional[str] = Field(None, max_length=20, description="Matricule SEEG")
+    matricule: str = Field(..., min_length=1, max_length=20, description="Matricule SEEG (obligatoire pour les candidats)")
+    phone: Optional[str] = Field(None, max_length=20, description="Numéro de téléphone")
+    date_of_birth: date = Field(..., description="Date de naissance (obligatoire pour les candidats)")
+    sexe: str = Field(..., description="Sexe (obligatoire pour les candidats)")
+
+
+class CreateUserRequest(BaseModel):
+    """Schéma pour créer un utilisateur (admin/recruteur) - admin seulement"""
+    email: EmailStr = Field(..., description="Adresse email")
+    password: str = Field(..., min_length=8, description="Mot de passe")
+    first_name: str = Field(..., min_length=1, max_length=100, description="Prénom")
+    last_name: str = Field(..., min_length=1, max_length=100, description="Nom")
+    role: str = Field(..., description="Rôle: admin ou recruiter")
     phone: Optional[str] = Field(None, max_length=20, description="Numéro de téléphone")
 
 

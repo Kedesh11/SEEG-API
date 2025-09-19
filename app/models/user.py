@@ -21,6 +21,7 @@ class User(BaseModel):
     date_of_birth = Column(DateTime(timezone=True))
     sexe = Column(String)
     matricule = Column(String, unique=True, index=True)
+    hashed_password = Column(String, nullable=False)  # Ajout du champ pour le mot de passe haché
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     

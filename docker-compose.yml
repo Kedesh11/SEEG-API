@@ -6,7 +6,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres
+      - DATABASE_URL=postgresql+asyncpg://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres
       - SECRET_KEY=your-super-secret-key-here-change-in-production-123456789
       - ALLOWED_ORIGINS=["https://www.seeg-talentsource.com", "https://seeg-talentsource.com"]
     volumes:

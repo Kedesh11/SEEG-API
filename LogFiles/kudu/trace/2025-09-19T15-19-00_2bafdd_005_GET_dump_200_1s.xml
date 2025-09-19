@@ -1,0 +1,4 @@
+<step title="Incoming Request" date="2025-09-19T15:19:00.383" instance="2bafdd" url="/dump" method="GET" type="request" pid="771,1,66" Host="seeg-backend-api.scm.azurewebsites.net" User-Agent="AZURECLI/2.77.0 (DEB)" Accept-Encoding="identity" Authorization="Bea..." x-ms-client-request-id="2faf2500-955b-11f0-8000-10b1df6a567d" X-ARR-LOG-ID="2faf2500-955b-11f0-8000-10b1df6a567d" CLIENT-IP="41.158.99.136:45318" X-SITE-DEPLOYMENT-ID="seeg-backend-api" WAS-DEFAULT-HOSTNAME="seeg-backend-api.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/dump" X-Client-IP="41.158.99.136" X-Client-Port="45318" >
+  <step title="Cleanup Xml Logs" date="2025-09-19T15:19:00.389" /><!-- duration: 11ms -->
+  <step title="Outgoing response" date="2025-09-19T15:19:01.092" type="response" statusCode="200" statusText="OK" /><!-- duration: 9ms -->
+</step><!-- duration: 723ms -->

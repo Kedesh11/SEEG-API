@@ -13,7 +13,7 @@ class TestSimpleAzure:
         """Test simple la connexion à la base de données Azure."""
         try:
             # URL de connexion directe
-            database_url = "postgresql://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres"
+            database_url = "postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres"
             
             # Créer un moteur de base de données
             engine = create_engine(database_url, echo=False)
@@ -32,7 +32,7 @@ class TestSimpleAzure:
     def test_azure_database_tables_simple(self):
         """Test simple que les tables principales existent."""
         try:
-            database_url = "postgresql://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres"
+            database_url = "postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres"
             engine = create_engine(database_url, echo=False)
             
             with engine.connect() as connection:
@@ -60,7 +60,7 @@ class TestSimpleAzure:
     def test_azure_database_count_simple(self):
         """Test simple le nombre d'enregistrements dans les tables principales."""
         try:
-            database_url = "postgresql://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres"
+            database_url = "postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres"
             engine = create_engine(database_url, echo=False)
             
             with engine.connect() as connection:
@@ -78,7 +78,7 @@ class TestSimpleAzure:
     def test_azure_database_users_structure_simple(self):
         """Test simple la structure de la table users."""
         try:
-            database_url = "postgresql://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres"
+            database_url = "postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres"
             engine = create_engine(database_url, echo=False)
             
             with engine.connect() as connection:
@@ -107,7 +107,7 @@ class TestSimpleAzure:
     def test_azure_database_sample_data_simple(self):
         """Test simple récupération de données d'exemple."""
         try:
-            database_url = "postgresql://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres"
+            database_url = "postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres"
             engine = create_engine(database_url, echo=False)
             
             with engine.connect() as connection:

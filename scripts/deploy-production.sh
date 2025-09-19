@@ -118,7 +118,7 @@ deploy_to_app_service() {
         --name "${APP_SERVICE_NAME}" \
         --resource-group "${RESOURCE_GROUP}" \
         --settings \
-            DATABASE_URL="postgresql+asyncpg://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres" \
+            DATABASE_URL="postgresql+asyncpg://Sevan:Azure%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres" \
             SECRET_KEY="$(openssl rand -base64 32)" \
             ENVIRONMENT="production" \
             DEBUG="false" \

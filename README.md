@@ -317,7 +317,7 @@ alembic revision --autogenerate -m "Description"
 
 ```ini
 # alembic.ini
-sqlalchemy.url = postgresql+asyncpg://Sevan:Azure%%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres
+sqlalchemy.url = postgresql+asyncpg://Sevan:Sevan%%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres
 ```
 
 ## 🐳 Déploiement avec Docker

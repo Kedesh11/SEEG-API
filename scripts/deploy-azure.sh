@@ -12,7 +12,7 @@ LOCATION="France Central"
 SKU="B2"
 ACR_NAME="seegbackend"
 IMAGE_NAME="seeg-backend"
-DATABASE_PASSWORD="Azure%40Seeg"  # À externaliser dans un vault
+DATABASE_PASSWORD="Sevan%40Seeg"  # À externaliser dans un vault
 
 # Vérifier que l'utilisateur est connecté à Azure
 echo "🔐 Vérification de la connexion Azure..."
@@ -83,7 +83,7 @@ az webapp config appsettings set \
     --name $APP_SERVICE_NAME \
     --resource-group $RESOURCE_GROUP \
     --settings \
-        DATABASE_URL="postgresql+asyncpg://Sevan:${DATABASE_PASSWORD}@seegrecruiter.postgres.database.azure.com:5432/postgres" \
+        DATABASE_URL="postgresql+asyncpg://Sevan:${DATABASE_PASSWORD}@seeg-postgres-server.postgres.database.azure.com:5432/postgres" \
         SECRET_KEY="$(openssl rand -hex 32)" \
         ALLOWED_ORIGINS="https://www.seeg-talentsource.com,https://seeg-talentsource.com,https://seeg-backend-api.azurewebsites.net" \
         ENVIRONMENT="production" \

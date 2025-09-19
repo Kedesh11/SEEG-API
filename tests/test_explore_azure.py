@@ -11,7 +11,7 @@ class TestExploreAzure:
     def test_azure_database_connection(self):
         """Test la connexion à la base de données Azure."""
         try:
-            database_url = "postgresql://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres"
+            database_url = "postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres"
             engine = create_engine(database_url, echo=False)
             
             with engine.connect() as connection:
@@ -27,7 +27,7 @@ class TestExploreAzure:
     def test_azure_database_list_all_tables(self):
         """Test pour lister toutes les tables existantes."""
         try:
-            database_url = "postgresql://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres"
+            database_url = "postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres"
             engine = create_engine(database_url, echo=False)
             
             with engine.connect() as connection:
@@ -56,7 +56,7 @@ class TestExploreAzure:
     def test_azure_database_list_all_schemas(self):
         """Test pour lister tous les schémas."""
         try:
-            database_url = "postgresql://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres"
+            database_url = "postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres"
             engine = create_engine(database_url, echo=False)
             
             with engine.connect() as connection:
@@ -81,7 +81,7 @@ class TestExploreAzure:
     def test_azure_database_check_migrations(self):
         """Test pour vérifier les migrations Alembic."""
         try:
-            database_url = "postgresql://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres"
+            database_url = "postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres"
             engine = create_engine(database_url, echo=False)
             
             with engine.connect() as connection:
@@ -116,7 +116,7 @@ class TestExploreAzure:
     def test_azure_database_check_supabase_tables(self):
         """Test pour vérifier les tables Supabase."""
         try:
-            database_url = "postgresql://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres"
+            database_url = "postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres"
             engine = create_engine(database_url, echo=False)
             
             with engine.connect() as connection:
@@ -151,7 +151,7 @@ class TestExploreAzure:
     def test_azure_database_database_info(self):
         """Test pour obtenir des informations sur la base de données."""
         try:
-            database_url = "postgresql://Sevan:Azure%40Seeg@seegrecruiter.postgres.database.azure.com:5432/postgres"
+            database_url = "postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres"
             engine = create_engine(database_url, echo=False)
             
             with engine.connect() as connection:
