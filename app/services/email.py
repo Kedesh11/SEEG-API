@@ -4,7 +4,7 @@ Service pour l'envoi d'emails
 from typing import List, Optional, Dict, Any
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, insert
+from sqlalchemy import select, insert, func, desc
 from datetime import datetime
 import structlog
 import smtplib

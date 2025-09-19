@@ -33,12 +33,15 @@ class Settings(BaseSettings):
     # Configuration email
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
-    SMTP_USERNAME: str = ""
-    SMTP_PASSWORD: str = ""
+    SMTP_USERNAME: str = "support@seeg-talentsource.com"
+    SMTP_PASSWORD: str = "njev urja zsbc spfn"
     SMTP_TLS: bool = True
     SMTP_SSL: bool = False
-    MAIL_FROM_NAME: str = "One HCM - SEEG"
-    MAIL_FROM_EMAIL: str = "noreply@seeg.ga"
+    MAIL_FROM_NAME: str = "One HCM - SEEG Talent Source"
+    MAIL_FROM_EMAIL: str = "support@seeg-talentsource.com"
+    
+    # Configuration application
+    PUBLIC_APP_URL: str = "http://localhost:3000"
     
     # Configuration Redis
     REDIS_URL: str = "redis://localhost:6379/0"
