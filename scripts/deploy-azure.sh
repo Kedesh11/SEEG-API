@@ -146,7 +146,7 @@ EOF_DEPLOYMENT
     az webapp deployment source config \
         --name $APP_NAME \
         --resource-group $RESOURCE_GROUP \
-        --repo-url "https://github.com/votre-repo/one-hcm-seeg.git" \
+        --repo-url "https://github.com/Kedesh11/SEEG-API.git" \
         --branch main \
         --manual-integration
     

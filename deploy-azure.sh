@@ -131,7 +131,7 @@ echo "🔗 Configuration du déploiement GitHub..."
 az webapp deployment source config \
     --name $APP_SERVICE_NAME \
     --resource-group $RESOURCE_GROUP \
-    --repo-url "https://github.com/your-username/one-hcm-seeg" \
+    --repo-url "https://github.com/Kedesh11/SEEG-API" \
     --branch main \
     --manual-integration
 
