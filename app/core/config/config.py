@@ -1,7 +1,7 @@
 """
 Configuration de l'application
 """
-from typing import List, Optional
+from typing import List, Optional, Union
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
 import os
@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
-    # Configuration CORS
-    ALLOWED_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173", "https://www.seeg-talentsource.com"]
+    # Configuration CORS - Peut être une liste ou une chaîne séparée par des virgules
+    ALLOWED_ORIGINS: Union[List[str], str] = ["http://localhost:3000", "http://localhost:5173", "https://www.seeg-talentsource.com"]
     ALLOWED_CREDENTIALS: bool = True
     
     # Configuration email
@@ -69,6 +69,14 @@ class Settings(BaseSettings):
     # Configuration de maintenance
     MAINTENANCE_MODE: bool = False
     MAINTENANCE_MESSAGE: str = "Le système est en maintenance. Veuillez réessayer plus tard."
+    
+    @field_validator('ALLOWED_ORIGINS', mode='before')
+    @classmethod
+    def parse_allowed_origins(cls, v):
+        """Parse ALLOWED_ORIGINS from string to list if needed"""
+        if isinstance(v, str):
+            return [origin.strip() for origin in v.split(',') if origin.strip()]
+        return v
     
     model_config = {
         "env_file": ".env",
