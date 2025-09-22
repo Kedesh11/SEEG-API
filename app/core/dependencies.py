@@ -15,8 +15,8 @@ from app.core.security.security import TokenManager
 
 logger = structlog.get_logger(__name__)
 
-# Configuration OAuth2 - utiliser l'endpoint /token standard pour Swagger UI
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
+# Configuration OAuth2 - utiliser l'unique endpoint /login pour Swagger UI
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),

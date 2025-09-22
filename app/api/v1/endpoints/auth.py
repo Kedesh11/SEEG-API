@@ -1,7 +1,7 @@
 """
 Endpoints d'authentification - Système unique et robuste
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
@@ -23,107 +23,86 @@ from app.models.seeg_agent import SeegAgent
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
-@router.post("/token", response_model=TokenResponse, summary="Obtenir un token (OAuth2 standard)")
-async def login_for_access_token(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_async_db_session)
-):
-    """
-    Connexion OAuth2 standard pour obtenir un token d'accès
-    Compatible avec Swagger UI et clients OAuth2
-    
-    Args:
-        form_data: Données de connexion OAuth2 (username=email, password)
-        db: Session de base de données
-        
-    Returns:
-        TokenResponse: Tokens d'accès et de rafraîchissement
-        
-    Raises:
-        HTTPException: Si les identifiants sont incorrects
-    """
+
+async def _login_core(email: str, password: str, db: AsyncSession) -> TokenResponse:
     try:
         auth_service = AuthService(db)
-        
-        # Authentifier l'utilisateur (username = email dans notre cas)
-        user = await auth_service.authenticate_user(form_data.username, form_data.password)
+        user = await auth_service.authenticate_user(email, password)
         if not user:
-            logger.warning("Tentative de connexion OAuth2 avec des identifiants incorrects", 
-                         email=form_data.username)
+            logger.warning("Tentative de connexion avec des identifiants incorrects", email=email)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Email ou mot de passe incorrect",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        
-        # Créer les tokens
         tokens = await auth_service.create_access_token(user)
-        
-        logger.info("Connexion OAuth2 réussie", 
-                   user_id=str(user.id), 
-                   email=user.email,
-                   role=user.role)
+        logger.info(
+            "Connexion réussie",
+            user_id=str(user.id),
+            email=user.email,
+            role=user.role,
+        )
         return tokens
-        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Erreur lors de la connexion OAuth2", error=str(e), email=form_data.username)
+        logger.error("Erreur lors de la connexion", error=str(e), email=email)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erreur interne du serveur"
+            detail="Erreur interne du serveur",
         )
 
-@router.post("/login", response_model=TokenResponse, summary="Connexion utilisateur (JSON)")
-async def login(
-    login_data: LoginRequest,
-    db: AsyncSession = Depends(get_async_db_session)
+
+@router.post("/token", response_model=TokenResponse, summary="Obtenir un token (déprécié)", include_in_schema=False)
+async def login_token_deprecated(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: AsyncSession = Depends(get_async_db_session),
 ):
     """
-    Connexion d'un utilisateur avec email et mot de passe (format JSON)
-    Pour les clients personnalisés
-    
-    Args:
-        login_data: Données de connexion (email, password)
-        db: Session de base de données
-        
-    Returns:
-        TokenResponse: Tokens d'accès et de rafraîchissement
-        
-    Raises:
-        HTTPException: Si les identifiants sont incorrects
+    Déprécié: utiliser /api/v1/auth/login
+    Reste compatible pour les clients OAuth2 (form-urlencoded)
+    """
+    return await _login_core(form_data.username, form_data.password, db)
+
+
+@router.post("/login", response_model=TokenResponse, summary="Connexion utilisateur (JSON ou form)")
+async def login(
+    request: Request,
+    db: AsyncSession = Depends(get_async_db_session),
+):
+    """
+    Connexion d'un utilisateur via un unique endpoint qui accepte:
+    - application/json: {"email": ..., "password": ...}
+    - application/x-www-form-urlencoded: username=email, password=...
     """
     try:
-        auth_service = AuthService(db)
-        
-        # Authentifier l'utilisateur
-        user = await auth_service.authenticate_user(login_data.email, login_data.password)
-        if not user:
-            logger.warning("Tentative de connexion avec des identifiants incorrects", 
-                         email=login_data.email)
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Email ou mot de passe incorrect",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-        
-        # Créer les tokens
-        tokens = await auth_service.create_access_token(user)
-        
-        logger.info("Connexion réussie", 
-                   user_id=str(user.id), 
-                   email=user.email,
-                   role=user.role)
-        return tokens
-        
+        content_type = request.headers.get("content-type", "").lower()
+        email = None
+        password = None
+
+        if content_type.startswith("application/x-www-form-urlencoded") or content_type.startswith("multipart/form-data"):
+            form = await request.form()
+            email = (form.get("username") or form.get("email") or "").strip()
+            password = (form.get("password") or "").strip()
+        else:
+            body = await request.json()
+            email = (body.get("email") or body.get("username") or "").strip()
+            password = (body.get("password") or "").strip()
+
+        if not email or not password:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="email/username et password requis")
+
+        return await _login_core(email, password, db)
+
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Erreur lors de la connexion", error=str(e), email=login_data.email)
+        logger.error("Erreur lors de la connexion unifiée", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erreur interne du serveur"
+            detail="Erreur interne du serveur",
         )
+
 
 @router.post("/signup", response_model=UserResponse, summary="Inscription candidat")
 async def signup_candidate(
@@ -145,23 +124,15 @@ async def signup_candidate(
     """
     try:
         auth_service = AuthService(db)
-        
-        # Créer le candidat
         user = await auth_service.create_candidate(signup_data)
-        
-        logger.info("Inscription candidat réussie", 
-                   user_id=str(user.id), 
-                   email=user.email)
+        logger.info("Inscription candidat réussie", user_id=str(user.id), email=user.email)
         return UserResponse.from_orm(user)
-        
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Erreur lors de l'inscription candidat", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erreur interne du serveur"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
+
 
 @router.post("/create-user", response_model=UserResponse, summary="Créer un utilisateur (admin/recruteur)")
 async def create_user(
@@ -171,127 +142,68 @@ async def create_user(
 ):
     """
     Créer un utilisateur (admin/recruteur) - admin seulement
-    
-    Args:
-        user_data: Données de l'utilisateur à créer
-        db: Session de base de données
-        current_admin: Administrateur authentifié
-        
-    Returns:
-        UserResponse: Informations de l'utilisateur créé
-        
-    Raises:
-        HTTPException: Si la création échoue
     """
     try:
         auth_service = AuthService(db)
-        
-        # Créer l'utilisateur
         user = await auth_service.create_user(user_data)
-        
-        logger.info("Utilisateur créé par admin", 
-                   user_id=str(user.id), 
-                   email=user.email, 
-                   role=user.role,
-                   created_by=str(current_admin.id))
+        logger.info(
+            "Utilisateur créé par admin",
+            user_id=str(user.id),
+            email=user.email,
+            role=user.role,
+            created_by=str(current_admin.id),
+        )
         return UserResponse.from_orm(user)
-        
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Erreur lors de la création d'utilisateur", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erreur interne du serveur"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
+
 
 @router.post("/create-first-admin", response_model=UserResponse, summary="Créer le premier administrateur")
 async def create_first_admin(
     db: AsyncSession = Depends(get_async_db_session)
 ):
-    """
-    Créer le premier administrateur (endpoint temporaire)
-    
-    Args:
-        db: Session de base de données
-        
-    Returns:
-        UserResponse: Informations de l'administrateur créé
-        
-    Raises:
-        HTTPException: Si un admin existe déjà ou si la création échoue
-    """
     try:
-        # Vérifier si un admin existe déjà
-        result = await db.execute(
-            select(User).where(User.role == "admin")
-        )
+        result = await db.execute(select(User).where(User.role == "admin"))
         existing_admin = result.scalar_one_or_none()
-        
         if existing_admin:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Un administrateur existe déjà"
-            )
-        
-        # Créer le premier admin
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Un administrateur existe déjà")
         auth_service = AuthService(db)
         hashed_password = auth_service.password_manager.hash_password("Sevan@Seeg")
-        
         admin = User(
             email="sevankedesh11@gmail.com",
             first_name="Sevan Kedesh",
             last_name="IKISSA PENDY",
             role="admin",
-            hashed_password=hashed_password
+            hashed_password=hashed_password,
         )
-        
         db.add(admin)
         await db.commit()
         await db.refresh(admin)
-        
-        logger.info("Premier administrateur créé", 
-                   user_id=str(admin.id), 
-                   email=admin.email)
+        logger.info("Premier administrateur créé", user_id=str(admin.id), email=admin.email)
         return UserResponse.from_orm(admin)
-        
     except HTTPException:
         raise
     except Exception as e:
         logger.error("Erreur lors de la création du premier admin", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erreur interne du serveur"
-        )
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
+
 
 @router.get("/me", response_model=UserResponse, summary="Obtenir le profil de l'utilisateur connecté")
 async def get_current_user_profile(
     current_user: User = Depends(get_current_active_user)
 ):
-    """
-    Obtenir le profil de l'utilisateur actuellement connecté
-    
-    Args:
-        current_user: Utilisateur authentifié
-        
-    Returns:
-        UserResponse: Profil de l'utilisateur
-    """
-    logger.debug("Profil utilisateur demandé", 
-                user_id=str(current_user.id), 
-                email=current_user.email)
+    logger.debug("Profil utilisateur demandé", user_id=str(current_user.id), email=current_user.email)
     return UserResponse.from_orm(current_user)
+
 
 @router.post("/logout", summary="Déconnexion")
 async def logout():
-    """
-    Déconnexion de l'utilisateur
-    
-    Returns:
-        Dict: Message de confirmation
-    """
     logger.info("Déconnexion utilisateur")
     return {"message": "Déconnexion réussie"}
+
 
 @router.get("/verify-matricule", response_model=MatriculeVerificationResponse, summary="Vérifier le matricule de l'utilisateur connecté")
 async def verify_matricule(
