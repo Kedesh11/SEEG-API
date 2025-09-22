@@ -1,5 +1,0 @@
-<step title="Incoming Request" date="2025-09-19T13:19:30.220" instance="2bafdd" url="/logstream" method="GET" type="request" pid="768,1,38" Host="seeg-backend-api.scm.azurewebsites.net" User-Agent="AZURECLI/2.77.0 (DEB)" Accept-Encoding="identity" Authorization="Bea..." x-ms-client-request-id="78ab5e56-954a-11f0-8000-10b1df6a567d" X-ARR-LOG-ID="78ab5e56-954a-11f0-8000-10b1df6a567d" CLIENT-IP="41.158.99.136:41014" X-SITE-DEPLOYMENT-ID="seeg-backend-api" WAS-DEFAULT-HOSTNAME="seeg-backend-api.scm.azurewebsites.net" X-Forwarded-Proto="https" X-AppService-Proto="https" X-Forwarded-TlsVersion="1.3" X-WAWS-Unencoded-URL="/logstream" X-Client-IP="41.158.99.136" X-Client-Port="41014" >
-  <step title="LogStreamHandlerMiddleware.Invoke" date="2025-09-19T13:19:30.249" /><!-- duration: 429ms -->
-  <step title="Error occurred" date="2025-09-19T13:25:30.681" type="error" text="LogStreamManager: ProcessRequest end" /><!-- duration: 6ms -->
-  <step title="Outgoing response" date="2025-09-19T13:25:30.703" type="response" statusCode="200" statusText="OK" /><!-- duration: 6ms -->
-</step><!-- duration: 360495ms -->

@@ -78,3 +78,10 @@ class ChangePasswordRequest(BaseModel):
     """Schéma pour changer le mot de passe"""
     current_password: str = Field(..., min_length=1, description="Mot de passe actuel")
     new_password: str = Field(..., min_length=8, description="Nouveau mot de passe")
+
+
+class MatriculeVerificationResponse(BaseModel):
+    """Résultat de la vérification du matricule contre la table seeg_agents"""
+    valid: bool = Field(..., description="True si le matricule de l'utilisateur correspond à un agent SEEG")
+    reason: Optional[str] = Field(None, description="Raison si non valide")
+    agent_matricule: Optional[str] = Field(None, description="Matricule trouvé côté seeg_agents")

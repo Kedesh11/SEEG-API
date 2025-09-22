@@ -5,9 +5,9 @@ Respecte le principe de responsabilité unique (Single Responsibility Principle)
 
 import asyncio
 from logging.config import fileConfig
-from sqlalchemy import pool
+from sqlalchemy import pool, create_engine
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+# from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from app.core.config.config import settings
@@ -34,7 +34,9 @@ target_metadata = Base.metadata
 
 def get_url():
     """Retourne l'URL de la base de données."""
-    return settings.database_url_sync
+    base_url = settings.DATABASE_URL_SYNC
+    # Forcer SSL requis pour Azure si non présent
+    return base_url + ("&sslmode=require" if "?" in base_url else "?sslmode=require")
 
 
 def run_migrations_offline() -> None:
@@ -68,28 +70,14 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
-async def run_async_migrations() -> None:
-    """In this scenario we need to create an Engine
-    and associate a connection with the context.
-
-    """
-
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
-
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
-
+# Mode ONLINE en moteur synchrone
 
 def run_migrations_online() -> None:
-    """Run migrations in 'online' mode."""
+    """Run migrations in 'online' mode (sync engine)."""
+    connectable = create_engine(get_url(), poolclass=pool.NullPool)
 
-    asyncio.run(run_async_migrations())
+    with connectable.connect() as connection:
+        do_run_migrations(connection)
 
 
 if context.is_offline_mode():

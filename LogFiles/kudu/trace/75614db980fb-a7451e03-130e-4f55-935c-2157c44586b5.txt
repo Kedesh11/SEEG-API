@@ -1,1 +1,0 @@
-2025-09-19T11:38:36  Startup Request, url: /api/settings, method: GET, type: request, pid: 768,1,5, ScmType: ExternalGit

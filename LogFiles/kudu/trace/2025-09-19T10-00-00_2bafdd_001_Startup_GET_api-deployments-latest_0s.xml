@@ -1,3 +1,0 @@
-<step title="Startup Request" date="2025-09-19T10:00:00.107" instance="2bafdd" url="/api/deployments/latest?deployer=GitHub&amp;time=2025-09-19_09-58-14Z" method="GET" type="request" pid="768,1,7" ScmType="ExternalGit" >
-  <step title="Cleanup Xml Logs" date="2025-09-19T10:00:00.113" /><!-- duration: 13ms -->
-</step><!-- duration: 39ms -->
