@@ -112,11 +112,20 @@ class AuthService:
             if existing_user:
                 raise ValidationError("Un utilisateur avec cet email existe déjà")
             
-            # Normaliser et valider le rôle demandé (seulement recruiter ou admin via cet endpoint)
-            requested_role = user_data.role.value if hasattr(user_data.role, 'value') else user_data.role
-            allowed_roles = {"recruiter", "admin"}
+            # Normaliser et valider le rôle demandé (admin, recruiter, observer)
+            requested_role_raw = user_data.role.value if hasattr(user_data.role, 'value') else user_data.role
+            role_map = {
+                "admin": "admin",
+                "recruiter": "recruiter",
+                "candidate": "candidate",
+                "observer": "observer",
+                "observator": "observer",
+                "observateur": "observer",
+            }
+            requested_role = role_map.get(str(requested_role_raw).lower())
+            allowed_roles = {"recruiter", "admin", "observer"}
             if requested_role not in allowed_roles:
-                raise ValidationError("Rôle invalide pour création par admin. Autorisés: admin, recruiter")
+                raise ValidationError("Rôle invalide pour création par admin. Autorisés: admin, recruiter, observer")
             
             # Hacher le mot de passe
             hashed_password = self.password_manager.hash_password(user_data.password)

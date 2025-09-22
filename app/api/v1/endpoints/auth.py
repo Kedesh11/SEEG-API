@@ -221,7 +221,13 @@ async def verify_matricule(
         return MatriculeVerificationResponse(valid=False, reason="Aucun matricule enregistré pour cet utilisateur")
 
     try:
-        result = await db.execute(select(SeegAgent).where(SeegAgent.matricule == current_user.matricule))
+        # Cast matricule to integer to match seeg_agents.matricule type
+        try:
+            matricule_int = int(str(current_user.matricule).strip())
+        except ValueError:
+            return MatriculeVerificationResponse(valid=False, reason="Matricule invalide (doit être numérique)")
+
+        result = await db.execute(select(SeegAgent).where(SeegAgent.matricule == matricule_int))
         agent = result.scalar_one_or_none()
         if agent:
             return MatriculeVerificationResponse(valid=True, agent_matricule=str(agent.matricule))
