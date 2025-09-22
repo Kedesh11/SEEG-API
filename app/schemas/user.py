@@ -5,16 +5,17 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
+from app.core.enums.user_enums import UserRole
 
 class UserBase(BaseModel):
     email: EmailStr
     first_name: str
     last_name: str
-    role: str
+    role: UserRole
     phone: Optional[str] = None
     date_of_birth: Optional[datetime] = None
     sexe: Optional[str] = None
-    matricule: Optional[str] = None
+    matricule: Optional[int] = None
 
 class UserCreate(UserBase):
     password: str
@@ -23,11 +24,11 @@ class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
     first_name: Optional[str] = None
     last_name: Optional[str] = None
-    role: Optional[str] = None
+    role: Optional[UserRole] = None
     phone: Optional[str] = None
     date_of_birth: Optional[datetime] = None
     sexe: Optional[str] = None
-    matricule: Optional[str] = None
+    matricule: Optional[int] = None
 
 class UserResponse(UserBase):
     id: UUID

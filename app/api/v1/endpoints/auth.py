@@ -93,7 +93,7 @@ async def login(
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="email/username et password requis")
 
         return await _login_core(email, password, db)
-
+        
     except HTTPException:
         raise
     except Exception as e:

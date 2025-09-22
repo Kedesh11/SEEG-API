@@ -4,6 +4,7 @@ Schémas Pydantic pour l'authentification
 from typing import Optional
 from pydantic import BaseModel, Field, EmailStr
 from datetime import date
+from app.core.enums.user_enums import UserRole
 
 
 class LoginRequest(BaseModel):
@@ -18,7 +19,7 @@ class CandidateSignupRequest(BaseModel):
     password: str = Field(..., min_length=8, description="Mot de passe")
     first_name: str = Field(..., min_length=1, max_length=100, description="Prénom")
     last_name: str = Field(..., min_length=1, max_length=100, description="Nom")
-    matricule: str = Field(..., min_length=1, max_length=20, description="Matricule SEEG (obligatoire pour les candidats)")
+    matricule: int = Field(..., description="Matricule SEEG (obligatoire pour les candidats)")
     phone: Optional[str] = Field(None, max_length=20, description="Numéro de téléphone")
     date_of_birth: date = Field(..., description="Date de naissance (obligatoire pour les candidats)")
     sexe: str = Field(..., description="Sexe (obligatoire pour les candidats)")
@@ -30,7 +31,7 @@ class CreateUserRequest(BaseModel):
     password: str = Field(..., min_length=8, description="Mot de passe")
     first_name: str = Field(..., min_length=1, max_length=100, description="Prénom")
     last_name: str = Field(..., min_length=1, max_length=100, description="Nom")
-    role: str = Field(..., description="Rôle: admin ou recruiter")
+    role: UserRole = Field(..., description="Rôle de l'utilisateur")
     phone: Optional[str] = Field(None, max_length=20, description="Numéro de téléphone")
 
 
@@ -84,4 +85,4 @@ class MatriculeVerificationResponse(BaseModel):
     """Résultat de la vérification du matricule contre la table seeg_agents"""
     valid: bool = Field(..., description="True si le matricule de l'utilisateur correspond à un agent SEEG")
     reason: Optional[str] = Field(None, description="Raison si non valide")
-    agent_matricule: Optional[str] = Field(None, description="Matricule trouvé côté seeg_agents")
+    agent_matricule: Optional[int] = Field(None, description="Matricule trouvé côté seeg_agents")
