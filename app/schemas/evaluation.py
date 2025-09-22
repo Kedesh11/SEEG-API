@@ -57,9 +57,32 @@ class Protocol1EvaluationBase(BaseModel):
     total_score: Optional[Decimal] = None
     general_summary: Optional[str] = None
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "in_progress",
+                "cv_score": 15,
+                "mtp_score": 14,
+                "interview_score": 16,
+                "overall_score": 15,
+                "general_summary": "Solide parcours et adéquation au poste."
+            }
+        }
+
 class Protocol1EvaluationCreate(Protocol1EvaluationBase):
     application_id: UUID
     evaluator_id: UUID
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "application_id": "00000000-0000-0000-0000-0000000000AA",
+                "evaluator_id": "00000000-0000-0000-0000-0000000000EE",
+                "cv_score": 15,
+                "mtp_score": 14,
+                "interview_score": 16
+            }
+        }
 
 class Protocol1EvaluationUpdate(BaseModel):
     status: Optional[str] = None
@@ -128,9 +151,32 @@ class Protocol2EvaluationBase(BaseModel):
     visit_notes: Optional[str] = None
     skills_gap_notes: Optional[str] = None
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "qcm_role_completed": True,
+                "qcm_codir_completed": True,
+                "qcm_role_score": 17,
+                "qcm_codir_score": 16,
+                "overall_score": 16.5
+            }
+        }
+
 class Protocol2EvaluationCreate(Protocol2EvaluationBase):
     application_id: UUID
     evaluator_id: UUID
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "application_id": "00000000-0000-0000-0000-0000000000AA",
+                "evaluator_id": "00000000-0000-0000-0000-0000000000EE",
+                "qcm_role_completed": True,
+                "qcm_codir_completed": True,
+                "qcm_role_score": 17,
+                "qcm_codir_score": 16
+            }
+        }
 
 class Protocol2EvaluationUpdate(BaseModel):
     completed: Optional[bool] = None

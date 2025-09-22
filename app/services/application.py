@@ -4,11 +4,11 @@ Service de gestion des candidatures
 import structlog
 from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func, and_
+from sqlalchemy import select, update, delete, func, and_, desc
 from uuid import UUID
 import base64
 
-from app.models.application import Application, ApplicationDocument, ApplicationDraft
+from app.models.application import Application, ApplicationDocument, ApplicationDraft, ApplicationHistory
 from app.schemas.application import (
     ApplicationCreate, ApplicationUpdate, ApplicationDocumentCreate, 
     ApplicationDocumentUpdate, ApplicationDocumentWithData
@@ -383,3 +383,124 @@ class ApplicationService:
         except Exception as e:
             logger.error("Erreur suppression brouillon", error=str(e))
             raise BusinessLogicError("Erreur lors de la suppression du brouillon")
+
+    async def get_application_draft(self, application_id: str, user_id: str) -> Optional[ApplicationDraft]:
+        """Récupérer le brouillon lié à une candidature (via son job_offer_id)."""
+        try:
+            application = await self.get_application_by_id(application_id)
+            return await self.get_draft(user_id=user_id, job_offer_id=str(application.job_offer_id))
+        except Exception as e:
+            logger.error("Erreur get_application_draft", application_id=application_id, error=str(e))
+            raise BusinessLogicError("Erreur lors de la récupération du brouillon")
+
+    async def upsert_application_draft(self, application_id: str, user_id: str, draft_data: "ApplicationDraftUpdate") -> ApplicationDraft:
+        """Créer/met à jour le brouillon pour la candidature donnée (basé sur user_id + job_offer_id)."""
+        try:
+            application = await self.get_application_by_id(application_id)
+            payload = {
+                "user_id": user_id,
+                "job_offer_id": str(application.job_offer_id),
+                "form_data": draft_data.form_data if hasattr(draft_data, "form_data") else None,
+                "ui_state": draft_data.ui_state if hasattr(draft_data, "ui_state") else None,
+            }
+            return await self.save_draft(payload)
+        except Exception as e:
+            logger.error("Erreur upsert_application_draft", application_id=application_id, error=str(e))
+            raise BusinessLogicError("Erreur lors de l'enregistrement du brouillon")
+
+    async def delete_application_draft(self, application_id: str, user_id: str) -> None:
+        """Supprimer le brouillon pour la candidature donnée."""
+        try:
+            application = await self.get_application_by_id(application_id)
+            await self.delete_draft(user_id=user_id, job_offer_id=str(application.job_offer_id))
+        except Exception as e:
+            logger.error("Erreur delete_application_draft", application_id=application_id, error=str(e))
+            raise BusinessLogicError("Erreur lors de la suppression du brouillon")
+
+    async def list_application_history(self, application_id: str) -> List[ApplicationHistory]:
+        """Lister l'historique des statuts d'une candidature."""
+        try:
+            await self.get_application_by_id(application_id)
+            result = await self.db.execute(
+                select(ApplicationHistory)
+                .where(ApplicationHistory.application_id == UUID(application_id))
+                .order_by(desc(ApplicationHistory.changed_at))
+            )
+            return result.scalars().all()
+        except Exception as e:
+            logger.error("Erreur list_application_history", application_id=application_id, error=str(e))
+            raise BusinessLogicError("Erreur lors de la récupération de l'historique")
+
+    async def add_application_history(self, application_id: str, item: "ApplicationHistoryCreate", changed_by_user_id: str | None) -> ApplicationHistory:
+        """Ajouter une entrée d'historique et éventuellement mettre à jour le statut de la candidature."""
+        try:
+            application = await self.get_application_by_id(application_id)
+            history = ApplicationHistory(
+                application_id=UUID(application_id),
+                changed_by=UUID(changed_by_user_id) if changed_by_user_id else None,
+                previous_status=item.previous_status or application.status,
+                new_status=item.new_status or application.status,
+                notes=item.notes,
+            )
+            self.db.add(history)
+            # Mettre à jour le statut de l'application si new_status fourni
+            if item.new_status and item.new_status != application.status:
+                application.status = item.new_status
+            await self.db.commit()
+            await self.db.refresh(history)
+            return history
+        except Exception as e:
+            logger.error("Erreur add_application_history", application_id=application_id, error=str(e))
+            raise BusinessLogicError("Erreur lors de l'ajout à l'historique")
+
+    async def get_advanced_statistics(self) -> Dict[str, Any]:
+        """Statistiques avancées des candidatures: par statut, par offre, par mois, documents par type."""
+        try:
+            # Totaux par statut
+            status_rows = await self.db.execute(
+                select(Application.status, func.count(Application.id)).group_by(Application.status)
+            )
+            status_breakdown = {row[0]: int(row[1]) for row in status_rows.fetchall()}
+
+            # Total applications
+            total = (await self.db.execute(select(func.count(Application.id)))).scalar() or 0
+
+            # Par offre (counts)
+            by_job_rows = await self.db.execute(
+                select(Application.job_offer_id, func.count(Application.id))
+                .group_by(Application.job_offer_id)
+            )
+            by_job_offer = {str(row[0]): int(row[1]) for row in by_job_rows.fetchall() if row[0] is not None}
+
+            # Par mois (date_trunc)
+            by_month_rows = await self.db.execute(
+                select(func.date_trunc('month', Application.created_at), func.count(Application.id))
+                .group_by(func.date_trunc('month', Application.created_at))
+                .order_by(func.date_trunc('month', Application.created_at))
+            )
+            by_month = {row[0].date().isoformat(): int(row[1]) for row in by_month_rows.fetchall() if row[0] is not None}
+
+            # Documents par type
+            doc_rows = await self.db.execute(
+                select(ApplicationDocument.document_type, func.count(ApplicationDocument.id))
+                .group_by(ApplicationDocument.document_type)
+            )
+            documents_by_type = {row[0]: int(row[1]) for row in doc_rows.fetchall() if row[0] is not None}
+
+            return {
+                "total_applications": int(total),
+                "status_breakdown": status_breakdown,
+                "by_job_offer": by_job_offer,
+                "by_month": by_month,
+                "documents_by_type": documents_by_type,
+            }
+        except Exception as e:
+            logger.error("Erreur statistiques avancées", error=str(e))
+            # Retourner une structure vide mais cohérente plutôt que 500
+            return {
+                "total_applications": 0,
+                "status_breakdown": {},
+                "by_job_offer": {},
+                "by_month": {},
+                "documents_by_type": {},
+            }

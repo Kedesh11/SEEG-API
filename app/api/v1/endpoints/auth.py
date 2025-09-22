@@ -65,7 +65,25 @@ async def login_token_deprecated(
     return await _login_core(form_data.username, form_data.password, db)
 
 
-@router.post("/login", response_model=TokenResponse, summary="Connexion utilisateur (JSON ou form)")
+@router.post("/login", response_model=TokenResponse, summary="Connexion utilisateur (JSON ou form)", openapi_extra={
+    "requestBody": {
+        "content": {
+            "application/json": {
+                "example": {"email": "candidate@example.com", "password": "MotdepasseFort123!"}
+            },
+            "application/x-www-form-urlencoded": {
+                "schema": {"type": "object", "properties": {"username": {"type": "string"}, "password": {"type": "string"}}},
+                "example": {"username": "candidate@example.com", "password": "MotdepasseFort123!"}
+            }
+        }
+    },
+    "responses": {
+        "200": {
+            "content": {"application/json": {"example": {"access_token": "<jwt>", "refresh_token": "<jwt>", "token_type": "bearer", "expires_in": 3600}}}
+        },
+        "401": {"description": "Email ou mot de passe incorrect"}
+    }
+})
 async def login(
     request: Request,
     db: AsyncSession = Depends(get_async_db_session),
@@ -104,7 +122,19 @@ async def login(
         )
 
 
-@router.post("/signup", response_model=UserResponse, summary="Inscription candidat")
+@router.post("/signup", response_model=UserResponse, summary="Inscription candidat", openapi_extra={
+    "requestBody": {"content": {"application/json": {"example": {
+        "email": "new.candidate@seeg.ga",
+        "password": "Password#2025",
+        "first_name": "Aïcha",
+        "last_name": "Mouketou",
+        "matricule": 123456,
+        "phone": "+24106223344",
+        "date_of_birth": "1994-06-12",
+        "sexe": "F"
+    }}}},
+    "responses": {"200": {"description": "Utilisateur créé", "content": {"application/json": {"example": {"id": "uuid", "email": "new.candidate@seeg.ga", "role": "candidate"}}}}}
+})
 async def signup_candidate(
     signup_data: CandidateSignupRequest,
     db: AsyncSession = Depends(get_async_db_session)
@@ -191,7 +221,9 @@ async def create_first_admin(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
 
 
-@router.get("/me", response_model=UserResponse, summary="Obtenir le profil de l'utilisateur connecté")
+@router.get("/me", response_model=UserResponse, summary="Obtenir le profil de l'utilisateur connecté", openapi_extra={
+    "responses": {"200": {"content": {"application/json": {"example": {"id": "uuid", "email": "candidate@example.com", "role": "candidate"}}}}}
+})
 async def get_current_user_profile(
     current_user: User = Depends(get_current_active_user)
 ):
@@ -205,7 +237,20 @@ async def logout():
     return {"message": "Déconnexion réussie"}
 
 
-@router.get("/verify-matricule", response_model=MatriculeVerificationResponse, summary="Vérifier le matricule de l'utilisateur connecté")
+@router.get("/verify-matricule", response_model=MatriculeVerificationResponse, summary="Vérifier le matricule de l'utilisateur connecté", openapi_extra={
+    "responses": {
+        "200": {
+            "content": {
+                "application/json": {
+                    "examples": {
+                        "valide": {"summary": "Matricule valide", "value": {"valid": True, "agent_matricule": "123456"}},
+                        "invalide": {"summary": "Matricule invalide", "value": {"valid": False, "reason": "Matricule non trouvé dans seeg_agents"}}
+                    }
+                }
+            }
+        }
+    }
+})
 async def verify_matricule(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_async_db_session)

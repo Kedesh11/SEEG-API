@@ -12,6 +12,14 @@ class LoginRequest(BaseModel):
     email: EmailStr = Field(..., description="Adresse email")
     password: str = Field(..., min_length=1, description="Mot de passe")
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "candidate@example.com",
+                "password": "MotdepasseFort123!"
+            }
+        }
+
 
 class CandidateSignupRequest(BaseModel):
     """Schéma pour l'inscription des candidats uniquement"""
@@ -24,6 +32,20 @@ class CandidateSignupRequest(BaseModel):
     date_of_birth: date = Field(..., description="Date de naissance (obligatoire pour les candidats)")
     sexe: str = Field(..., description="Sexe (obligatoire pour les candidats)")
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "new.candidate@seeg.ga",
+                "password": "Password#2025",
+                "first_name": "Aïcha",
+                "last_name": "Mouketou",
+                "matricule": 123456,
+                "phone": "+24106223344",
+                "date_of_birth": "1994-06-12",
+                "sexe": "F"
+            }
+        }
+
 
 class CreateUserRequest(BaseModel):
     """Schéma pour créer un utilisateur (admin/recruteur) - admin seulement"""
@@ -34,6 +56,18 @@ class CreateUserRequest(BaseModel):
     role: UserRole = Field(..., description="Rôle de l'utilisateur")
     phone: Optional[str] = Field(None, max_length=20, description="Numéro de téléphone")
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "recruteur@seeg.ga",
+                "password": "Recrut3ur#2025",
+                "first_name": "Jean",
+                "last_name": "Mavoungou",
+                "role": "recruiter",
+                "phone": "+24107445566"
+            }
+        }
+
 
 class TokenResponse(BaseModel):
     """Schéma de réponse pour les tokens"""
@@ -41,6 +75,16 @@ class TokenResponse(BaseModel):
     refresh_token: str = Field(..., description="Token de rafraîchissement")
     token_type: str = Field(default="bearer", description="Type de token")
     expires_in: int = Field(..., description="Durée d'expiration en secondes")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "access_token": "eyJhbGciOiJIUzI1NiIs...",
+                "refresh_token": "eyJhbGciOiJIUzI1NiIs...",
+                "token_type": "bearer",
+                "expires_in": 3600
+            }
+        }
 
 
 class TokenResponseData(BaseModel):
@@ -50,6 +94,17 @@ class TokenResponseData(BaseModel):
     token_type: str = Field(default="bearer", description="Type de token")
     expires_in: int = Field(..., description="Durée d'expiration en secondes")
     user: dict = Field(..., description="Données utilisateur")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "access_token": "eyJhbGciOiJIUzI1NiIs...",
+                "refresh_token": "eyJhbGciOiJIUzI1NiIs...",
+                "token_type": "bearer",
+                "expires_in": 3600,
+                "user": {"id": "uuid", "email": "candidate@example.com", "role": "candidate"}
+            }
+        }
 
 
 class RefreshTokenRequest(BaseModel):

@@ -19,7 +19,10 @@ router = APIRouter()
 
 
 # Protocol 1 Evaluation Endpoints
-@router.post("/protocol1", response_model=Protocol1EvaluationResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/protocol1", response_model=Protocol1EvaluationResponse, status_code=status.HTTP_201_CREATED, summary="Créer une évaluation Protocole 1", openapi_extra={
+    "requestBody": {"content": {"application/json": {"example": {"application_id": "uuid", "evaluator_id": "uuid", "cv_score": 15}}}},
+    "responses": {"201": {"content": {"application/json": {"example": {"id": "uuid", "application_id": "uuid", "cv_score": 15}}}}}
+})
 async def create_protocol1_evaluation(
     evaluation_data: Protocol1EvaluationCreate,
     current_user: User = Depends(get_current_user),
@@ -49,7 +52,9 @@ async def create_protocol1_evaluation(
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
-@router.get("/protocol1/{evaluation_id}", response_model=Protocol1EvaluationResponse)
+@router.get("/protocol1/{evaluation_id}", response_model=Protocol1EvaluationResponse, summary="Récupérer une évaluation Protocole 1 par ID", openapi_extra={
+    "responses": {"200": {"content": {"application/json": {"example": {"id": "uuid", "application_id": "uuid"}}}}, "404": {"description": "Non trouvée"}}
+})
 async def get_protocol1_evaluation(
     evaluation_id: str,
     current_user: User = Depends(get_current_user),
@@ -69,7 +74,10 @@ async def get_protocol1_evaluation(
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
-@router.put("/protocol1/{evaluation_id}", response_model=Protocol1EvaluationResponse)
+@router.put("/protocol1/{evaluation_id}", response_model=Protocol1EvaluationResponse, summary="Mettre à jour une évaluation Protocole 1", openapi_extra={
+    "requestBody": {"content": {"application/json": {"example": {"cv_score": 16}}}},
+    "responses": {"200": {"content": {"application/json": {"example": {"id": "uuid", "cv_score": 16}}}}}
+})
 async def update_protocol1_evaluation(
     evaluation_id: str,
     evaluation_data: Protocol1EvaluationUpdate,
@@ -95,7 +103,9 @@ async def update_protocol1_evaluation(
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
-@router.get("/protocol1/application/{application_id}", response_model=List[Protocol1EvaluationResponse])
+@router.get("/protocol1/application/{application_id}", response_model=List[Protocol1EvaluationResponse], summary="Lister les évaluations Protocole 1 par candidature", openapi_extra={
+    "responses": {"200": {"content": {"application/json": {"example": [{"id": "uuid", "application_id": "uuid"}]}}}}
+})
 async def get_protocol1_evaluations_by_application(
     application_id: str,
     current_user: User = Depends(get_current_user),
@@ -114,7 +124,10 @@ async def get_protocol1_evaluations_by_application(
 
 
 # Protocol 2 Evaluation Endpoints
-@router.post("/protocol2", response_model=Protocol2EvaluationResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/protocol2", response_model=Protocol2EvaluationResponse, status_code=status.HTTP_201_CREATED, summary="Créer une évaluation Protocole 2", openapi_extra={
+    "requestBody": {"content": {"application/json": {"example": {"application_id": "uuid", "evaluator_id": "uuid", "qcm_role_score": 17}}}},
+    "responses": {"201": {"content": {"application/json": {"example": {"id": "uuid", "application_id": "uuid", "qcm_role_score": 17}}}}}
+})
 async def create_protocol2_evaluation(
     evaluation_data: Protocol2EvaluationCreate,
     current_user: User = Depends(get_current_user),
@@ -146,7 +159,9 @@ async def create_protocol2_evaluation(
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
-@router.get("/protocol2/{evaluation_id}", response_model=Protocol2EvaluationResponse)
+@router.get("/protocol2/{evaluation_id}", response_model=Protocol2EvaluationResponse, summary="Récupérer une évaluation Protocole 2 par ID", openapi_extra={
+    "responses": {"200": {"content": {"application/json": {"example": {"id": "uuid", "application_id": "uuid"}}}}, "404": {"description": "Non trouvée"}}
+})
 async def get_protocol2_evaluation(
     evaluation_id: str,
     current_user: User = Depends(get_current_user),
@@ -166,7 +181,10 @@ async def get_protocol2_evaluation(
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
-@router.put("/protocol2/{evaluation_id}", response_model=Protocol2EvaluationResponse)
+@router.put("/protocol2/{evaluation_id}", response_model=Protocol2EvaluationResponse, summary="Mettre à jour une évaluation Protocole 2", openapi_extra={
+    "requestBody": {"content": {"application/json": {"example": {"qcm_codir_score": 16}}}},
+    "responses": {"200": {"content": {"application/json": {"example": {"id": "uuid", "qcm_codir_score": 16}}}}}
+})
 async def update_protocol2_evaluation(
     evaluation_id: str,
     evaluation_data: Protocol2EvaluationUpdate,
@@ -192,7 +210,9 @@ async def update_protocol2_evaluation(
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
-@router.get("/protocol2/application/{application_id}", response_model=List[Protocol2EvaluationResponse])
+@router.get("/protocol2/application/{application_id}", response_model=List[Protocol2EvaluationResponse], summary="Lister les évaluations Protocole 2 par candidature", openapi_extra={
+    "responses": {"200": {"content": {"application/json": {"example": [{"id": "uuid", "application_id": "uuid"}]}}}}
+})
 async def get_protocol2_evaluations_by_application(
     application_id: str,
     current_user: User = Depends(get_current_user),
@@ -211,6 +231,9 @@ async def get_protocol2_evaluations_by_application(
 
 
 # Statistics Endpoint
+@router.get("/stats/overview", response_model=dict, summary="Statistiques globales des évaluations", openapi_extra={
+    "responses": {"200": {"content": {"application/json": {"example": {"protocol1": {"total_evaluations": 0, "average_score": 0}, "protocol2": {"total_evaluations": 0, "average_score": 0}}}}}}
+})
 async def get_evaluation_statistics(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)

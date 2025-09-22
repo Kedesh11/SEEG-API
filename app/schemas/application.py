@@ -25,10 +25,29 @@ class ApplicationBase(BaseModel):
     mtp_talent_q2: Optional[str] = None
     mtp_talent_q3: Optional[str] = None
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "pending",
+                "reference_contacts": "Mme X (+241...), M. Y (+241...)",
+                "availability_start": "2025-10-01T00:00:00Z",
+                "mtp_answers": {"q1": "réponse"}
+            }
+        }
+
 
 class ApplicationCreate(ApplicationBase):
     candidate_id: UUID
     job_offer_id: UUID
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "candidate_id": "00000000-0000-0000-0000-000000000001",
+                "job_offer_id": "00000000-0000-0000-0000-0000000000AA",
+                "status": "pending"
+            }
+        }
 
 
 class ApplicationUpdate(BaseModel):
@@ -45,6 +64,14 @@ class ApplicationUpdate(BaseModel):
     mtp_talent_q1: Optional[str] = None
     mtp_talent_q2: Optional[str] = None
     mtp_talent_q3: Optional[str] = None
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "status": "reviewed",
+                "reference_contacts": "M. Kassa (+241...)"
+            }
+        }
 
 
 class ApplicationInDBBase(ApplicationBase):
@@ -73,6 +100,17 @@ class ApplicationDocumentBase(BaseModel):
     file_data: str = Field(..., description="Contenu du fichier PDF encodé en base64")
     file_size: int = Field(..., description="Taille du fichier en octets")
     file_type: str = Field(default="application/pdf", description="Type MIME du fichier")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "document_type": "cv",
+                "file_name": "cv_sevan.pdf",
+                "file_data": "JVBERi0xLjQKJ... (base64)",
+                "file_size": 245678,
+                "file_type": "application/pdf"
+            }
+        }
 
     @validator('document_type')
     def validate_document_type(cls, v):
@@ -169,6 +207,17 @@ class ApplicationDocumentInDBBase(BaseModel):
 
     class Config:
         from_attributes = True
+        json_schema_extra = {
+            "example": {
+                "id": "00000000-0000-0000-0000-0000000000DD",
+                "application_id": "00000000-0000-0000-0000-0000000000AA",
+                "document_type": "cv",
+                "file_name": "cv_sevan.pdf",
+                "file_size": 245678,
+                "file_type": "application/pdf",
+                "uploaded_at": "2025-09-22T10:15:00Z"
+            }
+        }
 
 
 class ApplicationDocument(ApplicationDocumentInDBBase):
@@ -254,6 +303,22 @@ class ApplicationResponse(BaseModel):
     message: str
     data: Optional[Application] = None
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "message": "Candidature créée avec succès",
+                "data": {
+                    "id": "00000000-0000-0000-0000-0000000000AA",
+                    "candidate_id": "00000000-0000-0000-0000-000000000001",
+                    "job_offer_id": "00000000-0000-0000-0000-0000000000BB",
+                    "status": "pending",
+                    "created_at": "2025-09-22T10:00:00Z",
+                    "updated_at": "2025-09-22T10:00:00Z"
+                }
+            }
+        }
+
 
 class ApplicationListResponse(BaseModel):
     """Réponse pour la liste des applications."""
@@ -263,6 +328,27 @@ class ApplicationListResponse(BaseModel):
     total: int
     page: int
     per_page: int
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "message": "1 candidature(s) trouvée(s)",
+                "data": [
+                    {
+                        "id": "00000000-0000-0000-0000-0000000000AA",
+                        "candidate_id": "00000000-0000-0000-0000-000000000001",
+                        "job_offer_id": "00000000-0000-0000-0000-0000000000BB",
+                        "status": "pending",
+                        "created_at": "2025-09-22T10:00:00Z",
+                        "updated_at": "2025-09-22T10:00:00Z"
+                    }
+                ],
+                "total": 1,
+                "page": 1,
+                "per_page": 100
+            }
+        }
 
 
 class ApplicationDocumentResponse(BaseModel):

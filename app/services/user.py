@@ -4,7 +4,7 @@ Service de gestion des utilisateurs
 import structlog
 from typing import Optional, List
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete
+from sqlalchemy import select, update, delete, or_, asc, desc
 from sqlalchemy.orm import selectinload
 from uuid import UUID
 
@@ -43,12 +43,25 @@ class UserService:
             logger.error("Erreur récupération utilisateur par email", error=str(e), email=email)
             raise BusinessLogicError("Erreur lors de la récupération de l'utilisateur")
     
-    async def get_users(self, skip: int = 0, limit: int = 100) -> List[User]:
-        """Récupérer la liste des utilisateurs"""
+    async def get_users(self, skip: int = 0, limit: int = 100, role: Optional[str] = None, q: Optional[str] = None, sort: Optional[str] = None, order: Optional[str] = None) -> List[User]:
+        """Récupérer la liste des utilisateurs avec filtres, recherche et tri."""
         try:
-            result = await self.db.execute(
-                select(User).offset(skip).limit(limit)
-            )
+            query = select(User)
+            # Filtres
+            if role:
+                query = query.where(User.role == role)
+            if q:
+                like = f"%{q}%"
+                query = query.where(or_(User.first_name.ilike(like), User.last_name.ilike(like), User.email.ilike(like)))
+            # Tri
+            if sort in {"first_name", "last_name", "email", "created_at"}:
+                direction = desc if (order or "desc").lower() == "desc" else asc
+                query = query.order_by(direction(getattr(User, sort)))
+            else:
+                query = query.order_by(desc(User.created_at))
+            # Pagination
+            query = query.offset(skip).limit(limit)
+            result = await self.db.execute(query)
             return result.scalars().all()
         except Exception as e:
             logger.error("Erreur récupération liste utilisateurs", error=str(e))

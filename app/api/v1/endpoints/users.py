@@ -59,7 +59,9 @@ async def get_current_user(
         )
 
 
-@router.get("/me", response_model=ResponseSchema[UserResponse])
+@router.get("/me", response_model=ResponseSchema[UserResponse], summary="Récupérer mon profil utilisateur", openapi_extra={
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Informations utilisateur récupérées", "data": {"id": "uuid", "email": "user@seeg.ga"}}}}}}
+})
 async def get_current_user_info(
     current_user = Depends(get_current_user)
 ):
@@ -71,7 +73,10 @@ async def get_current_user_info(
     )
 
 
-@router.put("/me", response_model=ResponseSchema[UserResponse])
+@router.put("/me", response_model=ResponseSchema[UserResponse], summary="Mettre à jour mon profil utilisateur", openapi_extra={
+    "requestBody": {"content": {"application/json": {"example": {"first_name": "Jean"}}}},
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Profil mis à jour avec succès", "data": {"id": "uuid", "first_name": "Jean"}}}}}}
+})
 async def update_current_user(
     user_update: UserUpdate,
     current_user = Depends(get_current_user),
@@ -106,7 +111,9 @@ async def update_current_user(
         )
 
 
-@router.get("/{user_id}", response_model=ResponseSchema[UserResponse])
+@router.get("/{user_id}", response_model=ResponseSchema[UserResponse], summary="Récupérer un utilisateur par ID", openapi_extra={
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Utilisateur récupéré avec succès", "data": {"id": "uuid"}}}}}, "404": {"description": "Utilisateur non trouvé"}}
+})
 async def get_user_by_id(
     user_id: UUID,
     current_user = Depends(get_current_user),
@@ -145,38 +152,39 @@ async def get_user_by_id(
         )
 
 
-@router.get("/", response_model=ResponseSchema[PaginatedResponse[UserResponse]])
+@router.get("/", response_model=ResponseSchema[PaginatedResponse[UserResponse]], summary="Lister les utilisateurs (pagination, recherche, tri)", openapi_extra={
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Utilisateurs récupérés avec succès", "data": {"items": [], "total": 0, "page": 1, "size": 100, "pages": 0, "has_next": False, "has_prev": False}}}}}}
+})
 async def get_users(
     skip: int = Query(0, ge=0, description="Nombre d'éléments à ignorer"),
     limit: int = Query(100, ge=1, le=1000, description="Nombre maximum d'éléments"),
     role: Optional[str] = Query(None, description="Filtre par rôle"),
+    q: Optional[str] = Query(None, description="Recherche texte (nom, email)"),
+    sort: Optional[str] = Query(None, description="Champ de tri (first_name, last_name, email, created_at)"),
+    order: Optional[str] = Query("desc", description="Ordre de tri: asc|desc"),
     current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)
 ):
-    """Récupère la liste des utilisateurs avec pagination."""
+    """Récupère la liste des utilisateurs avec pagination, recherche et tri."""
     try:
-        # Vérifier les permissions (seuls les admins peuvent voir tous les utilisateurs)
         if not current_user.is_admin:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Permission insuffisante"
             )
-        
         users = await UserService.get_users(
             db=db,
             skip=skip,
             limit=limit,
-            role=role
+            role=role,
+            q=q,
+            sort=sort,
+            order=order
         )
-        
-        # Convertir en schémas de réponse
         user_responses = [UserResponse.from_orm(user) for user in users]
-        
-        # Calculer le total (simplifié - dans une vraie implémentation, on ferait une requête COUNT)
         total = len(user_responses)
         pages = (total + limit - 1) // limit
         current_page = (skip // limit) + 1
-        
         paginated_response = PaginatedResponse(
             items=user_responses,
             total=total,
@@ -186,13 +194,11 @@ async def get_users(
             has_next=current_page < pages,
             has_prev=current_page > 1
         )
-        
         return ResponseSchema(
             success=True,
             message="Utilisateurs récupérés avec succès",
             data=paginated_response
         )
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -202,7 +208,9 @@ async def get_users(
         )
 
 
-@router.delete("/{user_id}", response_model=ResponseSchema[None])
+@router.delete("/{user_id}", response_model=ResponseSchema[None], summary="Supprimer un utilisateur", openapi_extra={
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Utilisateur supprimé avec succès", "data": None}}}}, "404": {"description": "Utilisateur non trouvé"}}
+})
 async def delete_user(
     user_id: UUID,
     current_user = Depends(get_current_user),
@@ -247,7 +255,9 @@ async def delete_user(
         )
 
 
-@router.get("/me/profile", response_model=ResponseSchema[CandidateProfileResponse])
+@router.get("/me/profile", response_model=ResponseSchema[CandidateProfileResponse], summary="Récupérer mon profil candidat", openapi_extra={
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Profil candidat récupéré avec succès", "data": {"user_id": "uuid"}}}}}, "404": {"description": "Profil candidat non trouvé"}}
+})
 async def get_current_user_profile(
     current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_async_db)

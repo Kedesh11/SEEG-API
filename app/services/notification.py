@@ -103,19 +103,16 @@ class NotificationService:
         user_id: str,
         skip: int = 0,
         limit: int = 100,
-        unread_only: bool = False
+        unread_only: bool = False,
+        q: Optional[str] = None,
+        type: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        sort: Optional[str] = None,
+        order: Optional[str] = None,
     ) -> NotificationListResponse:
         """
-        Récupérer les notifications d'un utilisateur
-        
-        Args:
-            user_id: ID de l'utilisateur
-            skip: Nombre d'éléments à ignorer
-            limit: Nombre maximum d'éléments à retourner
-            unread_only: Afficher seulement les notifications non lues
-            
-        Returns:
-            NotificationListResponse: Liste des notifications
+        Récupérer les notifications d'un utilisateur (avec filtres et tri)
         """
         query = select(Notification).where(Notification.user_id == user_id)
         count_query = select(func.count(Notification.id)).where(Notification.user_id == user_id)
@@ -124,14 +121,50 @@ class NotificationService:
             query = query.where(Notification.is_read == False)
             count_query = count_query.where(Notification.is_read == False)
         
-        query = query.order_by(desc(Notification.created_at))
+        if q:
+            like = f"%{q}%"
+            query = query.where(or_(Notification.title.ilike(like), Notification.message.ilike(like)))
+            count_query = count_query.where(or_(Notification.title.ilike(like), Notification.message.ilike(like)))
+        
+        if type:
+            query = query.where(Notification.notification_type == type)
+            count_query = count_query.where(Notification.notification_type == type)
+        
+        # Dates
+        def parse_date(s: Optional[str]):
+            if not s:
+                return None
+            try:
+                return datetime.fromisoformat(s)
+            except Exception:
+                return None
+        df = parse_date(date_from)
+        dt = parse_date(date_to)
+        if df:
+            query = query.where(Notification.created_at >= df)
+            count_query = count_query.where(Notification.created_at >= df)
+        if dt:
+            query = query.where(Notification.created_at <= dt)
+            count_query = count_query.where(Notification.created_at <= dt)
+        
+        # Tri
+        if sort in {"created_at", "title"}:
+            direction = desc if (order or "desc").lower() == "desc" else None
+            if direction:
+                query = query.order_by(direction(getattr(Notification, sort)))
+            else:
+                query = query.order_by(getattr(Notification, sort))
+        else:
+            query = query.order_by(desc(Notification.created_at))
+        
+        # Pagination
         query = query.offset(skip).limit(limit)
         
         result = await self.db.execute(query)
         notifications = result.scalars().all()
         
         count_result = await self.db.execute(count_query)
-        total_count = count_result.scalar()
+        total_count = count_result.scalar() or 0
         
         return NotificationListResponse(
             items=[NotificationResponse.model_validate(notif) for notif in notifications],
