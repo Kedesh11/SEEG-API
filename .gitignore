@@ -180,3 +180,6 @@ config/local.yml
 uploads/
 static/uploads/
 media/
+
+# Data
+data/
