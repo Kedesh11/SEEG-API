@@ -20,13 +20,13 @@ router = APIRouter()
 async def get_job_offers(
     skip: int = Query(0, ge=0, description="Nombre d'éléments à ignorer"),
     limit: int = Query(100, ge=1, le=1000, description="Nombre d'éléments à retourner"),
-    status: Optional[str] = Query(None, description="Filtrer par statut"),
+    status_filter: Optional[str] = Query(None, description="Filtrer par statut"),
     db: AsyncSession = Depends(get_async_db_session)
 ):
     """Récupérer la liste des offres d'emploi"""
     try:
         job_service = JobOfferService(db)
-        job_offers = await job_service.get_job_offers(skip=skip, limit=limit, status=status)
+        job_offers = await job_service.get_job_offers(skip=skip, limit=limit, status=status_filter)
         return [JobOfferResponse.from_orm(job) for job in job_offers]
     except Exception as e:
         logger.error("Erreur récupération offres d'emploi", error=str(e))

@@ -123,17 +123,40 @@ class PasswordResetRequest(BaseModel):
     """Schéma pour demander une réinitialisation de mot de passe"""
     email: EmailStr = Field(..., description="Adresse email")
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "user@example.com"
+            }
+        }
+
 
 class PasswordResetConfirm(BaseModel):
     """Schéma pour confirmer la réinitialisation de mot de passe"""
     token: str = Field(..., description="Token de réinitialisation")
     new_password: str = Field(..., min_length=8, description="Nouveau mot de passe")
 
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                "new_password": "NouveauMotDePasse123!"
+            }
+        }
+
 
 class ChangePasswordRequest(BaseModel):
     """Schéma pour changer le mot de passe"""
     current_password: str = Field(..., min_length=1, description="Mot de passe actuel")
     new_password: str = Field(..., min_length=8, description="Nouveau mot de passe")
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "current_password": "Ancien123!",
+                "new_password": "Nouveau123!"
+            }
+        }
 
 
 class MatriculeVerificationResponse(BaseModel):

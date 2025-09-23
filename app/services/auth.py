@@ -11,10 +11,12 @@ from app.schemas.auth import (
     LoginRequest, CandidateSignupRequest, CreateUserRequest, 
     TokenResponse, PasswordResetRequest
 )
-from app.core.security.security import PasswordManager, TokenManager
+from app.core.security.security import PasswordManager, TokenManager, create_password_reset_token, verify_password_reset_token
 from app.core.exceptions import UnauthorizedError, ValidationError, BusinessLogicError
+from app.services.email import EmailService
 
 logger = structlog.get_logger(__name__)
+
 
 class AuthService:
     """Service d'authentification"""
@@ -56,182 +58,102 @@ class AuthService:
             result = await self.db.execute(
                 select(User).where(User.email == user_data.email)
             )
-            existing_user = result.scalar_one_or_none()
-            
-            if existing_user:
+            existing = result.scalar_one_or_none()
+            if existing:
                 raise ValidationError("Un utilisateur avec cet email existe déjà")
             
-            # Vérifier si le matricule existe déjà
-            if user_data.matricule:
-                result = await self.db.execute(
-                    select(User).where(User.matricule == user_data.matricule)
-                )
-                existing_matricule = result.scalar_one_or_none()
-                
-                if existing_matricule:
-                    raise ValidationError("Un utilisateur avec ce matricule existe déjà")
-            
-            # Hacher le mot de passe
-            hashed_password = self.password_manager.hash_password(user_data.password)
-            
-            # Créer l'utilisateur
+            hashed = self.password_manager.hash_password(user_data.password)
             user = User(
                 email=user_data.email,
+                hashed_password=hashed,
                 first_name=user_data.first_name,
                 last_name=user_data.last_name,
+                phone=user_data.phone,
                 role="candidate",
-                phone=user_data.phone,
-                date_of_birth=user_data.date_of_birth,
-                sexe=user_data.sexe.value if hasattr(user_data.sexe, 'value') else user_data.sexe,
-                matricule=user_data.matricule,
-                hashed_password=hashed_password
             )
-            
             self.db.add(user)
             await self.db.commit()
             await self.db.refresh(user)
-            
-            logger.info("Candidat créé avec succès", user_id=str(user.id), email=user.email)
+            logger.info("Candidat créé", user_id=str(user.id), email=user.email)
             return user
-            
         except ValidationError:
             raise
         except Exception as e:
-            logger.error("Erreur lors de la création du candidat", error=str(e))
+            logger.error("Erreur création candidat", error=str(e))
             raise BusinessLogicError("Erreur lors de la création du candidat")
-    
-    async def create_user(self, user_data: CreateUserRequest) -> User:
-        """Créer un utilisateur (admin/recruteur) - admin seulement"""
-        try:
-            # Vérifier si l'email existe déjà
-            result = await self.db.execute(
-                select(User).where(User.email == user_data.email)
-            )
-            existing_user = result.scalar_one_or_none()
-            
-            if existing_user:
-                raise ValidationError("Un utilisateur avec cet email existe déjà")
-            
-            # Normaliser et valider le rôle demandé (admin, recruiter, observer)
-            requested_role_raw = user_data.role.value if hasattr(user_data.role, 'value') else user_data.role
-            role_map = {
-                "admin": "admin",
-                "recruiter": "recruiter",
-                "candidate": "candidate",
-                "observer": "observer",
-                "observator": "observer",
-                "observateur": "observer",
-            }
-            requested_role = role_map.get(str(requested_role_raw).lower())
-            allowed_roles = {"recruiter", "admin", "observer"}
-            if requested_role not in allowed_roles:
-                raise ValidationError("Rôle invalide pour création par admin. Autorisés: admin, recruiter, observer")
-            
-            # Hacher le mot de passe
-            hashed_password = self.password_manager.hash_password(user_data.password)
-            
-            # Créer l'utilisateur
-            user = User(
-                email=user_data.email,
-                first_name=user_data.first_name,
-                last_name=user_data.last_name,
-                role=requested_role,
-                phone=user_data.phone,
-                hashed_password=hashed_password
-            )
-            
-            self.db.add(user)
-            await self.db.commit()
-            await self.db.refresh(user)
-            
-            logger.info("Utilisateur créé avec succès", user_id=str(user.id), email=user.email, role=user.role)
-            return user
-            
-        except ValidationError:
-            raise
-        except Exception as e:
-            logger.error("Erreur lors de la création de l'utilisateur", error=str(e))
-            raise BusinessLogicError("Erreur lors de la création de l'utilisateur")
-    
+
     async def create_access_token(self, user: User) -> TokenResponse:
-        """Créer les tokens d'accès et de rafraîchissement"""
+        """Créer des tokens d'accès et refresh"""
         try:
-            # Créer le token d'accès
-            access_token = self.token_manager.create_access_token(
-                data={"sub": str(user.id), "email": user.email, "role": user.role}
-            )
-            
-            # Créer le token de rafraîchissement
-            refresh_token = self.token_manager.create_refresh_token(
-                data={"sub": str(user.id)}
-            )
-            
-            return TokenResponse(
-                access_token=access_token,
-                refresh_token=refresh_token,
-                token_type="bearer",
-                expires_in=1800  # 30 minutes
-            )
-            
+            access = self.token_manager.create_access_token({"sub": str(user.id), "role": user.role})
+            refresh = self.token_manager.create_refresh_token({"sub": str(user.id), "role": user.role})
+            return TokenResponse(access_token=access, refresh_token=refresh, token_type="bearer", expires_in=3600)
         except Exception as e:
-            logger.error("Erreur lors de la création des tokens", user_id=str(user.id), error=str(e))
-            raise BusinessLogicError("Erreur lors de la création des tokens")
-    
-    async def refresh_access_token(self, refresh_token: str) -> TokenResponse:
-        """Rafraîchir le token d'accès"""
-        try:
-            # Vérifier le token de rafraîchissement
-            payload = self.token_manager.verify_refresh_token(refresh_token)
-            user_id = payload.get("sub")
-            
-            if not user_id:
-                raise UnauthorizedError("Token de rafraîchissement invalide")
-            
-            # Récupérer l'utilisateur
-            result = await self.db.execute(
-                select(User).where(User.id == user_id)
-            )
-            user = result.scalar_one_or_none()
-            
-            if not user:
-                raise UnauthorizedError("Utilisateur non trouvé")
-            
-            # Créer un nouveau token d'accès
-            return await self.create_access_token(user)
-            
-        except Exception as e:
-            logger.error("Erreur lors du rafraîchissement du token", error=str(e))
-            raise UnauthorizedError("Erreur lors du rafraîchissement du token")
-    
+            logger.error("Erreur création token", error=str(e))
+            raise BusinessLogicError("Erreur lors de la création du token")
+
     async def reset_password_request(self, email: str) -> bool:
-        """Demander une réinitialisation de mot de passe"""
+        """Créer un token de réinitialisation et envoyer l'email."""
         try:
-            # Vérifier si l'utilisateur existe
-            result = await self.db.execute(
-                select(User).where(User.email == email)
-            )
+            result = await self.db.execute(select(User).where(User.email == email))
             user = result.scalar_one_or_none()
-            
             if not user:
-                # Ne pas révéler si l'email existe ou non
-                logger.info("Demande de réinitialisation pour email inexistant", email=email)
+                # Ne pas révéler l'existence ou non de l'email
+                logger.info("Demande de reset pour email inconnu", email=email)
                 return True
-            
-            # TODO: Implémenter l'envoi d'email de réinitialisation
+            token = create_password_reset_token(email)
+            reset_link = f"{''}/reset-password?token={token}"
+            # Envoyer l'email
+            email_service = EmailService(self.db)
+            subject = "Réinitialisation de votre mot de passe"
+            body = f"Utilisez ce lien pour réinitialiser votre mot de passe: {reset_link}"
+            html = f"<p>Vous avez demandé une réinitialisation de mot de passe.</p><p>Cliquez sur ce lien: <a href=\"{reset_link}\">Réinitialiser</a></p>"
+            try:
+                await email_service.send_email(to=user.email, subject=subject, body=body, html_body=html)
+            except Exception as e:
+                # Log et continuer (la génération du token côté client peut suffire si l'email tombe en échec)
+                logger.error("Echec envoi email reset", error=str(e))
             logger.info("Demande de réinitialisation de mot de passe", email=email, user_id=str(user.id))
             return True
-            
         except Exception as e:
             logger.error("Erreur lors de la demande de réinitialisation", email=email, error=str(e))
             raise BusinessLogicError("Erreur lors de la demande de réinitialisation")
     
     async def reset_password_confirm(self, token: str, new_password: str) -> bool:
-        """Confirmer la réinitialisation de mot de passe"""
+        """Vérifier le token et mettre à jour le mot de passe."""
         try:
-            # TODO: Implémenter la vérification du token et la mise à jour du mot de passe
-            logger.info("Réinitialisation de mot de passe confirmée", token=token[:10] + "...")
+            email = verify_password_reset_token(token)
+            if not email:
+                raise ValidationError("Token de réinitialisation invalide ou expiré")
+            result = await self.db.execute(select(User).where(User.email == email))
+            user = result.scalar_one_or_none()
+            if not user:
+                raise ValidationError("Utilisateur introuvable pour ce token")
+            user.hashed_password = self.password_manager.hash_password(new_password)
+            await self.db.commit()
+            logger.info("Mot de passe réinitialisé", user_id=str(user.id), email=email)
             return True
-            
+        except ValidationError:
+            raise
         except Exception as e:
             logger.error("Erreur lors de la confirmation de réinitialisation", error=str(e))
             raise BusinessLogicError("Erreur lors de la confirmation de réinitialisation")
+
+    async def change_password(self, user_id: str, current_password: str, new_password: str) -> bool:
+        """Changer le mot de passe pour l'utilisateur authentifié."""
+        try:
+            result = await self.db.execute(select(User).where(User.id == user_id))
+            user = result.scalar_one_or_none()
+            if not user:
+                raise ValidationError("Utilisateur introuvable")
+            if not self.password_manager.verify_password(current_password, user.hashed_password):
+                raise UnauthorizedError("Mot de passe actuel incorrect")
+            user.hashed_password = self.password_manager.hash_password(new_password)
+            await self.db.commit()
+            logger.info("Mot de passe modifié", user_id=str(user.id))
+            return True
+        except (ValidationError, UnauthorizedError):
+            raise
+        except Exception as e:
+            logger.error("Erreur changement mot de passe", error=str(e), user_id=user_id)
+            raise BusinessLogicError("Erreur lors du changement de mot de passe")

@@ -6,10 +6,12 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
 import structlog
+from pydantic import ValidationError
+from app.services.auth import AuthService, UnauthorizedError
 
 from app.db.session import get_async_session as get_async_db_session
 from app.schemas.auth import (
-    LoginRequest, CandidateSignupRequest, CreateUserRequest, TokenResponse
+    LoginRequest, CandidateSignupRequest, CreateUserRequest, TokenResponse, PasswordResetRequest, PasswordResetConfirm, ChangePasswordRequest
 )
 from app.schemas.user import UserResponse
 from app.services.auth import AuthService
@@ -279,4 +281,59 @@ async def verify_matricule(
         return MatriculeVerificationResponse(valid=False, reason="Matricule non trouvé dans seeg_agents")
     except Exception as e:
         logger.error("Erreur de vérification de matricule", error=str(e))
+        raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+
+
+@router.post("/forgot-password", summary="Demander la réinitialisation du mot de passe", openapi_extra={
+    "requestBody": {"content": {"application/json": {"example": {"email": "user@example.com"}}}},
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Email envoyé si l'adresse existe"}}}}}
+})
+async def forgot_password(
+    payload: PasswordResetRequest,
+    db: AsyncSession = Depends(get_async_db_session),
+):
+    try:
+        service = AuthService(db)
+        await service.reset_password_request(payload.email)
+        return {"success": True, "message": "Email envoyé si l'adresse existe"}
+    except Exception:
+        raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+
+
+@router.post("/reset-password", summary="Confirmer la réinitialisation du mot de passe", openapi_extra={
+    "requestBody": {"content": {"application/json": {"example": {"token": "<token>", "new_password": "NouveauMotDePasse123!"}}}},
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Mot de passe réinitialisé"}}}}, "400": {"description": "Token invalide ou expiré"}}
+})
+async def reset_password(
+    payload: PasswordResetConfirm,
+    db: AsyncSession = Depends(get_async_db_session),
+):
+    try:
+        service = AuthService(db)
+        await service.reset_password_confirm(payload.token, payload.new_password)
+        return {"success": True, "message": "Mot de passe réinitialisé"}
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+
+
+@router.post("/change-password", summary="Changer le mot de passe (connecté)", openapi_extra={
+    "requestBody": {"content": {"application/json": {"example": {"current_password": "Ancien123!", "new_password": "Nouveau123!"}}}},
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Mot de passe modifié"}}}}, "401": {"description": "Mot de passe actuel incorrect"}}
+})
+async def change_password(
+    payload: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db_session),
+):
+    try:
+        service = AuthService(db)
+        await service.change_password(str(current_user.id), payload.current_password, payload.new_password)
+        return {"success": True, "message": "Mot de passe modifié"}
+    except UnauthorizedError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")

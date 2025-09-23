@@ -613,3 +613,81 @@ async def get_advanced_application_stats(
         return {"success": True, "data": stats}
     except Exception:
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+
+
+# ---- Drafts globaux par offre (job_offer_id) ----
+@router.get("/drafts", response_model=dict, summary="Récupérer le brouillon par offre", openapi_extra={
+    "parameters": [
+        {"in": "query", "name": "job_offer_id", "required": True, "schema": {"type": "string", "format": "uuid"}}
+    ],
+    "responses": {
+        "200": {"content": {"application/json": {"example": {"success": True, "data": {"form_data": {"step": 1}, "ui_state": {}}}}}},
+        "404": {"description": "Aucun brouillon trouvé"}
+    }
+})
+async def get_draft_by_job_offer(
+    job_offer_id: str = Query(..., description="ID de l'offre d'emploi"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    try:
+        service = ApplicationService(db)
+        draft = await service.get_draft(user_id=str(current_user.id), job_offer_id=job_offer_id)
+        if not draft:
+            return {"success": True, "data": None}
+        return {"success": True, "data": draft}
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+
+
+@router.post("/drafts", response_model=dict, summary="Créer/Maj le brouillon par offre", openapi_extra={
+    "requestBody": {"content": {"application/json": {"example": {
+        "job_offer_id": "00000000-0000-0000-0000-0000000000AA",
+        "form_data": {"step": 1, "values": {"firstname": "Ada"}},
+        "ui_state": {"currentStep": 2}
+    }}}},
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Brouillon enregistré", "data": {}}}}}}
+})
+async def upsert_draft_by_job_offer(
+    payload: ApplicationDraftCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    try:
+        service = ApplicationService(db)
+        # Forcer l'user_id depuis le token, ignorer celui reçu pour sécurité
+        data = {
+            "user_id": str(current_user.id),
+            "job_offer_id": str(payload.job_offer_id),
+            "form_data": payload.form_data,
+            "ui_state": payload.ui_state,
+        }
+        draft = await service.save_draft(data)
+        return {"success": True, "message": "Brouillon enregistré", "data": draft}
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+
+
+@router.delete("/drafts", status_code=status.HTTP_204_NO_CONTENT, summary="Supprimer le brouillon par offre", openapi_extra={
+    "parameters": [
+        {"in": "query", "name": "job_offer_id", "required": True, "schema": {"type": "string", "format": "uuid"}}
+    ],
+    "responses": {"204": {"description": "Supprimé"}}
+})
+async def delete_draft_by_job_offer(
+    job_offer_id: str = Query(..., description="ID de l'offre d'emploi"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    try:
+        service = ApplicationService(db)
+        await service.delete_draft(user_id=str(current_user.id), job_offer_id=job_offer_id)
+        return None
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Erreur interne du serveur")
