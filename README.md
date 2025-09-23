@@ -320,155 +320,204 @@ alembic revision --autogenerate -m "Description"
 sqlalchemy.url = postgresql+asyncpg://Sevan:Sevan%%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres
 ```
 
-## 🐳 Déploiement avec Docker
+## 🐳 Docker (local et production)
 
-### Développement
-```bash
-docker-compose up -d
-```
+### Structure Docker
 
-### Production
-```bash
-docker build -t seeg-backend .
-docker run -p 8000:8000 --env-file .env.production seeg-backend
-```
+- `Dockerfile` (multi-étapes) : construit l'image backend FastAPI
+- `docker-compose.yml` : services locaux (app, db, …)
+- `scripts/start.sh` : commande d'entrée (uvicorn)
 
-## ☁️ Déploiement sur Azure
-
-### Option 1 : Script automatique
-```bash
-./deploy-azure.sh
-```
-
-### Option 2 : Manuel
-1. Créer un App Service sur Azure
-2. Configurer les variables d'environnement
-3. Déployer le code via GitHub Actions ou Azure CLI
-
-## 🔧 Configuration
-
-### Variables d'environnement importantes
+### Exemple de .env
 
 ```env
-# Base de données
-DATABASE_URL=postgresql+asyncpg://user:pass@host:port/db
+# Application
+ENV=dev
+LOG_LEVEL=info
+SECRET_KEY=change_me
+ACCESS_TOKEN_EXPIRE_MINUTES=120
 
-# Sécurité
-SECRET_KEY=your-secret-key
-ALLOWED_ORIGINS=["https://www.seeg-talentsource.com"]
+# Base de données (async pour SQLAlchemy 2 + asyncpg)
+DATABASE_URL=postgresql+asyncpg://<user>:<password>@<host>:5432/<db>
+# Connexion sync (certaines opérations/scripts)
+DATABASE_URL_SYNC=postgresql+psycopg2://<user>:<password>@<host>:5432/<db>
 
-# Email
-SMTP_HOST=smtp.gmail.com
-SMTP_USERNAME=your-email@gmail.com
-SMTP_PASSWORD=your-app-password
+# CORS
+BACKEND_CORS_ORIGINS=["http://localhost:5173","https://www.seeg-talentsource.com"]
 ```
 
-## 🧪 Tests
+### Build & run local (Docker)
 
 ```bash
-# Tests unitaires
-pytest
+# Depuis le dossier backend
+docker build -t seeg-backend:local .
 
-# Tests avec couverture
-pytest --cov=app
-
-# Tests d'intégration
-pytest tests/integration/
-
-# Tests Azure
-pytest tests/test_azure_*.py -v
-
-# Tous les tests
-python run_all_tests.py
+docker run --rm -p 8000:8000 \
+  --env-file .env \
+  --name seeg-backend seeg-backend:local
 ```
 
-### Couverture de tests
+Explication:
+- `docker build -t seeg-backend:local .` : construit l'image locale
+- `docker run ... -p 8000:8000` : expose le port 8000
+- `--env-file .env` : injecte les variables d'environnement
+- `scripts/start.sh` est exécuté dans le conteneur et lance `uvicorn`
 
-Le projet vise une couverture de tests de 80%+ avec :
-- Tests d'API pour tous les endpoints
-- Tests de services pour la logique métier
-- Tests d'authentification et de sécurité
-- Tests d'intégration end-to-end
-- Tests des utilitaires et validations
-
-## 📊 Monitoring
-
-- **Logs** : Structlog avec format JSON
-- **Métriques** : Prometheus (optionnel)
-- **Erreurs** : Sentry (optionnel)
-
-### Logs importants
-
-- Upload de documents
-- Erreurs de validation
-- Suppression de documents
-- Accès aux documents
-
-### Métriques
-
-- Nombre de documents par type
-- Taille moyenne des fichiers
-- Taux d'erreur d'upload
-- Temps de réponse des endpoints
-
-## 🔒 Sécurité
-
-- Authentification JWT
-- Validation des données avec Pydantic
-- CORS configuré pour le domaine de production
-- Rate limiting
-- Hachage des mots de passe avec bcrypt
-- Validation stricte des fichiers PDF
-
-## 🐛 Dépannage
-
-### Erreurs courantes
-
-1. **"Seuls les fichiers PDF sont acceptés"**
-   - Vérifier l'extension du fichier
-   - Vérifier le contenu (magic number)
-
-2. **"Le fichier n'est pas un PDF valide"**
-   - Fichier corrompu
-   - Format non-PDF
-
-3. **"Candidature non trouvée"**
-   - Vérifier l'ID de candidature
-   - Vérifier les droits d'accès
-
-### Solutions
-
-- Vérifier les logs de l'application
-- Tester avec un PDF valide
-- Vérifier les permissions de l'utilisateur
-- Contacter l'administrateur système
-
-## 📞 Support
-
-Pour toute question ou problème :
-- Email : dev@seeg.ga
-- Documentation : https://www.seeg-talentsource.com/docs
-- API Documentation : http://localhost:8000/docs
-
-## 📄 Licence
-
-Propriétaire - SEEG
-
-## 🚀 Commandes utiles
+### Docker Compose (optionnel)
 
 ```bash
-# Démarrer le serveur
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8001
+docker compose up --build
+```
 
-# Redémarrer le serveur
-pkill -f uvicorn && python -m uvicorn app.main:app --host 0.0.0.0 --port 8001
+### Rebuild & Push vers Azure Container Registry (ACR)
 
-# Tests avec la base Azure
-pytest tests/test_azure_*.py -v
+```bash
+# Variables (exemple)
+ACR_NAME=seegacr
+ACR_LOGIN=${ACR_NAME}.azurecr.io
+IMAGE=${ACR_LOGIN}/seeg-backend:latest
 
-# Migration
+# Connexion ACR (si besoin)
+az acr login --name ${ACR_NAME}
+
+# Build multi-plateforme (optionnel) ou simple
+az acr build --registry ${ACR_NAME} --image seeg-backend:latest .
+# ou en local
+# docker build -t ${IMAGE} . && docker push ${IMAGE}
+```
+
+Explication:
+- `az acr login` : s'authentifie à l'ACR
+- `az acr build` : construit l'image dans ACR (build cloud), évite d'uploader les artefacts locaux
+- `docker build && docker push` : alternative locale si préférée
+
+## ☁️ Déploiement sur Azure App Service (Container)
+
+Prérequis:
+- `az login`
+- Ressource Group existant (ou à créer)
+- ACR existant avec l'image poussée (`seeg-backend:latest`)
+
+Variables d'exemple:
+```bash
+RG=seeg-backend-rg
+LOC=westeurope
+PLAN=seeg-backend-plan
+APP=seeg-backend-api
+ACR_NAME=seegacr
+ACR_LOGIN=${ACR_NAME}.azurecr.io
+IMAGE=${ACR_LOGIN}/seeg-backend:latest
+```
+
+### 1) Créer le groupe de ressources (si nécessaire)
+```bash
+az group create --name ${RG} --location ${LOC}
+```
+- Crée un Resource Group pour regrouper les ressources Azure
+
+### 2) Créer le plan App Service (Linux, B1 par ex.)
+```bash
+az appservice plan create \
+  --name ${PLAN} \
+  --resource-group ${RG} \
+  --is-linux \
+  --sku B1
+```
+- Crée un plan d'hébergement (dimensionnement et facturation)
+
+### 3) Créer l'App Service (Web App conteneur)
+```bash
+az webapp create \
+  --name ${APP} \
+  --resource-group ${RG} \
+  --plan ${PLAN} \
+  --deployment-container-image-name ${IMAGE}
+```
+- Crée l'application et la pointe sur l'image container
+
+### 4) Donner accès de l'App à l'ACR (pull)
+```bash
+az webapp config container set \
+  --name ${APP} \
+  --resource-group ${RG} \
+  --docker-custom-image-name ${IMAGE} \
+  --docker-registry-server-url https://${ACR_LOGIN}
+```
+- Configure le conteneur et l'URL du registre
+
+Si l'ACR est privé, lier l'identité/les credentials:
+```bash
+az webapp config container set \
+  --name ${APP} \
+  --resource-group ${RG} \
+  --docker-registry-server-user $(az acr credential show --name ${ACR_NAME} --query username -o tsv) \
+  --docker-registry-server-password $(az acr credential show --name ${ACR_NAME} --query passwords[0].value -o tsv)
+```
+- Renseigne user/password ACR si Managed Identity non utilisée
+
+### 5) Variables d'environnement (App Settings)
+```bash
+az webapp config appsettings set \
+  --name ${APP} \
+  --resource-group ${RG} \
+  --settings \
+  ENV=prod \
+  LOG_LEVEL=info \
+  DATABASE_URL="<postgres-async-url>" \
+  DATABASE_URL_SYNC="<postgres-sync-url>" \
+  SECRET_KEY="<secret>" \
+  ACCESS_TOKEN_EXPIRE_MINUTES=120
+```
+- Définit les variables lues par l'app (équivalent `.env`)
+
+### 6) Activer les logs (utile debug)
+```bash
+az webapp log config \
+  --name ${APP} \
+  --resource-group ${RG} \
+  --docker-container-logging filesystem
+```
+- Active les logs du conteneur accessibles via `az webapp log tail`
+
+### 7) Déployer une nouvelle image (rollout)
+Option A (changer le tag ou forcer l’update):
+```bash
+az webapp config container set \
+  --name ${APP} \
+  --resource-group ${RG} \
+  --docker-custom-image-name ${IMAGE}
+
+az webapp restart --name ${APP} --resource-group ${RG}
+```
+- Met à jour la config conteneur et redémarre l'app
+
+Option B (déploiement ZIP de code, peu utilisé ici car conteneur):
+```bash
+az webapp deploy --name ${APP} --resource-group ${RG} --src-path backend.zip
+```
+- Déploie un package (non nécessaire pour mode conteneur)
+
+### 7.1) (Recommandé) Exécuter les migrations Alembic après déploiement
+
+Selon votre stratégie, exécuter les migrations peut se faire via une tâche séparée (GitHub Actions, Azure Pipelines) ou manuellement depuis un pod/console:
+
+Option A — Tâche CI/CD qui lance Alembic (idéal):
+```bash
+# Exemple (à adapter à votre pipeline)
+python -m alembic upgrade head
+```
+
+Option B — Exécuter dans un conteneur éphémère (si image contient alembic.ini):
+```bash
+# Démarrer un conteneur temporaire avec la même image
+az webapp ssh --name ${APP} --resource-group ${RG}
+# Puis dans le shell du conteneur
 alembic upgrade head
+```
 
-# Vérifier la structure des tables
-python -c "from app.db.database import get_async_db; from app.models.application import ApplicationDocument; import asyncio; asyncio.run([db.execute(select(ApplicationDocument).limit(1)) for db in get_async_db()])"
+Notes:
+- Vérifier que `DATABASE_URL`/`DATABASE_URL_SYNC` sont configurées dans les App Settings
+- Les migrations doivent être idempotentes; surveiller les logs pendant l’exécution
+
+### 8) Suivre les logs en direct
 ```
