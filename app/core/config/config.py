@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     
     # Configuration CORS - Peut être une liste ou une chaîne séparée par des virgules
-    ALLOWED_ORIGINS: Union[List[str], str] = ["http://localhost:3000", "http://localhost:5173", "https://www.seeg-talentsource.com"]
+    ALLOWED_ORIGINS: Union[List[str], str] = ["http://localhost:3000", "http://localhost:5173", "https://www.seeg-talentsource.com", "https://seeg-hcm.vercel.app", "http://localhost:8080"]
     ALLOWED_CREDENTIALS: bool = True
     
     # Configuration email
