@@ -76,6 +76,10 @@ app = FastAPI(
         {
             "name": "🎯 Entretiens",
             "description": "Gestion des entretiens - Planification, créneaux, suivi"
+        },
+        {
+            "name": "Webhooks",
+            "description": "Intégrations externes via webhooks"
         }
     ]
 )
@@ -151,6 +155,7 @@ async def info():
 # Import des routes API
 from app.api.v1.endpoints import auth, users, jobs, applications, evaluations, notifications, interviews, emails
 from app.api.v1.endpoints import optimized
+from app.api.v1.endpoints import webhooks
 
 # Inclusion des routes dans l'application
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["🔐 Authentification"])
@@ -162,6 +167,7 @@ app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["
 app.include_router(optimized.router, prefix="/api/v1/optimized", tags=["⚡ Requêtes Optimisées"])
 app.include_router(interviews.router, prefix="/api/v1/interviews", tags=["🎯 Entretiens"])
 app.include_router(emails.router, prefix="/api/v1/emails", tags=["📧 Emails"])
+app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["Webhooks"])
 
 # ============================================================================
 # GESTIONNAIRE D'ERREURS GLOBAL
