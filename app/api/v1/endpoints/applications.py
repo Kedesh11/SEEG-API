@@ -2,7 +2,7 @@
 Endpoints pour la gestion des candidatures
 """
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Form, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 import base64
 import uuid
@@ -23,6 +23,7 @@ from app.schemas.application import (
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError, FileError
+from app.core.rate_limit import limiter, UPLOAD_LIMITS
 
 router = APIRouter()
 
@@ -219,9 +220,14 @@ async def delete_application(
 # Endpoints pour les documents PDF
 @router.post("/{application_id}/documents", response_model=ApplicationDocumentResponse, status_code=status.HTTP_201_CREATED, summary="Uploader un document PDF", openapi_extra={
     "requestBody": {"content": {"multipart/form-data": {"schema": {"type": "object", "properties": {"document_type": {"type": "string"}, "file": {"type": "string", "format": "binary"}}}, "example": {"document_type": "cv"}}}},
-    "responses": {"201": {"content": {"application/json": {"example": {"success": True, "message": "Document uploadé avec succès", "data": {"id": "uuid", "file_name": "cv.pdf"}}}}}}
+    "responses": {
+        "201": {"content": {"application/json": {"example": {"success": True, "message": "Document uploadé avec succès", "data": {"id": "uuid", "file_name": "cv.pdf"}}}}},
+        "429": {"description": "Trop d'uploads"}
+    }
 })
+@limiter.limit(UPLOAD_LIMITS)
 async def upload_document(
+    request: Request,
     application_id: str,
     document_type: Optional[str] = Form(None, description="Type de document: cover_letter, cv, certificats, diplome (optionnel)"),
     file: UploadFile = File(..., description="Fichier PDF à uploader"),
@@ -233,7 +239,7 @@ async def upload_document(
     
     - **application_id**: ID de la candidature
     - **document_type**: Type de document (cover_letter, cv, certificats, diplome) - optionnel
-    - **file**: Fichier PDF à uploader
+    - **file**: Fichier PDF à uploader (max 10MB)
     """
     try:
         # Vérifier que le fichier est un PDF
@@ -245,6 +251,14 @@ async def upload_document(
         
         # Lire le contenu du fichier
         file_content = await file.read()
+        
+        # Validation de la taille (10MB max)
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+        if len(file_content) > MAX_FILE_SIZE:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=f"Le fichier est trop volumineux. Taille maximale: 10MB. Taille actuelle: {len(file_content) / (1024 * 1024):.2f}MB"
+            )
         
         # Vérifier que c'est bien un PDF (magic number)
         if not file_content.startswith(b'%PDF'):
@@ -288,9 +302,14 @@ async def upload_document(
 
 @router.post("/{application_id}/documents/multiple", response_model=ApplicationDocumentListResponse, status_code=status.HTTP_201_CREATED, summary="Uploader plusieurs documents PDF", openapi_extra={
     "requestBody": {"content": {"multipart/form-data": {"schema": {"type": "object", "properties": {"document_types": {"type": "array", "items": {"type": "string"}}, "files": {"type": "array", "items": {"type": "string", "format": "binary"}}}}, "example": {"document_types": ["cv", "certificats"]}}}},
-    "responses": {"201": {"content": {"application/json": {"example": {"success": True, "message": "2 document(s) uploadé(s) avec succès", "data": [{"id": "uuid"}], "total": 2}}}}}
+    "responses": {
+        "201": {"content": {"application/json": {"example": {"success": True, "message": "2 document(s) uploadé(s) avec succès", "data": [{"id": "uuid"}], "total": 2}}}},
+        "429": {"description": "Trop d'uploads"}
+    }
 })
+@limiter.limit(UPLOAD_LIMITS)
 async def upload_multiple_documents(
+    request: Request,
     application_id: str,
     files: List[UploadFile] = File(..., description="Fichiers PDF à uploader"),
     document_types: List[str] = Form(..., description="Types de documents correspondants"),
@@ -301,7 +320,7 @@ async def upload_multiple_documents(
     Uploader plusieurs documents PDF pour une candidature
     
     - **application_id**: ID de la candidature
-    - **files**: Liste des fichiers PDF à uploader
+    - **files**: Liste des fichiers PDF à uploader (max 10MB chacun)
     - **document_types**: Liste des types de documents correspondants
     """
     try:
@@ -311,6 +330,7 @@ async def upload_multiple_documents(
                 detail="Le nombre de fichiers doit correspondre au nombre de types de documents"
             )
         
+        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
         application_service = ApplicationService(db)
         documents = []
         
@@ -324,6 +344,13 @@ async def upload_multiple_documents(
             
             # Lire le contenu du fichier
             file_content = await file.read()
+            
+            # Validation de la taille
+            if len(file_content) > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail=f"Le fichier '{file.filename}' est trop volumineux. Taille maximale: 10MB. Taille actuelle: {len(file_content) / (1024 * 1024):.2f}MB"
+                )
             
             # Vérifier que c'est bien un PDF
             if not file_content.startswith(b'%PDF'):

@@ -4,7 +4,7 @@ Service pour la gestion des fichiers
 from typing import List, Optional, Dict, Any, BinaryIO
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, insert, update, delete
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 import aiofiles
 import os
@@ -92,7 +92,7 @@ class FileService:
                 file_hash=file_hash,
                 document_type=document_type,
                 uploaded_by=uploaded_by,
-                uploaded_at=datetime.utcnow()
+                uploaded_at=datetime.now(timezone.utc)
             )
             
             self.db.add(document)

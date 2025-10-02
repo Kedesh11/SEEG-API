@@ -112,6 +112,22 @@ deploy_to_app_service() {
         exit 1
     fi
     
+    # Récupération de la connection string Application Insights
+    log_info "Récupération de la connection string Application Insights..."
+    APP_INSIGHTS_NAME="seeg-api-insights"
+    APP_INSIGHTS_CONNECTION_STRING=""
+    
+    # Essayer de récupérer la connection string existante
+    if az monitor app-insights component show --app "${APP_INSIGHTS_NAME}" --resource-group "${RESOURCE_GROUP}" &> /dev/null; then
+        APP_INSIGHTS_CONNECTION_STRING=$(az monitor app-insights component show \
+            --app "${APP_INSIGHTS_NAME}" \
+            --resource-group "${RESOURCE_GROUP}" \
+            --query connectionString -o tsv)
+        log_success "Application Insights trouvé et configuré"
+    else
+        log_warning "Application Insights non trouvé, déploiement sans monitoring"
+    fi
+    
     # Configuration des variables d'environnement
     log_info "Configuration des variables d'environnement..."
     if az webapp config appsettings set \
@@ -138,7 +154,8 @@ deploy_to_app_service() {
             SMTP_SSL="false" \
             MAIL_FROM_NAME="One HCM - SEEG Talent Source" \
             MAIL_FROM_EMAIL="support@seeg-talentsource.com" \
-            PUBLIC_APP_URL="https://www.seeg-talentsource.com"; then
+            PUBLIC_APP_URL="https://www.seeg-talentsource.com" \
+            APPLICATIONINSIGHTS_CONNECTION_STRING="${APP_INSIGHTS_CONNECTION_STRING}"; then
         log_success "Variables d'environnement configurées"
     else
         log_error "Échec de la configuration des variables d'environnement"

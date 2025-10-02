@@ -1,18 +1,25 @@
 """
 Point d'entrée principal de l'application One HCM SEEG
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
+from slowapi.errors import RateLimitExceeded
 import structlog
 
 from app.core.config.config import settings
 from app.core.logging.logging import LoggingConfig
+from app.core.rate_limit import limiter
+from app.core.monitoring import app_insights
+from app.core.monitoring.middleware import ApplicationInsightsMiddleware
 
 # Configuration du logging
 LoggingConfig.setup_logging()
 logger = structlog.get_logger(__name__)
+
+# Configuration d'Application Insights
+app_insights.setup()
 
 # ============================================================================
 # CRÉATION DE L'APPLICATION FASTAPI
@@ -37,6 +44,13 @@ app = FastAPI(
     
     ### Frontend
     Interface utilisateur disponible sur : https://www.seeg-talentsource.com
+    
+    ### Rate Limiting
+    L'API est protégée par rate limiting :
+    - **Authentification** : 5 requêtes/minute, 20/heure
+    - **Inscription** : 3 requêtes/minute, 10/heure
+    - **Upload de fichiers** : 10 requêtes/minute, 50/heure
+    - **Autres endpoints** : 60 requêtes/minute, 500/heure
     """,
     docs_url="/docs",
     redoc_url="/redoc",
@@ -84,7 +98,22 @@ app = FastAPI(
     ]
 )
 
-# Configuration CORS
+# Configuration du rate limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda request, exc: JSONResponse(
+    status_code=429,
+    content={
+        "error": "Rate limit exceeded",
+        "message": "Trop de requêtes. Veuillez réessayer plus tard.",
+        "retry_after": getattr(exc, "retry_after", None)
+    }
+))
+
+# Configuration des middlewares
+# Application Insights - doit être en premier pour tracker toutes les requêtes
+app.add_middleware(ApplicationInsightsMiddleware)
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,
@@ -130,6 +159,10 @@ async def info():
         "debug_mode": settings.DEBUG,
         "allowed_origins": settings.ALLOWED_ORIGINS,
         "database_url": settings.DATABASE_URL[:50] + "..." if len(settings.DATABASE_URL) > 50 else settings.DATABASE_URL,
+        "monitoring": {
+            "application_insights": "enabled" if app_insights.enabled else "disabled",
+            "instrumentation": app_insights.enabled
+        },
         "features": [
             "Authentification JWT",
             "Gestion des rôles",
@@ -138,13 +171,22 @@ async def info():
             "Validation stricte des formats",
             "Notifications en temps réel",
             "Évaluations automatisées (MTP)",
-            "Planification d'entretiens"
+            "Planification d'entretiens",
+            "Rate Limiting",
+            "CI/CD automatisé",
+            "Monitoring Azure (Application Insights)"
         ],
         "pdf_support": {
             "allowed_types": ["cover_letter", "cv", "certificats", "diplome"],
             "file_format": "PDF uniquement",
             "storage": "Base de données (BYTEA)",
-            "validation": "Magic number + extension"
+            "validation": "Magic number + extension + taille (10MB max)"
+        },
+        "security": {
+            "rate_limiting": "enabled",
+            "auth_limits": "5/minute, 20/hour",
+            "signup_limits": "3/minute, 10/hour",
+            "upload_limits": "10/minute, 50/hour"
         }
     }
 
@@ -153,9 +195,7 @@ async def info():
 # ============================================================================
 
 # Import des routes API
-from app.api.v1.endpoints import auth, users, jobs, applications, evaluations, notifications, interviews, emails
-from app.api.v1.endpoints import optimized
-from app.api.v1.endpoints import webhooks
+from app.api.v1.endpoints import auth, users, jobs, applications, evaluations, notifications, interviews, emails, optimized, webhooks
 
 # Inclusion des routes dans l'application
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["🔐 Authentification"])

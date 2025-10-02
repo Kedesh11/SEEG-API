@@ -16,6 +16,8 @@ class UserBase(BaseModel):
     date_of_birth: Optional[datetime] = None
     sexe: Optional[str] = None
     matricule: Optional[int] = None
+    email_verified: Optional[bool] = False
+    is_active: Optional[bool] = True
 
 class UserCreate(UserBase):
     password: str
@@ -34,6 +36,7 @@ class UserResponse(UserBase):
     id: UUID
     created_at: datetime
     updated_at: datetime
+    last_login: Optional[datetime] = None
     
     class Config:
         from_attributes = True

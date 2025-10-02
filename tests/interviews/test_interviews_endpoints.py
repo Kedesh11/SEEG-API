@@ -3,7 +3,7 @@ from httpx import AsyncClient
 from types import SimpleNamespace
 
 from app.main import app
-from app.core.security.security import get_current_user
+from app.core.dependencies import get_current_user
 from app.services.interview import InterviewService
 
 

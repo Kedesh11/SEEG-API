@@ -5,7 +5,7 @@ from typing import List, Optional, Dict, Any
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, insert, func, desc
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 import smtplib
 from email.mime.text import MIMEText
@@ -410,7 +410,7 @@ L'équipe RH - SEEG
                 html_body=html_body,
                 status=status,
                 error_message=error_message,
-                sent_at=datetime.utcnow()
+                sent_at=datetime.now(timezone.utc)
             )
             
             self.db.add(email_log)

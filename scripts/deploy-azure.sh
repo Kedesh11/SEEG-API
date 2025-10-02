@@ -77,6 +77,22 @@ az webapp config container set \
     --docker-registry-server-user $ACR_USERNAME \
     --docker-registry-server-password $ACR_PASSWORD
 
+# Récupération de la connection string Application Insights
+echo "📊 Récupération de la connection string Application Insights..."
+APP_INSIGHTS_NAME="seeg-api-insights"
+APP_INSIGHTS_CONNECTION_STRING=""
+
+# Essayer de récupérer la connection string existante
+if az monitor app-insights component show --app $APP_INSIGHTS_NAME --resource-group $RESOURCE_GROUP &> /dev/null; then
+    APP_INSIGHTS_CONNECTION_STRING=$(az monitor app-insights component show \
+        --app $APP_INSIGHTS_NAME \
+        --resource-group $RESOURCE_GROUP \
+        --query connectionString -o tsv)
+    echo "✅ Application Insights trouvé et configuré"
+else
+    echo "⚠️  Application Insights non trouvé, déploiement sans monitoring"
+fi
+
 # Configurer les variables d'environnement (version sécurisée)
 echo "⚙️ Configuration des variables d'environnement..."
 az webapp config appsettings set \
@@ -95,7 +111,8 @@ az webapp config appsettings set \
         TIMEOUT_KEEP_ALIVE="5" \
         TIMEOUT_GRACEFUL_SHUTDOWN="30" \
         WEBSITES_PORT="8000" \
-        WEBSITES_ENABLE_APP_SERVICE_STORAGE="false"
+        WEBSITES_ENABLE_APP_SERVICE_STORAGE="false" \
+        APPLICATIONINSIGHTS_CONNECTION_STRING="$APP_INSIGHTS_CONNECTION_STRING"
 
 # Configurer les logs
 echo "📝 Configuration des logs..."

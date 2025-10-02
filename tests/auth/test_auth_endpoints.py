@@ -10,6 +10,13 @@ async def test_login_invalid_credentials(client: AsyncClient):
 
 
 @pytest.mark.anyio
+async def test_login_public_endpoint(client: AsyncClient):
+    # La route doit être accessible sans Authorization (mais 401 si credentials faux)
+    resp = await client.post("/api/v1/auth/login", json={"email": "nouser@example.com", "password": "bad"})
+    assert resp.status_code in (401, 500)
+
+
+@pytest.mark.anyio
 async def test_forgot_password(client: AsyncClient):
     resp = await client.post("/api/v1/auth/forgot-password", json={"email": "nouser@example.com"})
     assert resp.status_code == 200

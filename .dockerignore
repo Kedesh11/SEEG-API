@@ -1,76 +1,74 @@
-# Fichiers et dossiers à ignorer lors de la construction Docker
+# Git
+.git
+.gitignore
+.gitattributes
 
-# Environnements virtuels
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
 env/
 venv/
-.venv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-
-# Fichiers de développement
-.git/
-.gitignore
-README.md
+ENV/
+env.bak/
+venv.bak/
+pip-log.txt
+pip-delete-this-directory.txt
 .pytest_cache/
 .coverage
 htmlcov/
-coverage.xml
-.coverage.*
-
-# Fichiers de configuration locale
-.env
-.env.local
-.env.development
-.env.test
-.env.production
-
-# Logs
-*.log
-logs/
-
-# Fichiers temporaires
-*.tmp
-*.temp
-.DS_Store
-Thumbs.db
+.tox/
+.hypothesis/
+*.egg-info/
+dist/
+build/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.DS_Store
 
 # Tests
 tests/
-test_*.py
-*_test.py
+.pytest_cache/
+coverage.xml
+.coverage
 
 # Documentation
 docs/
 *.md
+README.md
+LICENSE
 
-# Fichiers de déploiement
-deploy-azure.sh
-azure-pipelines.yml
-docker-compose.yml
+# CI/CD
+.github/
+.gitlab-ci.yml
 
-# Fichiers de migration (garder seulement les versions finales)
-alembic/versions/*.py
-!alembic/versions/*_improve_relations_and_performance.py
+# Environment
+.env
+.env.*
+!.env.example
 
-# Fichiers de cache
-.cache/
-.pytest_cache/
-.mypy_cache/
+# Logs
+*.log
+logs/
 
-# Fichiers de build
-build/
-dist/
-*.egg-info/
+# Temporary files
+tmp/
+temp/
+*.tmp
 
-# Fichiers de sauvegarde
-*.bak
-*.backup
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore

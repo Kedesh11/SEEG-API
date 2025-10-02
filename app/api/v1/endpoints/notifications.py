@@ -10,7 +10,7 @@ from app.services.notification import NotificationService
 from app.schemas.notification import (
     NotificationResponse, NotificationListResponse, NotificationStatsResponse
 )
-from app.core.security.security import get_current_user
+from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.core.exceptions import NotFoundError
 from app.core.security.security import TokenManager

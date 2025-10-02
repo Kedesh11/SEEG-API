@@ -4,7 +4,7 @@ Service pour la gestion des notifications
 from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, and_, or_, desc
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import structlog
 
 from app.models.notification import Notification
@@ -113,6 +113,8 @@ class NotificationService:
     ) -> NotificationListResponse:
         """
         Récupérer les notifications d'un utilisateur (avec filtres et tri)
+        Retourne un schéma conforme à NotificationListResponse
+        { notifications, total, page, per_page, total_pages }
         """
         query = select(Notification).where(Notification.user_id == user_id)
         count_query = select(func.count(Notification.id)).where(Notification.user_id == user_id)
@@ -162,16 +164,19 @@ class NotificationService:
         
         result = await self.db.execute(query)
         notifications = result.scalars().all()
-        
         count_result = await self.db.execute(count_query)
         total_count = count_result.scalar() or 0
-        
+
+        per_page = limit
+        page = (skip // limit) + 1 if limit else 1
+        total_pages = (total_count + limit - 1) // limit if limit else 1
+
         return NotificationListResponse(
-            items=[NotificationResponse.model_validate(notif) for notif in notifications],
+            notifications=[NotificationResponse.model_validate(notif) for notif in notifications],
             total=total_count,
-            skip=skip,
-            limit=limit,
-            has_more=skip + len(notifications) < total_count
+            page=page,
+            per_page=per_page,
+            total_pages=total_pages
         )
     
     async def mark_as_read(
@@ -206,8 +211,8 @@ class NotificationService:
             
             # Mise à jour du statut
             notification.is_read = True
-            notification.read_at = datetime.utcnow()
-            notification.updated_at = datetime.utcnow()
+            notification.read_at = datetime.now(timezone.utc)
+            notification.updated_at = datetime.now(timezone.utc)
             
             await self.db.commit()
             await self.db.refresh(notification)
@@ -251,8 +256,8 @@ class NotificationService:
                 )
                 .values(
                     is_read=True,
-                    read_at=datetime.utcnow(),
-                    updated_at=datetime.utcnow()
+                    read_at=datetime.now(timezone.utc),
+                    updated_at=datetime.now(timezone.utc)
                 )
             )
             
@@ -322,29 +327,14 @@ class NotificationService:
             .group_by(Notification.notification_type)
         )
         type_stats = {row[0]: row[1] for row in type_result.fetchall()}
-        
-        # Statistiques par mois (derniers 12 mois)
-        monthly_result = await self.db.execute(
-            select(
-                func.date_trunc('month', Notification.created_at).label('month'),
-                func.count(Notification.id).label('count')
-            )
-            .where(
-                and_(
-                    Notification.user_id == user_id,
-                    Notification.created_at >= datetime.utcnow() - timedelta(days=365)
-                )
-            )
-            .group_by(func.date_trunc('month', Notification.created_at))
-            .order_by('month')
-        )
-        monthly_stats = {row[0]: row[1] for row in monthly_result.fetchall()}
-        
+
+        read_count = (total_notifications or 0) - (unread_count or 0)
+
         return NotificationStatsResponse(
-            total_notifications=total_notifications,
-            unread_count=unread_count,
-            type_distribution=type_stats,
-            monthly_trend=monthly_stats
+            total_notifications=total_notifications or 0,
+            unread_count=unread_count or 0,
+            read_count=read_count if read_count >= 0 else 0,
+            notifications_by_type=type_stats
         )
     
     async def cleanup_old_notifications(self, days_old: int = 90) -> int:
@@ -358,7 +348,7 @@ class NotificationService:
             int: Nombre de notifications supprimées
         """
         try:
-            cutoff_date = datetime.utcnow() - timedelta(days=days_old)
+            cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_old)
             
             result = await self.db.execute(
                 delete(Notification).where(

@@ -4,7 +4,7 @@ Service pour la gestion des entretiens
 from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, and_, or_, desc
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import structlog
 
 from app.models.interview import InterviewSlot
@@ -50,7 +50,7 @@ class InterviewService:
                 raise NotFoundError("Candidature non trouvée")
             
             # Validation de la date
-            if slot_data.scheduled_date < datetime.utcnow():
+            if slot_data.scheduled_date < datetime.now(timezone.utc):
                 raise ValidationError("La date de l'entretien ne peut pas être dans le passé")
             
             # Vérification des conflits d'horaire
@@ -225,17 +225,17 @@ class InterviewService:
             update_data = slot_data.model_dump(exclude_unset=True)
             if update_data:
                 # Validation de la date si fournie
-                if 'scheduled_date' in update_data and update_data['scheduled_date'] < datetime.utcnow():
+                if 'scheduled_date' in update_data and update_data['scheduled_date'] < datetime.now(timezone.utc):
                     raise ValidationError("La date de l'entretien ne peut pas être dans le passé")
                 
                 # Mise à jour du statut avec timestamps
                 if 'status' in update_data:
                     if update_data['status'] == 'completed':
-                        update_data['completed_at'] = datetime.utcnow()
+                        update_data['completed_at'] = datetime.now(timezone.utc)
                     elif update_data['status'] == 'cancelled':
-                        update_data['cancelled_at'] = datetime.utcnow()
+                        update_data['cancelled_at'] = datetime.now(timezone.utc)
                 
-                update_data["updated_at"] = datetime.utcnow()
+                update_data["updated_at"] = datetime.now(timezone.utc)
                 
                 await self.db.execute(
                     update(InterviewSlot)
@@ -366,12 +366,12 @@ class InterviewService:
         status_stats = {row[0]: row[1] for row in status_result.fetchall()}
         
         # Entretiens à venir (prochains 7 jours)
-        upcoming_date = datetime.utcnow() + timedelta(days=7)
+        upcoming_date = datetime.now(timezone.utc) + timedelta(days=7)
         upcoming_result = await self.db.execute(
             select(InterviewSlot)
             .where(
                 and_(
-                    InterviewSlot.scheduled_date >= datetime.utcnow(),
+                    InterviewSlot.scheduled_date >= datetime.now(timezone.utc),
                     InterviewSlot.scheduled_date <= upcoming_date,
                     InterviewSlot.status == "scheduled"
                 )
@@ -387,7 +387,7 @@ class InterviewService:
                 func.date_trunc('month', InterviewSlot.scheduled_date).label('month'),
                 func.count(InterviewSlot.id).label('count')
             )
-            .where(InterviewSlot.scheduled_date >= datetime.utcnow() - timedelta(days=365))
+            .where(InterviewSlot.scheduled_date >= datetime.now(timezone.utc) - timedelta(days=365))
             .group_by(func.date_trunc('month', InterviewSlot.scheduled_date))
             .order_by('month')
         )

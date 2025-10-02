@@ -3,9 +3,9 @@ Service d'authentification
 """
 import structlog
 from typing import Optional, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest, CandidateSignupRequest, CreateUserRequest, 
@@ -39,10 +39,24 @@ class AuthService:
                 logger.warning("Tentative de connexion avec email inexistant", email=email)
                 return None
             
+            # Vérifier que le compte est actif
+            if not user.is_active:
+                logger.warning("Tentative de connexion sur compte désactivé", email=email, user_id=str(user.id))
+                return None
+            
             # Vérifier le mot de passe
             if not self.password_manager.verify_password(password, user.hashed_password):
                 logger.warning("Mot de passe incorrect", email=email, user_id=str(user.id))
                 return None
+            
+            # Mettre à jour last_login
+            await self.db.execute(
+                update(User)
+                .where(User.id == user.id)
+                .values(last_login=datetime.now(timezone.utc))
+            )
+            await self.db.commit()
+            await self.db.refresh(user)
             
             logger.info("Authentification réussie", email=email, user_id=str(user.id))
             return user

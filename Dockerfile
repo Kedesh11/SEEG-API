@@ -1,70 +1,64 @@
-# Dockerfile optimisé pour One HCM SEEG Backend
-# Multi-stage build pour réduire la taille de l'image
+# Dockerfile multi-stage pour SEEG-API
+# Build optimisé pour production avec sécurité renforcée
 
-# Stage 1: Build
-FROM python:3.13-slim as builder
+# Stage 1: Builder
+FROM python:3.12-slim as builder
 
-# Variables d'environnement pour le build
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
+# Variables d'environnement pour Python
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Installation des dépendances système pour le build
-RUN apt-get update && apt-get install -y \
+WORKDIR /build
+
+# Installer les dépendances système nécessaires pour la compilation
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Création du répertoire de travail
-WORKDIR /app
-
-# Copie et installation des dépendances Python
+# Copier et installer les dépendances Python
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --user --no-warn-script-location -r requirements.txt
 
-# Stage 2: Production
-FROM python:3.13-slim as production
+# Stage 2: Runtime
+FROM python:3.12-slim
 
 # Variables d'environnement
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app \
-    PATH="/app/.local/bin:$PATH"
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PATH=/home/appuser/.local/bin:$PATH \
+    ENVIRONMENT=production
 
-# Installation des dépendances système minimales
-RUN apt-get update && apt-get install -y \
+# Installer seulement les dépendances runtime nécessaires
+RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+    && rm -rf /var/lib/apt/lists/*
 
-# Création d'un utilisateur non-root pour la sécurité
-RUN groupadd -r appuser && useradd -r -g appuser appuser
+# Créer un utilisateur non-root
+RUN useradd -m -u 1000 appuser
 
-# Copie des packages Python depuis le stage builder
-COPY --from=builder /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+WORKDIR /app
 
-# Copie du code source
-COPY . /app
+# Copier les dépendances Python depuis le builder
+COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 
-# Création des répertoires nécessaires
-RUN mkdir -p /app/uploads /app/logs && \
-    chown -R appuser:appuser /app && \
-    chmod +x /app/scripts/start.sh
+# Copier le code de l'application
+COPY --chown=appuser:appuser app/ ./app/
+COPY --chown=appuser:appuser alembic.ini ./
 
-# Changement vers l'utilisateur non-root
+# Passer à l'utilisateur non-root
 USER appuser
 
-# Exposition du port
+# Exposer le port
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:8000/health || exit 1
 
-# Commande de démarrage avec migrations
-CMD ["/app/scripts/start.sh"]
+# Commande de démarrage
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]

@@ -11,7 +11,8 @@ from app.services.auth import AuthService, UnauthorizedError
 
 from app.db.session import get_async_session as get_async_db_session
 from app.schemas.auth import (
-    LoginRequest, CandidateSignupRequest, CreateUserRequest, TokenResponse, PasswordResetRequest, PasswordResetConfirm, ChangePasswordRequest
+    LoginRequest, CandidateSignupRequest, CreateUserRequest, TokenResponse, 
+    RefreshTokenRequest, PasswordResetRequest, PasswordResetConfirm, ChangePasswordRequest
 )
 from app.schemas.user import UserResponse
 from app.services.auth import AuthService
@@ -21,6 +22,8 @@ from sqlalchemy import select
 from app.core.dependencies import get_current_user
 from app.schemas.auth import MatriculeVerificationResponse
 from app.models.seeg_agent import SeegAgent
+from app.core.security.security import TokenManager
+from app.core.rate_limit import limiter, AUTH_LIMITS, SIGNUP_LIMITS, DEFAULT_LIMITS
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -83,9 +86,11 @@ async def login_token_deprecated(
         "200": {
             "content": {"application/json": {"example": {"access_token": "<jwt>", "refresh_token": "<jwt>", "token_type": "bearer", "expires_in": 3600}}}
         },
-        "401": {"description": "Email ou mot de passe incorrect"}
+        "401": {"description": "Email ou mot de passe incorrect"},
+        "429": {"description": "Trop de tentatives de connexion"}
     }
 })
+@limiter.limit(AUTH_LIMITS)
 async def login(
     request: Request,
     db: AsyncSession = Depends(get_async_db_session),
@@ -96,6 +101,23 @@ async def login(
     - application/x-www-form-urlencoded: username=email, password=...
     """
     try:
+        # 1) Si un Authorization: Bearer <token> est fourni et valide, retourner directement de nouveaux tokens
+        auth_header = request.headers.get("authorization", "")
+        if auth_header.lower().startswith("bearer "):
+            try:
+                token = auth_header.split(" ", 1)[1].strip()
+                payload = TokenManager.verify_token(token)
+                if payload and payload.get("sub"):
+                    user_id = payload["sub"]
+                    result = await db.execute(select(User).where(User.id == user_id))
+                    user = result.scalar_one_or_none()
+                    if user:
+                        auth_service = AuthService(db)
+                        return await auth_service.create_access_token(user)
+            except Exception:
+                # Ignore et poursuivre le flux normal (email/password)
+                pass
+
         content_type = request.headers.get("content-type", "").lower()
         email = None
         password = None
@@ -135,9 +157,14 @@ async def login(
         "date_of_birth": "1994-06-12",
         "sexe": "F"
     }}}},
-    "responses": {"200": {"description": "Utilisateur créé", "content": {"application/json": {"example": {"id": "uuid", "email": "new.candidate@seeg.ga", "role": "candidate"}}}}}
+    "responses": {
+        "200": {"description": "Utilisateur créé", "content": {"application/json": {"example": {"id": "uuid", "email": "new.candidate@seeg.ga", "role": "candidate"}}}},
+        "429": {"description": "Trop de tentatives d'inscription"}
+    }
 })
+@limiter.limit(SIGNUP_LIMITS)
 async def signup_candidate(
+    request: Request,
     signup_data: CandidateSignupRequest,
     db: AsyncSession = Depends(get_async_db_session)
 ):
@@ -231,6 +258,106 @@ async def get_current_user_profile(
 ):
     logger.debug("Profil utilisateur demandé", user_id=str(current_user.id), email=current_user.email)
     return UserResponse.from_orm(current_user)
+
+
+@router.post("/refresh", response_model=TokenResponse, summary="Rafraîchir le token d'accès", openapi_extra={
+    "requestBody": {
+        "content": {
+            "application/json": {
+                "example": {"refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."}
+            }
+        }
+    },
+    "responses": {
+        "200": {
+            "content": {
+                "application/json": {
+                    "example": {
+                        "access_token": "eyJhbGciOiJIUzI1NiIs...",
+                        "refresh_token": "eyJhbGciOiJIUzI1NiIs...",
+                        "token_type": "bearer",
+                        "expires_in": 3600
+                    }
+                }
+            }
+        },
+        "401": {"description": "Token de rafraîchissement invalide ou expiré"},
+        "429": {"description": "Trop de tentatives de rafraîchissement"}
+    }
+})
+@limiter.limit(AUTH_LIMITS)
+async def refresh_token(
+    request: Request,
+    payload: RefreshTokenRequest,
+    db: AsyncSession = Depends(get_async_db_session),
+):
+    """
+    Rafraîchir le token d'accès en utilisant le token de rafraîchissement
+    
+    - **refresh_token**: Token de rafraîchissement valide obtenu lors de la connexion
+    
+    Retourne un nouveau token d'accès et un nouveau token de rafraîchissement.
+    """
+    try:
+        # Vérifier le refresh token
+        token_manager = TokenManager()
+        payload_data = token_manager.verify_token(payload.refresh_token)
+        
+        if not payload_data:
+            logger.warning("Tentative de refresh avec token invalide")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token de rafraîchissement invalide",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Vérifier que c'est bien un refresh token
+        if payload_data.get("type") != "refresh":
+            logger.warning("Tentative de refresh avec un token d'accès")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Type de token incorrect",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Récupérer l'utilisateur
+        user_id = payload_data.get("sub")
+        result = await db.execute(select(User).where(User.id == user_id))
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            logger.warning("Utilisateur non trouvé lors du refresh", user_id=user_id)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Utilisateur non trouvé",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Vérifier que le compte est actif
+        if not user.is_active:
+            logger.warning("Tentative de refresh pour compte désactivé", user_id=user_id)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Compte désactivé",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        
+        # Créer de nouveaux tokens
+        auth_service = AuthService(db)
+        tokens = await auth_service.create_access_token(user)
+        
+        logger.info("Token rafraîchi avec succès", user_id=str(user.id), email=user.email)
+        
+        return tokens
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Erreur lors du rafraîchissement du token", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erreur interne du serveur",
+        )
 
 
 @router.post("/logout", summary="Déconnexion")

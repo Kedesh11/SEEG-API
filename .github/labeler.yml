@@ -1,0 +1,46 @@
+# Configuration des labels automatiques pour les PRs
+
+documentation:
+  - changed-files:
+    - any-glob-to-any-file: ['docs/**', '*.md', 'README.*']
+
+tests:
+  - changed-files:
+    - any-glob-to-any-file: ['tests/**', '**/*test*.py']
+
+api:
+  - changed-files:
+    - any-glob-to-any-file: ['app/api/**']
+
+models:
+  - changed-files:
+    - any-glob-to-any-file: ['app/models/**']
+
+services:
+  - changed-files:
+    - any-glob-to-any-file: ['app/services/**']
+
+schemas:
+  - changed-files:
+    - any-glob-to-any-file: ['app/schemas/**']
+
+security:
+  - changed-files:
+    - any-glob-to-any-file: ['app/core/security/**']
+
+database:
+  - changed-files:
+    - any-glob-to-any-file: ['app/db/**', 'alembic/**', '**/migrations/**']
+
+config:
+  - changed-files:
+    - any-glob-to-any-file: ['app/core/config/**', '*.yml', '*.yaml', '*.toml', '.env*']
+
+dependencies:
+  - changed-files:
+    - any-glob-to-any-file: ['requirements.txt', 'pyproject.toml', 'setup.py']
+
+ci-cd:
+  - changed-files:
+    - any-glob-to-any-file: ['.github/**']
+

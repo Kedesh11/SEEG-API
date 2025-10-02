@@ -8,7 +8,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres
       - SECRET_KEY=your-super-secret-key-here-change-in-production-123456789
-      - ALLOWED_ORIGINS=["https://www.seeg-talentsource.com", "https://seeg-talentsource.com"]
+      - ALLOWED_ORIGINS=https://www.seeg-talentsource.com,,https://seeg-hcm.vercel.app
     volumes:
       - ./uploads:/app/uploads
     restart: unless-stopped

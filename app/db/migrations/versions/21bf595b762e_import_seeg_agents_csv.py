@@ -11,7 +11,7 @@ from sqlalchemy import text
 import os
 import csv
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 # revision identifiers, used by Alembic.
 revision = '21bf595b762e'
@@ -71,7 +71,7 @@ def upgrade() -> None:
         """
     )
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     agents = []
     for a in _iter_agents_from_csv(path):
         agents.append({

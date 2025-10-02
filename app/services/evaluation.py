@@ -5,7 +5,7 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, and_, or_, desc
 from sqlalchemy.orm import selectinload
-from datetime import datetime
+from datetime import datetime, timezone
 import structlog
 
 from app.models.evaluation import Protocol1Evaluation, Protocol2Evaluation
@@ -78,7 +78,7 @@ class EvaluationService:
                 overall_score=total_score,
                 recommendation=evaluation_data.recommendation,
                 additional_notes=evaluation_data.additional_notes,
-                evaluation_date=datetime.utcnow()
+                evaluation_date=datetime.now(timezone.utc)
             )
             
             self.db.add(evaluation)
@@ -148,7 +148,7 @@ class EvaluationService:
                 update_data['overall_score'] = self._calculate_protocol1_total_score(temp_eval)
             
             if update_data:
-                update_data["updated_at"] = datetime.utcnow()
+                update_data["updated_at"] = datetime.now(timezone.utc)
                 
                 await self.db.execute(
                     update(Protocol1Evaluation)
@@ -287,7 +287,7 @@ class EvaluationService:
                 overall_score=total_score,
                 recommendation=evaluation_data.recommendation,
                 additional_notes=evaluation_data.additional_notes,
-                evaluation_date=datetime.utcnow()
+                evaluation_date=datetime.now(timezone.utc)
             )
             
             self.db.add(evaluation)

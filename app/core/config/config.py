@@ -18,17 +18,17 @@ class Settings(BaseSettings):
     
     # Base de données - Utilisation des variables d'environnement
     DATABASE_URL: str = Field(
-        default="postgresql+asyncpg://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres",
+        default="postgresql+asyncpg://<user>:<password>@<host>:5432/<database>",
         description="URL de connexion à la base de données PostgreSQL"
     )
     DATABASE_URL_SYNC: str = Field(
-        default="postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres",
+        default="postgresql://<user>:<password>@<host>:5432/<database>",
         description="URL de connexion synchrone à la base de données PostgreSQL"
     )
     
     # Configuration de sécurité - Variables d'environnement obligatoires
     SECRET_KEY: str = Field(
-        default="your-super-secret-key-here-change-in-production-123456789",
+        default="CHANGE_ME_SECRET_KEY_32CHARS_MINIMUM_1234567890",
         min_length=32,
         description="Clé secrète pour la signature des tokens JWT"
     )
@@ -43,8 +43,8 @@ class Settings(BaseSettings):
     # Configuration email
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
-    SMTP_USERNAME: str = "support@seeg-talentsource.com"
-    SMTP_PASSWORD: str = "njev urja zsbc spfn"
+    SMTP_USERNAME: str = "smtp_user@domain.tld"
+    SMTP_PASSWORD: str = "CHANGE_ME_SMTP_PASSWORD"
     SMTP_TLS: bool = True
     SMTP_SSL: bool = False
     MAIL_FROM_NAME: str = "One HCM - SEEG Talent Source"
@@ -70,6 +70,10 @@ class Settings(BaseSettings):
     
     # Configuration Azure
     WEBSITES_PORT: int = 8000
+    APPLICATIONINSIGHTS_CONNECTION_STRING: Optional[str] = Field(
+        default=None,
+        description="Chaîne de connexion Azure Application Insights pour le monitoring"
+    )
     
     @field_validator('ALLOWED_ORIGINS')
     @classmethod
