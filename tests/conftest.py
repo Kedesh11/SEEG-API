@@ -1,130 +1,112 @@
-import asyncio
-import os
+from fastapi.testclient import TestClient
 import pytest
-from httpx import AsyncClient, ASGITransport
-from unittest.mock import AsyncMock, MagicMock
-from types import SimpleNamespace
-from uuid import uuid4
+import os
 
-from app.main import app
-from app.services.email import EmailService
-from app.services.auth import AuthService
-from app.services.job import JobOfferService
-from app.services.application import ApplicationService
-from app.core.dependencies import get_async_db_session
+
+def _configure_env_for_local_db():
+    os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://postgres:%20%20%20%20@SEEG:5432/recruteur")
+    os.environ.setdefault("DATABASE_URL_SYNC", "postgresql://postgres:%20%20%20%20@SEEG:5432/recruteur")
+    os.environ.setdefault("ENVIRONMENT", "development")
+    os.environ.setdefault("DEBUG", "true")
+    os.environ.setdefault("SECRET_KEY", "CHANGE_ME_IN_PROD_32CHARS_MINIMUM_1234567890")
+    os.environ.setdefault("JWT_ISSUER", "seeg-api")
+    os.environ.setdefault("JWT_AUDIENCE", "seeg-clients")
+
+
+_configure_env_for_local_db()
+
+from app.main import app  # noqa: E402  # import après config env
 
 
 @pytest.fixture(scope="session")
-def anyio_backend():
-    return "asyncio"
+def client():
+    return TestClient(app)
 
 
-@pytest.fixture(scope="session", autouse=True)
-def setup_test_env():
-    os.environ.setdefault("ENVIRONMENT", "test")
-    os.environ.setdefault("DEBUG", "false")
-    # Désactiver Application Insights pendant les tests
-    os.environ["APPLICATIONINSIGHTS_CONNECTION_STRING"] = ""
+@pytest.fixture(scope="session")
+def admin_credentials():
+    return {"email": "sevankedesh11@gmail.com", "password": "Sevan@Seeg"}
 
 
-# Mock de session BD
-@pytest.fixture
-async def mock_db_session():
-    """Mock de la session de base de données"""
-    mock_session = AsyncMock()
-    mock_session.commit = AsyncMock()
-    mock_session.rollback = AsyncMock()
-    mock_session.close = AsyncMock()
-    mock_session.refresh = AsyncMock()
-    mock_session.execute = AsyncMock()
-    mock_session.scalar = AsyncMock()
-    mock_session.scalars = AsyncMock()
-    return mock_session
+@pytest.fixture(scope="session")
+def get_bearer():
+    def _make(token: str) -> dict:
+        return {"Authorization": f"Bearer {token}"}
+    return _make
 
 
-@pytest.fixture(autouse=True)
-async def monkeypatch_services():
-    """Mock de tous les services pour les tests"""
-    
-    # ===== EMAIL SERVICE =====
-    async def _fake_send_email(self, to, subject, body, html_body=None, sender=None, cc=None, bcc=None, attachments=None):
-        return True
-    EmailService.send_email = _fake_send_email
-
-    # ===== AUTH SERVICE =====
-    async def _fake_reset_request(self, email: str) -> bool:
-        return True
-    AuthService.reset_password_request = _fake_reset_request
-
-    async def _fake_reset_confirm(self, token: str, new_password: str) -> bool:
-        return True
-    AuthService.reset_password_confirm = _fake_reset_confirm
-    
-    async def _fake_authenticate(self, email: str, password: str):
-        """Mock d'authentification qui retourne un faux utilisateur"""
-        if email.startswith("test") and password == "test123":
-            return SimpleNamespace(
-                id=str(uuid4()),
-                email=email,
-                role="candidate",
-                first_name="Test",
-                last_name="User",
-                is_active=True
-            )
-        return None
-    AuthService.authenticate_user = _fake_authenticate
-
-    # ===== JOB OFFER SERVICE =====
-    async def _fake_get_job_offers(self, skip: int = 0, limit: int = 100, recruiter_id=None, status=None):
-        return []
-    JobOfferService.get_job_offers = _fake_get_job_offers
-
-    # ===== APPLICATION SERVICE =====
-    async def _fake_get_application(self, application_id: str):
-        """Mock pour récupérer une candidature"""
-        return SimpleNamespace(
-            id=application_id,
-            candidate_id=str(uuid4()),
-            job_offer_id=str(uuid4()),
-            status="pending",
-            cover_letter="Test cover letter"
-        )
-    ApplicationService.get_application = _fake_get_application
-    
-    async def _fake_create_document(self, document_data):
-        """Mock pour créer un document"""
-        return SimpleNamespace(
-            id=str(uuid4()),
-            application_id=document_data.application_id,
-            document_type=document_data.document_type,
-            file_name=document_data.file_name,
-            file_size=document_data.file_size,
-            file_type=document_data.file_type,
-            created_at="2025-10-02T12:00:00Z"
-        )
-    ApplicationService.create_document = _fake_create_document
-
-    yield
+@pytest.fixture(scope="session")
+def admin_token(client, admin_credentials):
+    client.post("/api/v1/auth/create-first-admin")
+    r = client.post("/api/v1/auth/login", json=admin_credentials, headers={"content-type": "application/json"})
+    assert r.status_code == 200, r.text
+    return r.json()["access_token"]
 
 
-@pytest.fixture(autouse=True)
-async def mock_db_dependency():
-    """Mock de la dépendance get_async_db_session"""
-    async def _fake_db_session():
-        mock_session = AsyncMock()
-        mock_session.commit = AsyncMock()
-        mock_session.rollback = AsyncMock()
-        mock_session.close = AsyncMock()
-        mock_session.refresh = AsyncMock()
-        yield mock_session
-    
-    app.dependency_overrides[get_async_db_session] = _fake_db_session
-    yield
-    app.dependency_overrides.pop(get_async_db_session, None)
+@pytest.fixture(scope="session")
+def recruiter_credentials():
+    return {"email": "recruteur@test.local", "password": "Recrut3ur#2025"}
 
 
-@pytest.fixture()
-async def client() -> AsyncClient:
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c 
+@pytest.fixture(scope="session")
+def recruiter_token(client, recruiter_credentials, admin_token, get_bearer):
+    # créer recruteur si besoin
+    client.post(
+        "/api/v1/auth/create-user",
+        json={
+            "email": recruiter_credentials["email"],
+            "password": recruiter_credentials["password"],
+            "first_name": "Jean",
+            "last_name": "Mavoungou",
+            "role": "recruiter",
+        },
+        headers={**get_bearer(admin_token), "content-type": "application/json"},
+    )
+    r = client.post("/api/v1/auth/login", json=recruiter_credentials, headers={"content-type": "application/json"})
+    assert r.status_code == 200, r.text
+    return r.json()["access_token"]
+
+
+@pytest.fixture(scope="session")
+def candidate_credentials():
+    return {"email": "candidate@test.local", "password": "Password#2025"}
+
+
+@pytest.fixture(scope="session")
+def candidate_token(client, candidate_credentials):
+    # signup si besoin
+    client.post(
+        "/api/v1/auth/signup",
+        json={
+            "email": candidate_credentials["email"],
+            "password": candidate_credentials["password"],
+            "first_name": "Ada",
+            "last_name": "Lovelace",
+            "matricule": 123456,
+            "date_of_birth": "1990-01-01",
+            "sexe": "F"
+        },
+        headers={"content-type": "application/json"},
+    )
+    r = client.post("/api/v1/auth/login", json=candidate_credentials, headers={"content-type": "application/json"})
+    assert r.status_code == 200, r.text
+    return r.json()["access_token"]
+
+
+@pytest.fixture(scope="session")
+def seeded_ids(client, recruiter_token, candidate_token, get_bearer):
+    # créer une offre si besoin et retourner ses IDs via endpoints
+    r = client.post(
+        "/api/v1/jobs",
+        json={
+            "title": "Ingénieur Systèmes",
+            "description": "Gestion systèmes et réseaux",
+            "status": "open"
+        },
+        headers={**get_bearer(recruiter_token), "content-type": "application/json"},
+    )
+    job_data = r.json() if r.status_code == 200 else {}
+    job_id = job_data.get("id") or job_data.get("data", {}).get("id")
+    return {"job_offer_id": job_id}
+
+

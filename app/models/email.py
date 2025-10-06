@@ -9,12 +9,17 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy import (
     Column, DateTime, ForeignKey, String, Text,
-    Index
+    Index, JSON
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import BaseModel
+
+# Import pour les annotations de type
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .application import Application
 
 
 class EmailLog(BaseModel):
@@ -73,13 +78,13 @@ class EmailLog(BaseModel):
     
     # Métadonnées supplémentaires
     email_metadata: Mapped[Optional[Dict[str, Any]]] = mapped_column(
-        JSONB,
+        JSON,
         nullable=True,
         comment="Métadonnées supplémentaires"
     )
     
     # Relations
-    application: Mapped[Optional["Application"]] = relationship("Application")
+    application: Mapped[Optional["Application"]] = relationship("Application", lazy="select")
     
     # Contraintes
     __table_args__ = (

@@ -5,6 +5,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from fastapi import Request
+from app.core.config.config import settings
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -35,11 +36,18 @@ def get_identifier(request: Request) -> str:
 
 
 # Configuration du limiter
+storage_uri = "memory://"
+try:
+    if settings.ENVIRONMENT.lower() in ["production", "staging"] and settings.REDIS_URL:
+        storage_uri = settings.REDIS_URL
+except Exception:
+    pass
+
 limiter = Limiter(
     key_func=get_identifier,
-    default_limits=["1000/hour", "100/minute"],  # Limites par défaut
-    storage_uri="memory://",  # Utiliser Redis en production
-    headers_enabled=True,  # Ajouter les headers X-RateLimit-*
+    default_limits=["1000/hour", "100/minute"],
+    storage_uri=storage_uri,
+    headers_enabled=True,
 )
 
 # Limites spécifiques par route (format: "X/minute;Y/hour")

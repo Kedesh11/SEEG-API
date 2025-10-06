@@ -2,13 +2,20 @@
 Configuration de l'application
 """
 from typing import List, Optional, Union
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
 import os
 
 
 class Settings(BaseSettings):
     """Configuration de l'application"""
+    # Pydantic v2: ignorer les variables d'env inconnues (ex: $env:DATABASE_URL)
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
     
     # Configuration de base
     APP_NAME: str = "One HCM SEEG Backend"
@@ -35,6 +42,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    JWT_ISSUER: str = "seeg-api"
+    JWT_AUDIENCE: str = "seeg-clients"
     
     # Configuration CORS - Peut être une liste ou une chaîne séparée par des virgules
     ALLOWED_ORIGINS: Union[List[str], str] = ["http://localhost:3000", "http://localhost:5173", "https://www.seeg-talentsource.com", "https://seeg-hcm.vercel.app", "http://localhost:8080"]
@@ -94,10 +103,7 @@ class Settings(BaseSettings):
             warnings.warn("SECRET_KEY par défaut détectée. Changez-la en production !")
         return v
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
+    # Ancienne classe Config (Pydantic v1) supprimée pour éviter le conflit
 
 
 # Instance globale des paramètres

@@ -1,7 +1,7 @@
 """
 Modèle CandidateProfile basé sur le schéma Supabase
 """
-from sqlalchemy import Column, String, Integer, DateTime, ForeignKey, ARRAY
+from sqlalchemy import Column, String, Integer, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -26,7 +26,7 @@ class CandidateProfile(BaseModel):
     gender = Column(String)
     linkedin_url = Column(String)
     portfolio_url = Column(String)
-    skills = Column(ARRAY(String))
+    skills = Column(String)  # JSON string pour compatibilité SQLite
     years_experience = Column(Integer)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)

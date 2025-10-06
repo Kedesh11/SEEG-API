@@ -62,13 +62,20 @@ class TokenManager:
             str: Token JWT
         """
         to_encode = data.copy()
-        
+
+        now = datetime.now(timezone.utc)
         if expires_delta:
-            expire = datetime.now(timezone.utc) + expires_delta
+            expire = now + expires_delta
         else:
-            expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        
-        to_encode.update({"exp": expire})
+            expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+
+        to_encode.update({
+            "exp": expire,
+            "iat": now,
+            "nbf": now,
+            "iss": settings.JWT_ISSUER,
+            "aud": settings.JWT_AUDIENCE,
+        })
         encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
         
         return encoded_jwt
@@ -85,8 +92,16 @@ class TokenManager:
             str: Token de rafraîchissement JWT
         """
         to_encode = data.copy()
-        expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-        to_encode.update({"exp": expire, "type": "refresh"})
+        now = datetime.now(timezone.utc)
+        expire = now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        to_encode.update({
+            "exp": expire,
+            "iat": now,
+            "nbf": now,
+            "iss": settings.JWT_ISSUER,
+            "aud": settings.JWT_AUDIENCE,
+            "type": "refresh"
+        })
         
         encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
         return encoded_jwt
@@ -103,7 +118,13 @@ class TokenManager:
             Optional[Dict]: Données décodées ou None si invalide
         """
         try:
-            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+            payload = jwt.decode(
+                token,
+                settings.SECRET_KEY,
+                algorithms=[settings.ALGORITHM],
+                audience=settings.JWT_AUDIENCE,
+                options={"verify_aud": True}
+            )
             return payload
         except JWTError as e:
             logger.warning("Token verification failed", error=str(e))

@@ -11,7 +11,8 @@ import base64
 from app.models.application import Application, ApplicationDocument, ApplicationDraft, ApplicationHistory
 from app.schemas.application import (
     ApplicationCreate, ApplicationUpdate, ApplicationDocumentCreate, 
-    ApplicationDocumentUpdate, ApplicationDocumentWithData
+    ApplicationDocumentUpdate, ApplicationDocumentWithData,
+    ApplicationDraftUpdate, ApplicationHistoryCreate
 )
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError
 
@@ -69,6 +70,36 @@ class ApplicationService:
             raise
         except Exception as e:
             logger.error("Erreur récupération candidature", application_id=application_id, error=str(e))
+            raise BusinessLogicError("Erreur lors de la récupération de la candidature")
+    
+    async def get_application_with_relations(self, application_id: str) -> Optional[Application]:
+        """
+        Récupérer une candidature avec toutes ses relations pour le PDF
+        (users, candidate_profiles, job_offers)
+        """
+        try:
+            from sqlalchemy.orm import selectinload
+            
+            result = await self.db.execute(
+                select(Application)
+                .options(
+                    selectinload(Application.candidate),
+                    selectinload(Application.job_offer)
+                )
+                .where(Application.id == UUID(application_id))
+            )
+            application = result.scalar_one_or_none()
+            
+            if not application:
+                raise NotFoundError("Candidature non trouvée")
+            
+            return application
+        except ValueError:
+            raise ValidationError("ID de candidature invalide")
+        except NotFoundError:
+            raise
+        except Exception as e:
+            logger.error("Erreur récupération candidature avec relations", application_id=application_id, error=str(e))
             raise BusinessLogicError("Erreur lors de la récupération de la candidature")
     
     async def get_applications(

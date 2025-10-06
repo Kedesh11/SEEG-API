@@ -34,8 +34,15 @@ target_metadata = Base.metadata
 
 def get_url():
     """Retourne l'URL de la base de données."""
+    # Utiliser l'URL depuis alembic.ini si disponible, sinon depuis settings
+    url = config.get_main_option("sqlalchemy.url")
+    if url:
+        return url
+    
     base_url = settings.DATABASE_URL_SYNC
-    # Forcer SSL requis pour Azure si non présent
+    # Forcer SSL requis pour Azure si non présent (sauf localhost)
+    if "localhost" in base_url or "127.0.0.1" in base_url:
+        return base_url  # Pas de SSL pour connexions locales
     return base_url + ("&sslmode=require" if "?" in base_url else "?sslmode=require")
 
 

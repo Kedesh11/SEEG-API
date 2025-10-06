@@ -25,7 +25,7 @@ CSV_RELATIVE_PATH = os.path.join(
 )
 
 CSV_PATH = os.path.normpath(
-    os.path.join(CSV_RELATIVE_PATH, "data", "agents_seeg.csv")
+    os.path.join(CSV_RELATIVE_PATH, "app", "data", "seeg_agents.csv")
 )
 
 
@@ -54,7 +54,7 @@ def upgrade() -> None:
     conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_seeg_agents_matricule ON seeg_agents (matricule)"))
 
     if not os.path.isfile(CSV_PATH):
-        alt_path = os.path.normpath(os.path.join(os.getcwd(), "backend", "data", "agents_seeg.csv"))
+        alt_path = os.path.normpath(os.path.join(os.getcwd(), "app", "data", "seeg_agents.csv"))
         if os.path.isfile(alt_path):
             path = alt_path
         else:
@@ -93,7 +93,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     conn = op.get_bind()
 
-    paths_to_try = [CSV_PATH, os.path.normpath(os.path.join(os.getcwd(), "backend", "data", "agents_seeg.csv"))]
+    paths_to_try = [CSV_PATH, os.path.normpath(os.path.join(os.getcwd(), "app", "data", "seeg_agents.csv"))]
     csv_found = None
     for p in paths_to_try:
         if os.path.isfile(p):

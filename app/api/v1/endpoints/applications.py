@@ -6,12 +6,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 import base64
 import uuid
+import structlog
 from fastapi.responses import StreamingResponse
 
-from app.db.database import get_async_db
+logger = structlog.get_logger(__name__)
+
+from app.db.session import get_async_session as get_async_db
 from app.services.application import ApplicationService
 from app.services.file import FileService
 from app.services.email import EmailService
+from app.services.pdf import ApplicationPDFService
 from app.schemas.application import (
     ApplicationCreate, ApplicationUpdate, ApplicationResponse, ApplicationListResponse,
     ApplicationDocumentResponse, ApplicationDocumentCreate, ApplicationDocumentUpdate,
@@ -640,6 +644,107 @@ async def get_advanced_application_stats(
         return {"success": True, "data": stats}
     except Exception:
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+
+
+# ---- Export PDF de candidature ----
+@router.get("/{application_id}/export/pdf", summary="Télécharger le PDF complet de la candidature", openapi_extra={
+    "parameters": [
+        {"in": "path", "name": "application_id", "required": True, "schema": {"type": "string", "format": "uuid"}},
+        {"in": "query", "name": "include_documents", "required": False, "schema": {"type": "boolean", "default": False}},
+        {"in": "query", "name": "format", "required": False, "schema": {"type": "string", "enum": ["A4", "Letter"], "default": "A4"}},
+        {"in": "query", "name": "language", "required": False, "schema": {"type": "string", "enum": ["fr", "en"], "default": "fr"}}
+    ],
+    "responses": {
+        "200": {"description": "PDF généré avec succès", "content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}}},
+        "403": {"description": "Accès non autorisé"},
+        "404": {"description": "Candidature non trouvée"}
+    }
+})
+async def export_application_pdf(
+    application_id: str,
+    include_documents: bool = Query(False, description="Inclure les documents joints (non implémenté dans cette version)"),
+    format: str = Query("A4", description="Format du PDF (A4 ou Letter)"),
+    language: str = Query("fr", description="Langue du PDF (fr ou en)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db)
+):
+    """
+    Génère et télécharge un PDF complet de la candidature
+    
+    Contient:
+    - Informations personnelles du candidat
+    - Détails du poste visé
+    - Parcours professionnel
+    - Formation
+    - Compétences
+    - Réponses MTP (Métier, Talent, Paradigme)
+    - Motivation & Disponibilité
+    - Documents joints (liste)
+    - Entretien programmé (si applicable)
+    
+    Permissions:
+    - Candidat: Seulement ses propres candidatures
+    - Recruteur: Candidatures de ses offres
+    - Admin/Observer: Toutes les candidatures
+    """
+    try:
+        # 1. Récupérer la candidature avec toutes les relations
+        application_service = ApplicationService(db)
+        application = await application_service.get_application_with_relations(application_id)
+        
+        if not application:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidature non trouvée")
+        
+        # 2. Vérifier les permissions
+        is_admin = hasattr(current_user, 'role') and current_user.role in ['admin', 'observer']
+        is_recruiter = hasattr(current_user, 'role') and current_user.role == 'recruiter'
+        is_candidate = str(application.candidate_id) == str(current_user.id)
+
+        # Recruteur: vérifier que c'est son offre (relation singulière job_offer)
+        if is_recruiter and getattr(application, 'job_offer', None):
+            if getattr(application.job_offer, 'recruiter_id', None) is not None:
+                if str(application.job_offer.recruiter_id) != str(current_user.id):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Accès non autorisé : vous ne pouvez télécharger que les candidatures de vos offres"
+                    )
+        
+        # Si ni admin, ni recruteur autorisé, ni candidat
+        if not (is_admin or is_candidate or is_recruiter):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Accès non autorisé"
+            )
+        
+        # 3. Générer le PDF
+        pdf_service = ApplicationPDFService(page_format=format, language=language)
+        pdf_content = await pdf_service.generate_application_pdf(
+            application=application,
+            include_documents=include_documents
+        )
+        
+        # 4. Construire le nom du fichier
+        filename = ApplicationPDFService.get_filename(application)
+        
+        # 5. Retourner le PDF
+        return StreamingResponse(
+            iter([pdf_content]),
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except NotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except Exception as e:
+        logger.error("Erreur génération PDF", application_id=application_id, error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur lors de la génération du PDF: {str(e)}"
+        )
 
 
 # ---- Drafts globaux par offre (job_offer_id) ----

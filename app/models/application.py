@@ -2,7 +2,7 @@
 Modèles Application basés sur le schéma Supabase
 """
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON, Integer, LargeBinary
-from sqlalchemy.dialects.postgresql import UUID, BYTEA
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -52,7 +52,7 @@ class ApplicationDocument(BaseModel):
     application_id = Column(UUID(as_uuid=True), ForeignKey("applications.id", ondelete="CASCADE"))
     document_type = Column(String, nullable=False)  # 'cover_letter', 'cv', 'certificats', 'diplome'
     file_name = Column(String, nullable=False)
-    file_data = Column(BYTEA, nullable=False)  # Fichier PDF stocké en binaire
+    file_data = Column(LargeBinary, nullable=False)  # Fichier PDF stocké en binaire
     file_size = Column(Integer, nullable=False)
     file_type = Column(String, default="application/pdf")  # Type MIME
     uploaded_at = Column(DateTime(timezone=True), default=datetime.utcnow)

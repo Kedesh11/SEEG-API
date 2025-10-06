@@ -12,7 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security.security import TokenManager
 from app.core.logging.logging import security_logger
-from app.db.database import get_async_db
+from app.db.session import get_async_session as get_async_db
+from app.core.dependencies import get_current_user as core_get_current_user
 from app.schemas.base import ResponseSchema, PaginatedResponse
 from app.schemas.user import UserResponse, UserUpdate, CandidateProfileResponse
 from app.services.user import UserService
@@ -22,41 +23,8 @@ router = APIRouter()
 security_scheme = HTTPBearer()
 
 
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
-    db: AsyncSession = Depends(get_async_db)
-):
-    """Dépendance pour récupérer l'utilisateur actuel."""
-    try:
-        user_id = TokenManager.get_user_id_from_token(credentials.credentials)
-        user_service = UserService(db)
-        user = await user_service.get_user_by_id(UUID(user_id))
-        
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Utilisateur non trouvé"
-            )
-        
-        if not user.is_active:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Compte désactivé"
-            )
-        
-        return user
-    except HTTPException:
-        raise
-    except Exception as e:
-        security_logger.log_error(
-            operation="GET_CURRENT_USER",
-            table="users",
-            error=e
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token invalide"
-        )
+async def get_current_user(current_user = Depends(core_get_current_user)):
+    return current_user
 
 
 @router.get("/me", response_model=ResponseSchema[UserResponse], summary="Récupérer mon profil utilisateur", openapi_extra={
