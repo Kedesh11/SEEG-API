@@ -241,6 +241,31 @@ async def internal_error_handler(request, exc):
 async def startup_event():
     """Événement de démarrage de l'application"""
     logger.info("Démarrage de l'API One HCM SEEG", version=settings.APP_VERSION)
+    
+    # Validation de la configuration en production
+    if settings.ENVIRONMENT == "production":
+        logger.info("Validation de la configuration de production...")
+        
+        # Vérifier que SECRET_KEY est sécurisée
+        weak_keys = [
+            "your-super-secret-key-here-change-in-production-123456789",
+            "CHANGE_ME_SECRET_KEY_32CHARS_MINIMUM_1234567890",
+            "CHANGE_ME_IN_PROD_32CHARS_MINIMUM_1234567890"
+        ]
+        if settings.SECRET_KEY in weak_keys:
+            logger.error("SECRET_KEY non sécurisée détectée en production !")
+            raise ValueError("SECRET_KEY doit être changée en production !")
+        
+        # Vérifier que la base de données n'est pas locale
+        if "localhost" in settings.DATABASE_URL or "127.0.0.1" in settings.DATABASE_URL:
+            logger.error("Base de données locale détectée en production !")
+            raise ValueError("DATABASE_URL ne doit pas pointer vers localhost en production !")
+        
+        # Vérifier que DEBUG est désactivé
+        if settings.DEBUG:
+            logger.warning("DEBUG activé en production - Cela peut exposer des informations sensibles !")
+        
+        logger.info("Configuration de production validée avec succès")
 
 @app.on_event("shutdown")
 async def shutdown_event():

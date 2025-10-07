@@ -6,9 +6,23 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres
-      - SECRET_KEY=your-super-secret-key-here-change-in-production-123456789
-      - ALLOWED_ORIGINS=https://www.seeg-talentsource.com,,https://seeg-hcm.vercel.app
+      # IMPORTANT: Définir ces variables dans un fichier .env.production (non commité)
+      - DATABASE_URL=${DATABASE_URL}
+      - DATABASE_URL_SYNC=${DATABASE_URL_SYNC:-postgresql://user:password@host:5432/database}
+      - SECRET_KEY=${SECRET_KEY}
+      - ENVIRONMENT=${ENVIRONMENT:-production}
+      - DEBUG=${DEBUG:-false}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-https://www.seeg-talentsource.com,https://seeg-hcm.vercel.app}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_TLS=${SMTP_TLS:-true}
+      - SMTP_SSL=${SMTP_SSL:-false}
+      - MAIL_FROM_NAME=${MAIL_FROM_NAME:-One HCM - SEEG Talent Source}
+      - MAIL_FROM_EMAIL=${MAIL_FROM_EMAIL:-support@seeg-talentsource.com}
+      - PUBLIC_APP_URL=${PUBLIC_APP_URL:-https://www.seeg-talentsource.com}
+      - APPLICATIONINSIGHTS_CONNECTION_STRING=${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
     volumes:
       - ./uploads:/app/uploads
     restart: unless-stopped

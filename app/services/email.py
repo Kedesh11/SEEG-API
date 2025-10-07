@@ -29,6 +29,13 @@ class EmailService:
     
     def _setup_fastmail(self):
         """Configuration de FastMail"""
+        # Ne pas configurer FastMail en environnement de test
+        if settings.ENVIRONMENT == "testing":
+            self.mail_config = None
+            self.fastmail = None
+            logger.info("FastMail désactivé en environnement de test")
+            return
+            
         try:
             self.mail_config = ConnectionConfig(
                 MAIL_USERNAME=settings.SMTP_USERNAME,
@@ -83,6 +90,15 @@ class EmailService:
                 recipients = [to]
             else:
                 recipients = to
+            
+            # En environnement de test, simuler l'envoi
+            if settings.ENVIRONMENT == "testing":
+                logger.info(
+                    "Email simulé en environnement de test",
+                    to=recipients,
+                    subject=subject
+                )
+                return True
             
             # Création du message
             message = MessageSchema(

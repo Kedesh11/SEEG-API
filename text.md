@@ -1,1 +1,0 @@
-Je veux que tu rentres dans le dossier backend puis active l'environnement virtuel (env) et desactive l'environnement (base). Puis tu continues nos tests

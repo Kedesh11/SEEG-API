@@ -43,16 +43,27 @@ try:
 except Exception:
     pass
 
-limiter = Limiter(
-    key_func=get_identifier,
-    default_limits=["1000/hour", "100/minute"],
-    storage_uri=storage_uri,
-    headers_enabled=True,
-)
+# Désactiver le rate limiting en environnement de test
+if settings.ENVIRONMENT == "testing":
+    limiter = Limiter(
+        key_func=get_identifier,
+        default_limits=[],  # Pas de limites en test
+        storage_uri=storage_uri,
+        headers_enabled=False,
+        enabled=False,
+    )
+    logger.info("Rate limiting désactivé en environnement de test")
+else:
+    limiter = Limiter(
+        key_func=get_identifier,
+        default_limits=["1000/hour", "100/minute"],
+        storage_uri=storage_uri,
+        headers_enabled=True,
+    )
 
 # Limites spécifiques par route (format: "X/minute;Y/hour")
-AUTH_LIMITS = "5/minute;20/hour"  # Login strict
-SIGNUP_LIMITS = "3/minute;10/hour"  # Inscription limitée
-UPLOAD_LIMITS = "10/minute;50/hour"  # Upload de fichiers
-DEFAULT_LIMITS = "60/minute;500/hour"  # Par défaut pour les autres routes
+AUTH_LIMITS = "5/minute;20/hour" if settings.ENVIRONMENT != "testing" else ""
+SIGNUP_LIMITS = "3/minute;10/hour" if settings.ENVIRONMENT != "testing" else ""
+UPLOAD_LIMITS = "10/minute;50/hour" if settings.ENVIRONMENT != "testing" else ""
+DEFAULT_LIMITS = "60/minute;500/hour" if settings.ENVIRONMENT != "testing" else ""
 

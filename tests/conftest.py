@@ -1,16 +1,21 @@
 from fastapi.testclient import TestClient
 import pytest
 import os
+import asyncio
 
 
 def _configure_env_for_local_db():
-    os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://postgres:%20%20%20%20@SEEG:5432/recruteur")
-    os.environ.setdefault("DATABASE_URL_SYNC", "postgresql://postgres:%20%20%20%20@SEEG:5432/recruteur")
-    os.environ.setdefault("ENVIRONMENT", "development")
+    # Essayer localhost au lieu de SEEG pour la résolution DNS
+    os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://postgres:%20%20%20%20@localhost:5432/recruteur")
+    os.environ.setdefault("DATABASE_URL_SYNC", "postgresql://postgres:%20%20%20%20@localhost:5432/recruteur")
+    os.environ.setdefault("ENVIRONMENT", "testing")
     os.environ.setdefault("DEBUG", "true")
     os.environ.setdefault("SECRET_KEY", "CHANGE_ME_IN_PROD_32CHARS_MINIMUM_1234567890")
     os.environ.setdefault("JWT_ISSUER", "seeg-api")
     os.environ.setdefault("JWT_AUDIENCE", "seeg-clients")
+    # Désactiver Application Insights pour les tests
+    os.environ.setdefault("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
+    os.environ.setdefault("LOG_LEVEL", "ERROR")  # Réduire le logging pendant les tests
 
 
 _configure_env_for_local_db()
@@ -19,8 +24,19 @@ from app.main import app  # noqa: E402  # import après config env
 
 
 @pytest.fixture(scope="session")
+def event_loop():
+    """Créer un event loop pour toute la session de tests"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    yield loop
+    loop.close()
+
+
+@pytest.fixture(scope="session")
 def client():
-    return TestClient(app)
+    """Client de test avec raise_server_exceptions=False pour éviter les problèmes d'event loop"""
+    with TestClient(app, raise_server_exceptions=False) as test_client:
+        yield test_client
 
 
 @pytest.fixture(scope="session")

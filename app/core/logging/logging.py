@@ -25,7 +25,13 @@ class LoggingConfig:
             format="%(message)s",
             stream=sys.stdout,
             level=getattr(logging, settings.LOG_LEVEL.upper()),
+            force=True  # Force la reconfiguration pour Python 3.13+
         )
+        
+        # Désactiver les loggers HTTP en environnement de test
+        if settings.ENVIRONMENT == "testing":
+            logging.getLogger("httpx").setLevel(logging.CRITICAL)
+            logging.getLogger("httpcore").setLevel(logging.CRITICAL)
         
         # Configuration de structlog
         structlog.configure(

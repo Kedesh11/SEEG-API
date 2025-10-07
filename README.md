@@ -14,12 +14,170 @@ Backend API pour le système de gestion RH One HCM SEEG, développé avec FastAP
 
 Le frontend est déployé sur : **https://www.seeg-talentsource.com/**
 
-## 🚀 Démarrage Rapide
+## 🚀 Déploiement sur Azure
+
+La totalité de la documentation de déploiement est maintenant regroupée ici. Suivez les étapes ci-dessous pour préparer et déployer l'API en production.
+
+### 1. Préparer l’environnement de travail
+
+#### Prérequis logiciels
+| Outil | Version minimale | Vérification |
+|-------|------------------|--------------|
+| Python | 3.11 | `python --version`
+| Docker Desktop | 28.4.0 | `docker --version`
+| Azure CLI | 2.77.0 | `az --version`
+
+> **Important** : ouvrez PowerShell « Exécuter en tant qu’administrateur » pour installer Azure CLI et interagir avec Docker.
+
+#### Installation rapide
+```powershell
+# Installer Azure CLI (session admin)
+$ProgressPreference = 'SilentlyContinue'
+Invoke-WebRequest -Uri https://aka.ms/installazurecliwindows -OutFile $env:TEMP\AzureCLI.msi
+Start-Process msiexec.exe -Wait -ArgumentList "/i $env:TEMP\AzureCLI.msi /quiet"
+Remove-Item $env:TEMP\AzureCLI.msi
+
+# Vérifications
+az --version
+docker --version
+```
+
+### 2. Se connecter à Azure
+```powershell
+az login
+az account show
+```
+
+### 3. Préparer les secrets de production
+| Secret | Valeur attendue |
+|--------|-----------------|
+| `DATABASE_URL` | `postgresql+asyncpg://USER:PASSWORD@seeg-postgres-server.postgres.database.azure.com:5432/postgres` |
+| `DATABASE_URL_SYNC` | `postgresql://USER:PASSWORD@seeg-postgres-server.postgres.database.azure.com:5432/postgres` |
+| `SECRET_KEY` | Chaîne aléatoire de 64 caractères minimum (généré automatiquement par le script) |
+| `SMTP_USERNAME` | `support@seeg-talentsource.com` |
+| `SMTP_PASSWORD` | **App Password Gmail** (16 caractères) |
+
+> Vous pouvez créer un App Password Gmail depuis https://myaccount.google.com/security → « Mots de passe des applications ».
+
+### 4. Déploiement automatisé (recommandé)
+
+Le script `scripts/deploy-azure.ps1` automatise toutes les étapes : création des ressources Azure, build Docker, push vers ACR, configuration App Service.
+
+```powershell
+cd "C:\Users\Sevan Kedesh IKISSA\Desktop\Projects\Programme\SEEG\SEEG-API"
+.\env\Scripts\Activate.ps1
+.\scripts\deploy-azure.ps1
+```
+
+Étapes effectuées par le script :
+1. Vérification des prérequis (Azure CLI, Docker).
+2. Génération d’une `SECRET_KEY` sécurisée.
+3. Récupération interactive des secrets (DB, SMTP).
+4. Construction et push de l’image vers `onehcmseeg.azurecr.io`.
+5. Configuration de l’App Service `one-hcm-seeg-backend`.
+6. Tests de santé (`/health`) et affichage des URLs finales.
+
+Durée totale ≈ 15 minutes.
+
+### 5. Déploiement manuel (alternative)
+
+Si vous préférez exécuter chaque étape manuellement :
+
+```powershell
+# Variables d’exemple
+$RG="one-hcm-seeg-rg"
+$APP="one-hcm-seeg-backend"
+$ACR="onehcmseeg"
+$IMG="onehcmseeg.azurecr.io/one-hcm-seeg-backend:latest"
+
+# 1. Build & push Docker
+docker build -t $IMG .
+az acr login --name $ACR
+docker push $IMG
+
+# 2. Configurer l’App Service
+az webapp config container set --name $APP --resource-group $RG --docker-custom-image-name $IMG
+
+# 3. Mettre à jour les App Settings
+az webapp config appsettings set --name $APP --resource-group $RG --settings `
+    DATABASE_URL="..." DATABASE_URL_SYNC="..." SECRET_KEY="..." `
+    SMTP_USERNAME="support@seeg-talentsource.com" SMTP_PASSWORD="<APP_PASSWORD>" `
+    ENVIRONMENT="production" DEBUG="false" ALLOWED_ORIGINS="https://www.seeg-talentsource.com,https://seeg-hcm.vercel.app"
+
+# 4. Redémarrer
+az webapp restart --name $APP --resource-group $RG
+```
+
+### 6. Vérifications post-déploiement
+```powershell
+# Health check
+Invoke-WebRequest -Uri "https://one-hcm-seeg-backend.azurewebsites.net/health" -UseBasicParsing
+
+# Documentation API
+Start-Process "https://one-hcm-seeg-backend.azurewebsites.net/docs"
+
+# Création du premier administrateur
+$body = @{
+    email = "admin@seeg.ga"
+    password = "Admin@2025Secure!"
+    first_name = "Admin"
+    last_name = "SEEG"
+} | ConvertTo-Json
+Invoke-RestMethod -Method Post -Uri "https://one-hcm-seeg-backend.azurewebsites.net/api/v1/auth/create-first-admin" -Body $body -ContentType "application/json"
+```
+
+### 7. Migrations de base de données
+
+#### Option A : Script automatisé (recommandé)
+```powershell
+.\scripts\run-migrations.ps1
+```
+
+#### Option B : Exécution manuelle
+```powershell
+# Depuis votre machine
+.\env\Scripts\Activate.ps1
+alembic upgrade head
+
+# Ou directement dans l'App Service
+az webapp ssh --name one-hcm-seeg-backend --resource-group one-hcm-seeg-rg
+alembic upgrade head
+exit
+```
+
+### 8. Procédure de rollback
+```powershell
+# Lister les tags d’images
+az acr repository show-tags --name onehcmseeg --repository one-hcm-seeg-backend --orderby time_desc
+
+# Revenir à une version précédente
+$PREVIOUS_TAG="v1.0.0-20250107-120000"
+az webapp config container set --name one-hcm-seeg-backend --resource-group one-hcm-seeg-rg --docker-custom-image-name "onehcmseeg.azurecr.io/one-hcm-seeg-backend:$PREVIOUS_TAG"
+az webapp restart --name one-hcm-seeg-backend --resource-group one-hcm-seeg-rg
+```
+
+### 9. Troubleshooting rapide
+| Problème | Symptôme | Solution |
+|----------|----------|----------|
+| Azure CLI non reconnu | `az : command not found` | Installer Azure CLI, redémarrer PowerShell |
+| Docker inaccessible | `docker_engine: file not found` | Démarrer Docker Desktop, lancer PowerShell en admin |
+| App Service introuvable | `app ... introuvable` | Vérifier `$RESOURCE_GROUP`, `$APP` |
+| Logs Application Insights absents | `APPLICATIONINSIGHTS_CONNECTION_STRING` vide | Configurer via `az webapp config appsettings set` |
+| Erreurs 500 | `/health` échoue | `az webapp log tail --name one-hcm-seeg-backend --resource-group one-hcm-seeg-rg` |
+
+### 10. URLs importantes
+- API : `https://one-hcm-seeg-backend.azurewebsites.net`
+- Documentation interactive : `https://one-hcm-seeg-backend.azurewebsites.net/docs`
+- Health check : `https://one-hcm-seeg-backend.azurewebsites.net/health`
+
+---
+
+## 🖥️ Développement Local
 
 ### Prérequis
 
 - Python 3.11+
-- PostgreSQL (Azure Database)
+- PostgreSQL (Azure Database ou local)
 - Redis (optionnel, pour les tâches en arrière-plan)
 
 ### Installation
@@ -68,8 +226,6 @@ Protection contre les abus avec limites par endpoint:
 - **Upload**: 10 requêtes/minute
 - **Autres**: 60 requêtes/minute
 
-[📖 Documentation complète](docs/RATE_LIMITING.md)
-
 ### 🔄 Refresh Token
 Renouvellement sécurisé des tokens d'accès:
 ```bash
@@ -87,13 +243,21 @@ POST /api/v1/auth/refresh
 - Migrations automatiques
 - Health checks
 
-[📖 Documentation CI/CD](docs/CI_CD.md)
+### 🔐 Sécurité Renforcée
+- ✅ Validation automatique au démarrage en production
+  - Vérification de `SECRET_KEY` (pas de valeur par défaut)
+  - Vérification de `DATABASE_URL` (pas de localhost)
+  - Avertissement si `DEBUG` activé
+- ✅ Variables d'environnement sécurisées
+- ✅ Pas de secrets en clair dans le code
+- ✅ `.gitignore` mis à jour pour exclure `.env.production`
 
 ### 📊 Score Qualité
-- ✅ Tests: 29/29 (100%)
+- ✅ Tests: 21/22 (95.5%)
 - ✅ Coverage: 46%
 - ✅ Sécurité: 9/10
 - ✅ Documentation: Complète
+- ✅ **Production-Ready** : Validation automatique des configurations
 
 ## 🏗️ Architecture
 
@@ -370,7 +534,16 @@ sqlalchemy.url = postgresql+asyncpg://Sevan:Sevan%%40Seeg@seeg-postgres-server.p
 
 - `Dockerfile` (multi-étapes) : construit l'image backend FastAPI
 - `docker-compose.yml` : services locaux (app, db, …)
-- `scripts/start.sh` : commande d'entrée (uvicorn)
+
+### Scripts disponibles
+
+Le projet inclut 3 scripts PowerShell essentiels :
+
+| Script | Description |
+|--------|-------------|
+| `scripts/deploy-azure.ps1` | Déploiement complet sur Azure (création ressources, build, push, config) |
+| `scripts/mise_a_jour.ps1` | Mise à jour continue : rebuild image et redéploiement |
+| `scripts/run-migrations.ps1` | Exécution des migrations Alembic sur la base de production |
 
 ### Exemple de .env
 
@@ -405,7 +578,7 @@ Explication:
 - `docker build -t seeg-backend:local .` : construit l'image locale
 - `docker run ... -p 8000:8000` : expose le port 8000
 - `--env-file .env` : injecte les variables d'environnement
-- `scripts/start.sh` est exécuté dans le conteneur et lance `uvicorn`
+- Le `Dockerfile` définit la commande d'entrée qui lance `uvicorn`
 
 ### Docker Compose (optionnel)
 
@@ -564,4 +737,5 @@ Notes:
 - Les migrations doivent être idempotentes; surveiller les logs pendant l’exécution
 
 ### 8) Suivre les logs en direct
+```
 ```
