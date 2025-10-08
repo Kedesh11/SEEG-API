@@ -96,5 +96,8 @@ class DatabaseManager:
 # Fonction pour obtenir une session asynchrone (pour les tests)
 async def get_async_session():
     """Générateur pour obtenir une session asynchrone"""
-    async with AsyncSessionLocal() as session:
+    session = AsyncSessionLocal()
+    try:
         yield session
+    finally:
+        await session.close()

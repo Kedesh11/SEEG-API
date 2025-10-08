@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any, BinaryIO
 from datetime import datetime
 from uuid import UUID
 import base64
+from app.core.validators import validate_pdf_field
 
 
 class ApplicationBase(BaseModel):
@@ -100,6 +101,9 @@ class ApplicationDocumentBase(BaseModel):
     file_data: str = Field(..., description="Contenu du fichier PDF encodé en base64")
     file_size: int = Field(..., description="Taille du fichier en octets")
     file_type: str = Field(default="application/pdf", description="Type MIME du fichier")
+
+    # Utiliser le validateur PDF personnalisé
+    _validate_pdf = validate_pdf_field(max_size_mb=10)
 
     class Config:
         json_schema_extra = {

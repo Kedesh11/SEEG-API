@@ -14,6 +14,14 @@ from app.models.user import User
 router = APIRouter()
 logger = structlog.get_logger(__name__)
 
+
+def safe_log(level: str, message: str, **kwargs):
+    """Log avec gestion d'erreur pour éviter les problèmes de handler."""
+    try:
+        getattr(logger, level)(message, **kwargs)
+    except (TypeError, AttributeError):
+        print(f"{level.upper()}: {message} - {kwargs}")
+
 @router.get("/applications/optimized", summary="Récupérer les candidatures avec données complètes")
 async def get_applications_optimized(
     skip: int = Query(0, ge=0, description="Nombre d'éléments à ignorer"),
@@ -62,7 +70,7 @@ async def get_applications_optimized(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Erreur endpoint applications optimisées", error=str(e))
+        safe_log("error", "Erreur endpoint applications optimisées", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur lors de la récupération des candidatures"
@@ -103,7 +111,7 @@ async def get_dashboard_stats_optimized(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Erreur endpoint statistiques optimisées", error=str(e))
+        safe_log("error", "Erreur endpoint statistiques optimisées", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur lors de la récupération des statistiques"
@@ -147,7 +155,7 @@ async def get_candidate_applications_optimized(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Erreur endpoint candidatures candidat optimisées", error=str(e))
+        safe_log("error", "Erreur endpoint candidatures candidat optimisées", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur lors de la récupération des candidatures du candidat"
@@ -203,7 +211,7 @@ async def get_performance_comparison(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Erreur endpoint comparaison performance", error=str(e))
+        safe_log("error", "Erreur endpoint comparaison performance", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur lors de la comparaison de performance"

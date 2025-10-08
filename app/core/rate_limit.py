@@ -51,6 +51,7 @@ if settings.ENVIRONMENT == "testing":
         storage_uri=storage_uri,
         headers_enabled=False,
         enabled=False,
+        config_filename=None,  # Ne pas lire de fichier .env
     )
     logger.info("Rate limiting désactivé en environnement de test")
 else:
@@ -58,8 +59,11 @@ else:
         key_func=get_identifier,
         default_limits=["1000/hour", "100/minute"],
         storage_uri=storage_uri,
-        headers_enabled=True,
+        headers_enabled=False,  # ✅ CORRECTION: Désactiver injection de headers
+        config_filename=None,  # Ne pas lire de fichier .env
+        auto_check=False,  # ✅ CORRECTION: Désactiver auto-check
     )
+    logger.info("Rate limiting configuré")
 
 # Limites spécifiques par route (format: "X/minute;Y/hour")
 AUTH_LIMITS = "5/minute;20/hour" if settings.ENVIRONMENT != "testing" else ""

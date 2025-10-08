@@ -1,0 +1,39 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'seeg-api-monitor'
+
+scrape_configs:
+  # Scrape de l'API SEEG
+  - job_name: 'seeg-api'
+    metrics_path: '/monitoring/metrics'
+    static_configs:
+      - targets: ['seeg-api:8000']
+    bearer_token: 'your-metrics-token'  # À configurer
+
+  # Scrape de Prometheus lui-même
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Scrape de Redis Exporter (si utilisé)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # Scrape de PostgreSQL Exporter (si utilisé)
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres-exporter:9187']
+
+# Règles d'alerting
+rule_files:
+  - 'alerts.yml'
+
+# Configuration Alertmanager (si utilisé)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - 'alertmanager:9093'

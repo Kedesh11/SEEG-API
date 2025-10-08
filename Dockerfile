@@ -17,6 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libpq-dev \
+    libmagic1 \
+    libmagic-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copier et installer les dépendances Python
@@ -36,6 +38,8 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
+    libmagic1 \
+    netcat-openbsd \
     && rm -rf /var/lib/apt/lists/*
 
 # Créer un utilisateur non-root
@@ -50,15 +54,30 @@ COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 COPY --chown=appuser:appuser app/ ./app/
 COPY --chown=appuser:appuser alembic.ini ./
 
+# Copier le script de démarrage
+COPY --chown=appuser:appuser docker-entrypoint.sh ./
+
+# Copier la configuration de logging
+COPY --chown=appuser:appuser logging.yaml ./
+
 # Passer à l'utilisateur non-root
 USER appuser
 
-# Exposer le port
-EXPOSE 8000
+# Rendre le script exécutable
+RUN chmod +x docker-entrypoint.sh
 
-# Health check
+# Exposer les ports
+EXPOSE 8000 9090
+
+# Variables d'environnement pour le monitoring
+ENV LOG_LEVEL=INFO \
+    ENABLE_TRACING=true \
+    METRICS_ENABLED=true
+
+# Health check amélioré
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD curl -f http://localhost:8000/monitoring/health || exit 1
 
 # Commande de démarrage
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+ENTRYPOINT ["./docker-entrypoint.sh"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--access-log", "--log-config", "logging.yaml"]

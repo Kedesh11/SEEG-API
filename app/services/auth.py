@@ -18,6 +18,14 @@ from app.services.email import EmailService
 logger = structlog.get_logger(__name__)
 
 
+def safe_log(level: str, message: str, **kwargs):
+    """Log avec gestion d'erreur pour éviter les problèmes de handler."""
+    try:
+        getattr(logger, level)(message, **kwargs)
+    except (TypeError, AttributeError):
+        print(f"{level.upper()}: {message} - {kwargs}")
+
+
 class AuthService:
     """Service d'authentification"""
     
@@ -27,7 +35,21 @@ class AuthService:
         self.token_manager = TokenManager()
     
     async def authenticate_user(self, email: str, password: str) -> Optional[User]:
-        """Authentifier un utilisateur"""
+        """
+        Authentifier un utilisateur - LOGIQUE MÉTIER PURE.
+        
+        NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
+        
+        Args:
+            email: Email de l'utilisateur
+            password: Mot de passe en clair
+            
+        Returns:
+            User si authentification réussie, None sinon
+            
+        Raises:
+            BusinessLogicError: En cas d'erreur technique
+        """
         try:
             # Récupérer l'utilisateur par email
             result = await self.db.execute(
@@ -36,37 +58,52 @@ class AuthService:
             user = result.scalar_one_or_none()
             
             if not user:
-                logger.warning("Tentative de connexion avec email inexistant", email=email)
+                safe_log("warning", "Tentative de connexion avec email inexistant", email=email)
                 return None
             
             # Vérifier que le compte est actif
             if not user.is_active:
-                logger.warning("Tentative de connexion sur compte désactivé", email=email, user_id=str(user.id))
+                safe_log("warning", "Tentative de connexion sur compte désactivé", email=email, user_id=str(user.id))
                 return None
             
             # Vérifier le mot de passe
             if not self.password_manager.verify_password(password, user.hashed_password):
-                logger.warning("Mot de passe incorrect", email=email, user_id=str(user.id))
+                safe_log("warning", "Mot de passe incorrect", email=email, user_id=str(user.id))
                 return None
             
-            # Mettre à jour last_login
+            # Mettre à jour last_login (sera committé par l'endpoint)
             await self.db.execute(
                 update(User)
                 .where(User.id == user.id)
                 .values(last_login=datetime.now(timezone.utc))
             )
-            await self.db.commit()
-            await self.db.refresh(user)
+            # ✅ PAS de commit ici - c'est l'endpoint qui décide
+            # ✅ PAS de refresh ici - sera fait après commit par l'endpoint
             
-            logger.info("Authentification réussie", email=email, user_id=str(user.id))
+            safe_log("info", "Authentification réussie", email=email, user_id=str(user.id))
             return user
             
         except Exception as e:
-            logger.error("Erreur lors de l'authentification", email=email, error=str(e))
+            # ✅ PAS de rollback ici - géré par get_db() automatiquement
+            safe_log("error", "Erreur lors de l'authentification", email=email, error=str(e))
             raise BusinessLogicError("Erreur lors de l'authentification")
     
     async def create_candidate(self, user_data: CandidateSignupRequest) -> User:
-        """Créer un candidat (inscription publique)"""
+        """
+        Créer un candidat (inscription publique) - LOGIQUE MÉTIER PURE.
+        
+        NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
+        
+        Args:
+            user_data: Données d'inscription du candidat
+            
+        Returns:
+            User: Candidat créé (pas encore committé)
+            
+        Raises:
+            ValidationError: Si validation échoue
+            BusinessLogicError: En cas d'erreur technique
+        """
         try:
             # Vérifier si l'email existe déjà
             result = await self.db.execute(
@@ -76,7 +113,10 @@ class AuthService:
             if existing:
                 raise ValidationError("Un utilisateur avec cet email existe déjà")
             
+            # Hasher le mot de passe
             hashed = self.password_manager.hash_password(user_data.password)
+            
+            # Créer l'utilisateur
             user = User(
                 email=user_data.email,
                 hashed_password=hashed,
@@ -84,17 +124,77 @@ class AuthService:
                 last_name=user_data.last_name,
                 phone=user_data.phone,
                 role="candidate",
+                matricule=user_data.matricule,
+                date_of_birth=user_data.date_of_birth,
+                sexe=user_data.sexe,
             )
             self.db.add(user)
-            await self.db.commit()
-            await self.db.refresh(user)
-            logger.info("Candidat créé", user_id=str(user.id), email=user.email)
+            
+            # ✅ PAS de commit ici - c'est l'endpoint qui décide
+            # ✅ PAS de refresh ici - sera fait après commit par l'endpoint
+            
+            safe_log("info", "Candidat préparé pour création", email=user.email)
             return user
+            
         except ValidationError:
+            # ✅ PAS de rollback ici - géré par get_db() automatiquement
             raise
         except Exception as e:
-            logger.error("Erreur création candidat", error=str(e))
+            safe_log("error", "Erreur création candidat", error=str(e))
             raise BusinessLogicError("Erreur lors de la création du candidat")
+    
+    async def create_user(self, user_data: CreateUserRequest) -> User:
+        """
+        Créer un utilisateur (admin/recruteur) - LOGIQUE MÉTIER PURE.
+        
+        NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
+        Réservé aux admins.
+        
+        Args:
+            user_data: Données de l'utilisateur à créer
+            
+        Returns:
+            User: Utilisateur créé (pas encore committé)
+            
+        Raises:
+            ValidationError: Si validation échoue
+            BusinessLogicError: En cas d'erreur technique
+        """
+        try:
+            # Vérifier si l'email existe déjà
+            result = await self.db.execute(
+                select(User).where(User.email == user_data.email)
+            )
+            existing = result.scalar_one_or_none()
+            if existing:
+                raise ValidationError("Un utilisateur avec cet email existe déjà")
+            
+            # Hasher le mot de passe
+            hashed = self.password_manager.hash_password(user_data.password)
+            
+            # Créer l'utilisateur
+            user = User(
+                email=user_data.email,
+                hashed_password=hashed,
+                first_name=user_data.first_name,
+                last_name=user_data.last_name,
+                phone=user_data.phone,
+                role=user_data.role,
+            )
+            self.db.add(user)
+            
+            # ✅ PAS de commit ici - c'est l'endpoint qui décide
+            # ✅ PAS de refresh ici - sera fait après commit par l'endpoint
+            
+            safe_log("info", "Utilisateur préparé pour création", email=user.email, role=user_data.role)
+            return user
+            
+        except ValidationError:
+            # ✅ PAS de rollback ici - géré par get_db() automatiquement
+            raise
+        except Exception as e:
+            safe_log("error", "Erreur création utilisateur", error=str(e))
+            raise BusinessLogicError("Erreur lors de la création de l'utilisateur")
 
     async def create_access_token(self, user: User) -> TokenResponse:
         """Créer des tokens d'accès et refresh"""
@@ -103,7 +203,7 @@ class AuthService:
             refresh = self.token_manager.create_refresh_token({"sub": str(user.id), "role": user.role})
             return TokenResponse(access_token=access, refresh_token=refresh, token_type="bearer", expires_in=3600)
         except Exception as e:
-            logger.error("Erreur création token", error=str(e))
+            safe_log("error", "Erreur création token", error=str(e))
             raise BusinessLogicError("Erreur lors de la création du token")
 
     async def reset_password_request(self, email: str) -> bool:
@@ -113,7 +213,7 @@ class AuthService:
             user = result.scalar_one_or_none()
             if not user:
                 # Ne pas révéler l'existence ou non de l'email
-                logger.info("Demande de reset pour email inconnu", email=email)
+                safe_log("info", "Demande de reset pour email inconnu", email=email)
                 return True
             token = create_password_reset_token(email)
             reset_link = f"{''}/reset-password?token={token}"
@@ -126,48 +226,93 @@ class AuthService:
                 await email_service.send_email(to=user.email, subject=subject, body=body, html_body=html)
             except Exception as e:
                 # Log et continuer (la génération du token côté client peut suffire si l'email tombe en échec)
-                logger.error("Echec envoi email reset", error=str(e))
-            logger.info("Demande de réinitialisation de mot de passe", email=email, user_id=str(user.id))
+                safe_log("error", "Echec envoi email reset", error=str(e))
+            safe_log("info", "Demande de réinitialisation de mot de passe", email=email, user_id=str(user.id))
             return True
         except Exception as e:
-            logger.error("Erreur lors de la demande de réinitialisation", email=email, error=str(e))
+            safe_log("error", "Erreur lors de la demande de réinitialisation", email=email, error=str(e))
             raise BusinessLogicError("Erreur lors de la demande de réinitialisation")
     
-    async def reset_password_confirm(self, token: str, new_password: str) -> bool:
-        """Vérifier le token et mettre à jour le mot de passe."""
+    async def reset_password_confirm(self, token: str, new_password: str) -> User:
+        """
+        Vérifier le token et préparer le changement de mot de passe.
+        
+        NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
+        
+        Args:
+            token: Token de réinitialisation
+            new_password: Nouveau mot de passe
+            
+        Returns:
+            User: Utilisateur avec mot de passe modifié (pas encore committé)
+            
+        Raises:
+            ValidationError: Si token invalide ou utilisateur introuvable
+            BusinessLogicError: En cas d'erreur technique
+        """
         try:
             email = verify_password_reset_token(token)
             if not email:
                 raise ValidationError("Token de réinitialisation invalide ou expiré")
+            
             result = await self.db.execute(select(User).where(User.email == email))
             user = result.scalar_one_or_none()
             if not user:
                 raise ValidationError("Utilisateur introuvable pour ce token")
+            
+            # Modifier le mot de passe (sera committé par l'endpoint)
             user.hashed_password = self.password_manager.hash_password(new_password)
-            await self.db.commit()
-            logger.info("Mot de passe réinitialisé", user_id=str(user.id), email=email)
-            return True
+            
+            # ✅ PAS de commit ici - c'est l'endpoint qui décide
+            
+            safe_log("info", "Mot de passe préparé pour réinitialisation", user_id=str(user.id), email=email)
+            return user
+            
         except ValidationError:
             raise
         except Exception as e:
-            logger.error("Erreur lors de la confirmation de réinitialisation", error=str(e))
+            safe_log("error", "Erreur lors de la confirmation de réinitialisation", error=str(e))
             raise BusinessLogicError("Erreur lors de la confirmation de réinitialisation")
 
-    async def change_password(self, user_id: str, current_password: str, new_password: str) -> bool:
-        """Changer le mot de passe pour l'utilisateur authentifié."""
+    async def change_password(self, user_id: str, current_password: str, new_password: str) -> User:
+        """
+        Changer le mot de passe pour l'utilisateur authentifié.
+        
+        NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
+        
+        Args:
+            user_id: ID de l'utilisateur
+            current_password: Mot de passe actuel
+            new_password: Nouveau mot de passe
+            
+        Returns:
+            User: Utilisateur avec mot de passe modifié (pas encore committé)
+            
+        Raises:
+            ValidationError: Si utilisateur introuvable
+            UnauthorizedError: Si mot de passe actuel incorrect
+            BusinessLogicError: En cas d'erreur technique
+        """
         try:
             result = await self.db.execute(select(User).where(User.id == user_id))
             user = result.scalar_one_or_none()
             if not user:
                 raise ValidationError("Utilisateur introuvable")
+            
+            # Vérifier le mot de passe actuel
             if not self.password_manager.verify_password(current_password, user.hashed_password):
                 raise UnauthorizedError("Mot de passe actuel incorrect")
+            
+            # Modifier le mot de passe (sera committé par l'endpoint)
             user.hashed_password = self.password_manager.hash_password(new_password)
-            await self.db.commit()
-            logger.info("Mot de passe modifié", user_id=str(user.id))
-            return True
+            
+            # ✅ PAS de commit ici - c'est l'endpoint qui décide
+            
+            safe_log("info", "Mot de passe préparé pour modification", user_id=str(user.id))
+            return user
+            
         except (ValidationError, UnauthorizedError):
             raise
         except Exception as e:
-            logger.error("Erreur changement mot de passe", error=str(e), user_id=user_id)
+            safe_log("error", "Erreur changement mot de passe", error=str(e), user_id=user_id)
             raise BusinessLogicError("Erreur lors du changement de mot de passe")

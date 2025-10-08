@@ -53,54 +53,60 @@ class ApplicationService:
             raise BusinessLogicError("Erreur lors de la création de la candidature")
     
     async def get_application_by_id(self, application_id: str) -> Optional[Application]:
-        """Récupérer une candidature par son ID"""
-        try:
-            result = await self.db.execute(
-                select(Application).where(Application.id == UUID(application_id))
-            )
-            application = result.scalar_one_or_none()
-            
-            if not application:
-                raise NotFoundError("Candidature non trouvée")
-            
-            return application
-        except ValueError:
-            raise ValidationError("ID de candidature invalide")
-        except NotFoundError:
-            raise
-        except Exception as e:
-            logger.error("Erreur récupération candidature", application_id=application_id, error=str(e))
-            raise BusinessLogicError("Erreur lors de la récupération de la candidature")
+        """Récupérer une candidature par son ID avec cache"""
+        from app.core.cache import cache_application
+        from app.db.query_optimizer import QueryOptimizer
+        
+        @cache_application(expire=600)  # Cache 10 minutes
+        async def _get_application(app_id: str):
+            try:
+                query = select(Application).where(Application.id == UUID(app_id))
+                query = QueryOptimizer.optimize_application_query(query)
+                
+                result = await self.db.execute(query)
+                application = result.scalar_one_or_none()
+                
+                if not application:
+                    raise NotFoundError("Candidature non trouvée")
+                
+                return application
+                
+            except ValueError:
+                raise ValidationError("ID de candidature invalide")
+            except NotFoundError:
+                raise
+            except Exception as e:
+                logger.error("Erreur récupération candidature", application_id=app_id, error=str(e))
+                raise BusinessLogicError("Erreur lors de la récupération de la candidature")
+        
+        return await _get_application(application_id)
     
     async def get_application_with_relations(self, application_id: str) -> Optional[Application]:
         """
         Récupérer une candidature avec toutes ses relations pour le PDF
         (users, candidate_profiles, job_offers)
         """
-        try:
-            from sqlalchemy.orm import selectinload
-            
-            result = await self.db.execute(
-                select(Application)
-                .options(
-                    selectinload(Application.candidate),
-                    selectinload(Application.job_offer)
-                )
-                .where(Application.id == UUID(application_id))
-            )
-            application = result.scalar_one_or_none()
-            
-            if not application:
-                raise NotFoundError("Candidature non trouvée")
-            
-            return application
-        except ValueError:
-            raise ValidationError("ID de candidature invalide")
-        except NotFoundError:
-            raise
-        except Exception as e:
-            logger.error("Erreur récupération candidature avec relations", application_id=application_id, error=str(e))
-            raise BusinessLogicError("Erreur lors de la récupération de la candidature")
+        from app.core.cache import cache_key_wrapper
+        from app.db.query_optimizer import get_application_complete
+        
+        @cache_key_wrapper("application:full", expire=300)  # Cache 5 minutes
+        async def _get_full_application(app_id: str):
+            try:
+                application = await get_application_complete(self.db, app_id)
+                
+                if not application:
+                    raise NotFoundError("Candidature non trouvée")
+                
+                return application
+            except ValueError:
+                raise ValidationError("ID de candidature invalide")
+            except NotFoundError:
+                raise
+            except Exception as e:
+                logger.error("Erreur récupération candidature complète", application_id=app_id, error=str(e))
+                raise BusinessLogicError("Erreur lors de la récupération de la candidature")
+        
+        return await _get_full_application(application_id)
     
     async def get_applications(
         self, 

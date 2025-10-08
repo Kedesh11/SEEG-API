@@ -22,31 +22,51 @@ class UserService:
         self.db = db
     
     async def get_user_by_id(self, user_id: UUID) -> Optional[User]:
-        """Récupérer un utilisateur par son ID"""
-        try:
-            result = await self.db.execute(
-                select(User).where(User.id == user_id)
-            )
-            return result.scalar_one_or_none()
-        except Exception as e:
-            logger.error("Erreur récupération utilisateur", error=str(e), user_id=str(user_id))
-            raise BusinessLogicError("Erreur lors de la récupération de l'utilisateur")
+        """Récupérer un utilisateur par son ID avec cache"""
+        from app.core.cache import cache_user
+        from app.db.query_optimizer import QueryOptimizer
+        
+        @cache_user(expire=3600)  # Cache 1 heure
+        async def _get_user(user_id: str):
+            try:
+                query = select(User).where(User.id == user_id)
+                query = QueryOptimizer.optimize_user_query(query)
+                
+                result = await self.db.execute(query)
+                return result.scalar_one_or_none()
+            except Exception as e:
+                logger.error("Erreur récupération utilisateur", error=str(e), user_id=user_id)
+                raise BusinessLogicError("Erreur lors de la récupération de l'utilisateur")
+        
+        return await _get_user(str(user_id))
     
     async def get_user_by_email(self, email: str) -> Optional[User]:
-        """Récupérer un utilisateur par son email"""
-        try:
-            result = await self.db.execute(
-                select(User).where(User.email == email)
-            )
-            return result.scalar_one_or_none()
-        except Exception as e:
-            logger.error("Erreur récupération utilisateur par email", error=str(e), email=email)
-            raise BusinessLogicError("Erreur lors de la récupération de l'utilisateur")
+        """Récupérer un utilisateur par son email avec cache"""
+        from app.core.cache import cache_key_wrapper
+        from app.db.query_optimizer import QueryOptimizer
+        
+        @cache_key_wrapper("user:email", expire=1800)  # Cache 30 minutes
+        async def _get_user_by_email(email: str):
+            try:
+                query = select(User).where(User.email == email)
+                query = QueryOptimizer.optimize_user_query(query)
+                
+                result = await self.db.execute(query)
+                return result.scalar_one_or_none()
+            except Exception as e:
+                logger.error("Erreur récupération utilisateur par email", error=str(e), email=email)
+                raise BusinessLogicError("Erreur lors de la récupération de l'utilisateur")
+        
+        return await _get_user_by_email(email)
     
     async def get_users(self, skip: int = 0, limit: int = 100, role: Optional[str] = None, q: Optional[str] = None, sort: Optional[str] = None, order: Optional[str] = None) -> List[User]:
         """Récupérer la liste des utilisateurs avec filtres, recherche et tri."""
+        from app.db.query_optimizer import QueryOptimizer
+        
         try:
             query = select(User)
+            # Optimiser la requête
+            query = QueryOptimizer.optimize_user_query(query)
             # Filtres
             if role:
                 query = query.where(User.role == role)

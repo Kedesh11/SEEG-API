@@ -73,6 +73,11 @@ class ApplicationInsights:
     def _setup_logging(self):
         """Configurer le handler de logging Azure"""
         try:
+            # Skip Azure logging handler pour éviter les problèmes de threading avec Python 3.13
+            # Le handler Azure a des problèmes avec le lock en Python 3.13+
+            print("INFO: Azure Log Handler désactivé temporairement (compatibilité Python 3.13)")
+            return
+            
             # Ajouter le handler Azure au logger root
             azure_handler = AzureLogHandler(
                 connection_string=self.connection_string
@@ -90,7 +95,7 @@ class ApplicationInsights:
             
         except Exception as e:
             # Ne pas propager l'erreur pendant les tests
-            pass
+            print(f"WARNING: Azure Log Handler failed to initialize: {e}")
     
     def track_event(self, name: str, properties: dict = None):
         """

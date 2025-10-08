@@ -249,7 +249,7 @@ def verify_password_reset_token(token: str) -> Optional[str]:
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.database import get_async_db
+from app.db.database import get_db
 from app.models.user import User
 from sqlalchemy import select
 
@@ -258,7 +258,7 @@ security = HTTPBearer()
 
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_db)
 ) -> User:
     """
     Récupérer l'utilisateur actuel à partir du token JWT

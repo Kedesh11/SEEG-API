@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.database import get_async_db
+from app.db.database import get_db
 from app.services.interview import InterviewService
 from app.schemas.interview import (
     InterviewSlotCreate, InterviewSlotUpdate, InterviewSlotResponse,
@@ -15,16 +15,26 @@ from app.schemas.interview import (
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError
+import structlog
 
 router = APIRouter()
+logger = structlog.get_logger(__name__)
+
+
+def safe_log(level: str, message: str, **kwargs):
+    """Log avec gestion d'erreur pour Ã©viter les problÃ¨mes de handler."""
+    try:
+        getattr(logger, level)(message, **kwargs)
+    except (TypeError, AttributeError):
+        print(f"{level.upper()}: {message} - {kwargs}")
 
 
 @router.post(
     "/slots",
     response_model=InterviewSlotResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Créer un créneau d'entretien",
-    tags=["🎯 Entretiens"],
+    summary="CrÃ©er un crÃ©neau d'entretien",
+    tags=["ðŸŽ¯ Entretiens"],
     openapi_extra={
         "requestBody": {
             "content": {
@@ -34,7 +44,7 @@ router = APIRouter()
                         "time": "09:00:00",
                         "application_id": "00000000-0000-0000-0000-0000000000AA",
                         "candidate_name": "John Doe",
-                        "job_title": "Développeur Full Stack",
+                        "job_title": "DÃ©veloppeur Full Stack",
                         "status": "scheduled",
                         "location": "Libreville",
                         "notes": "Entretien technique"
@@ -44,7 +54,7 @@ router = APIRouter()
         },
         "responses": {
             "201": {
-                "description": "Créneau créé avec succès",
+                "description": "CrÃ©neau crÃ©Ã© avec succÃ¨s",
                 "content": {
                     "application/json": {
                         "example": {
@@ -53,7 +63,7 @@ router = APIRouter()
                             "time": "09:00:00",
                             "application_id": "uuid",
                             "candidate_name": "John Doe",
-                            "job_title": "Développeur Full Stack",
+                            "job_title": "DÃ©veloppeur Full Stack",
                             "status": "scheduled",
                             "is_available": False,
                             "location": "Libreville",
@@ -65,14 +75,14 @@ router = APIRouter()
                 }
             },
             "404": {
-                "description": "Candidature non trouvée"
+                "description": "Candidature non trouvÃ©e"
             },
             "409": {
-                "description": "Créneau déjà occupé",
+                "description": "CrÃ©neau dÃ©jÃ  occupÃ©",
                 "content": {
                     "application/json": {
                         "example": {
-                            "detail": "Le créneau 2025-10-15 à 09:00:00 est déjà occupé"
+                            "detail": "Le crÃ©neau 2025-10-15 Ã  09:00:00 est dÃ©jÃ  occupÃ©"
                         }
                     }
                 }
@@ -86,44 +96,54 @@ router = APIRouter()
 async def create_interview_slot(
     slot_data: InterviewSlotCreate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Créer un nouveau créneau d'entretien
+    CrÃ©er un nouveau crÃ©neau d'entretien
     
     **Validations** :
-    - Vérifier que le créneau n'existe pas déjà
-    - Vérifier que le créneau n'est pas déjà occupé
+    - VÃ©rifier que le crÃ©neau n'existe pas dÃ©jÃ 
+    - VÃ©rifier que le crÃ©neau n'est pas dÃ©jÃ  occupÃ©
     - Valider le format de la date (YYYY-MM-DD)
     - Valider le format de l'heure (HH:mm:ss)
-    - Vérifier que l'application_id existe
+    - VÃ©rifier que l'application_id existe
     
-    **Si le créneau existe et est disponible** : Le mettre à jour au lieu d'en créer un nouveau
+    **Si le crÃ©neau existe et est disponible** : Le mettre Ã  jour au lieu d'en crÃ©er un nouveau
     """
     try:
         interview_service = InterviewService(db)
-        return await interview_service.create_interview_slot(
+        result = await interview_service.create_interview_slot(
             slot_data, str(current_user.id)
         )
+        safe_log("info", "CrÃ©neau d'entretien crÃ©Ã©", 
+                slot_id=str(result.id) if hasattr(result, 'id') else "unknown",
+                date=slot_data.date,
+                time=slot_data.time,
+                user_id=str(current_user.id))
+        return result
     except NotFoundError as e:
+        safe_log("warning", "Candidature non trouvÃ©e pour crÃ©ation crÃ©neau", error=str(e))
         raise HTTPException(status_code=404, detail=str(e))
     except BusinessLogicError as e:
+        safe_log("warning", "CrÃ©neau dÃ©jÃ  occupÃ©", date=slot_data.date, time=slot_data.time, error=str(e))
         raise HTTPException(status_code=409, detail=str(e))
     except (ValidationError, ValueError) as e:
+        safe_log("warning", "Erreur validation crÃ©ation crÃ©neau", error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        safe_log("error", "Erreur crÃ©ation crÃ©neau entretien", error=str(e))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
 @router.get(
     "/slots",
     response_model=InterviewSlotListResponse,
-    summary="Lister les créneaux d'entretien (avec filtres)",
-    tags=["🎯 Entretiens"],
+    summary="Lister les crÃ©neaux d'entretien (avec filtres)",
+    tags=["ðŸŽ¯ Entretiens"],
     openapi_extra={
         "responses": {
             "200": {
-                "description": "Liste des créneaux",
+                "description": "Liste des crÃ©neaux",
                 "content": {
                     "application/json": {
                         "example": {
@@ -134,7 +154,7 @@ async def create_interview_slot(
                                     "time": "09:00:00",
                                     "application_id": "uuid",
                                     "candidate_name": "John Doe",
-                                    "job_title": "Développeur Full Stack",
+                                    "job_title": "DÃ©veloppeur Full Stack",
                                     "status": "scheduled",
                                     "is_available": False,
                                     "location": "Libreville",
@@ -155,35 +175,35 @@ async def create_interview_slot(
     }
 )
 async def get_interview_slots(
-    skip: int = Query(0, ge=0, description="Nombre d'éléments à ignorer (pagination)"),
-    limit: int = Query(50, ge=1, le=1000, description="Nombre maximum d'éléments à retourner"),
+    skip: int = Query(0, ge=0, description="Nombre d'Ã©lÃ©ments Ã  ignorer (pagination)"),
+    limit: int = Query(50, ge=1, le=1000, description="Nombre maximum d'Ã©lÃ©ments Ã  retourner"),
     application_id: Optional[str] = Query(None, description="Filtrer par candidature"),
     status: Optional[str] = Query(None, description="Filtrer par statut (scheduled, completed, cancelled)"),
-    is_available: Optional[bool] = Query(None, description="Filtrer par disponibilité (true=libre, false=occupé)"),
-    date_from: Optional[str] = Query(None, description="Date de début (YYYY-MM-DD)"),
+    is_available: Optional[bool] = Query(None, description="Filtrer par disponibilitÃ© (true=libre, false=occupÃ©)"),
+    date_from: Optional[str] = Query(None, description="Date de dÃ©but (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="Date de fin (YYYY-MM-DD)"),
     order: Optional[str] = Query(None, description="Ordre de tri (ex: date:asc,time:asc)"),
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Récupérer la liste des créneaux d'entretien
+    RÃ©cupÃ©rer la liste des crÃ©neaux d'entretien
     
     **Filtres disponibles** :
-    - `date_from` / `date_to` : Période (YYYY-MM-DD)
-    - `is_available` : true = créneaux libres, false = créneaux occupés
+    - `date_from` / `date_to` : PÃ©riode (YYYY-MM-DD)
+    - `is_available` : true = crÃ©neaux libres, false = crÃ©neaux occupÃ©s
     - `application_id` : Filtrer par candidature
     - `status` : scheduled, completed, cancelled
-    - `order` : Ordre de tri (date:asc,time:asc par défaut)
+    - `order` : Ordre de tri (date:asc,time:asc par dÃ©faut)
     
-    **Comportements spécifiques** :
-    - Retourne uniquement les créneaux occupés si `is_available=false`
-    - Exclut les créneaux sans `application_id` si `is_available=false`
-    - Tri par défaut : date ASC, puis time ASC
+    **Comportements spÃ©cifiques** :
+    - Retourne uniquement les crÃ©neaux occupÃ©s si `is_available=false`
+    - Exclut les crÃ©neaux sans `application_id` si `is_available=false`
+    - Tri par dÃ©faut : date ASC, puis time ASC
     """
     try:
         interview_service = InterviewService(db)
-        return await interview_service.get_interview_slots(
+        results = await interview_service.get_interview_slots(
             skip=skip,
             limit=limit,
             application_id=application_id,
@@ -193,19 +213,22 @@ async def get_interview_slots(
             date_to=date_to,
             order=order
         )
+        safe_log("info", "CrÃ©neaux entretiens rÃ©cupÃ©rÃ©s", count=results.total if hasattr(results, 'total') else 0, user_id=str(current_user.id))
+        return results
     except Exception as e:
+        safe_log("error", "Erreur rÃ©cupÃ©ration crÃ©neaux", error=str(e))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
 @router.get(
     "/slots/{slot_id}",
     response_model=InterviewSlotResponse,
-    summary="Récupérer un créneau d'entretien par ID",
-    tags=["🎯 Entretiens"],
+    summary="RÃ©cupÃ©rer un crÃ©neau d'entretien par ID",
+    tags=["ðŸŽ¯ Entretiens"],
     openapi_extra={
         "responses": {
             "200": {
-                "description": "Créneau trouvé",
+                "description": "CrÃ©neau trouvÃ©",
                 "content": {
                     "application/json": {
                         "example": {
@@ -220,7 +243,7 @@ async def get_interview_slots(
                 }
             },
             "404": {
-                "description": "Créneau non trouvé"
+                "description": "CrÃ©neau non trouvÃ©"
             }
         }
     }
@@ -228,25 +251,29 @@ async def get_interview_slots(
 async def get_interview_slot(
     slot_id: str,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Récupérer un créneau d'entretien par son ID
+    RÃ©cupÃ©rer un crÃ©neau d'entretien par son ID
     """
     try:
         interview_service = InterviewService(db)
-        return await interview_service.get_interview_slot(slot_id)
+        result = await interview_service.get_interview_slot(slot_id)
+        safe_log("info", "CrÃ©neau entretien rÃ©cupÃ©rÃ©", slot_id=slot_id)
+        return result
     except NotFoundError as e:
+        safe_log("warning", "CrÃ©neau non trouvÃ©", slot_id=slot_id)
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        safe_log("error", "Erreur rÃ©cupÃ©ration crÃ©neau", slot_id=slot_id, error=str(e))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
 @router.put(
     "/slots/{slot_id}",
     response_model=InterviewSlotResponse,
-    summary="Mettre à jour un créneau d'entretien",
-    tags=["🎯 Entretiens"],
+    summary="Mettre Ã  jour un crÃ©neau d'entretien",
+    tags=["ðŸŽ¯ Entretiens"],
     openapi_extra={
         "requestBody": {
             "content": {
@@ -255,14 +282,14 @@ async def get_interview_slot(
                         "date": "2025-10-16",
                         "time": "10:00:00",
                         "status": "scheduled",
-                        "notes": "Entretien reporté"
+                        "notes": "Entretien reportÃ©"
                     }
                 }
             }
         },
         "responses": {
             "200": {
-                "description": "Créneau mis à jour",
+                "description": "CrÃ©neau mis Ã  jour",
                 "content": {
                     "application/json": {
                         "example": {
@@ -275,14 +302,14 @@ async def get_interview_slot(
                 }
             },
             "404": {
-                "description": "Créneau non trouvé"
+                "description": "CrÃ©neau non trouvÃ©"
             },
             "409": {
-                "description": "Nouveau créneau déjà occupé",
+                "description": "Nouveau crÃ©neau dÃ©jÃ  occupÃ©",
                 "content": {
                     "application/json": {
                         "example": {
-                            "detail": "Le créneau 2025-10-16 à 10:00:00 est déjà occupé par une autre candidature"
+                            "detail": "Le crÃ©neau 2025-10-16 Ã  10:00:00 est dÃ©jÃ  occupÃ© par une autre candidature"
                         }
                     }
                 }
@@ -294,22 +321,22 @@ async def update_interview_slot(
     slot_id: str,
     slot_data: InterviewSlotUpdate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Mettre à jour un créneau d'entretien
+    Mettre Ã  jour un crÃ©neau d'entretien
     
     **Logique complexe pour changement de date/heure** :
     
     Lorsque la **date** ou **l'heure** change :
-    1. Libérer l'ancien créneau (marquer comme disponible)
-    2. Vérifier si le nouveau créneau existe
-    3. Si disponible, l'occuper ; sinon créer un nouveau créneau
+    1. LibÃ©rer l'ancien crÃ©neau (marquer comme disponible)
+    2. VÃ©rifier si le nouveau crÃ©neau existe
+    3. Si disponible, l'occuper ; sinon crÃ©er un nouveau crÃ©neau
     
     **Tous les champs sont optionnels** :
     - `date` : YYYY-MM-DD
     - `time` : HH:mm:ss
-    - `application_id` : Changer la candidature liée
+    - `application_id` : Changer la candidature liÃ©e
     - `candidate_name`
     - `job_title`
     - `status` : scheduled, completed, cancelled
@@ -318,39 +345,45 @@ async def update_interview_slot(
     """
     try:
         interview_service = InterviewService(db)
-        return await interview_service.update_interview_slot(
+        result = await interview_service.update_interview_slot(
             slot_id, slot_data, str(current_user.id)
         )
+        safe_log("info", "CrÃ©neau d'entretien mis Ã  jour", slot_id=slot_id, user_id=str(current_user.id))
+        return result
     except NotFoundError as e:
+        safe_log("warning", "CrÃ©neau non trouvÃ© pour MAJ", slot_id=slot_id)
         raise HTTPException(status_code=404, detail=str(e))
     except BusinessLogicError as e:
+        safe_log("warning", "Erreur logique mÃ©tier MAJ crÃ©neau", slot_id=slot_id, error=str(e))
         raise HTTPException(status_code=409, detail=str(e))
     except (ValidationError, ValueError) as e:
+        safe_log("warning", "Erreur validation MAJ crÃ©neau", slot_id=slot_id, error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        safe_log("error", "Erreur MAJ crÃ©neau", slot_id=slot_id, error=str(e))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
 @router.delete(
     "/slots/{slot_id}",
     status_code=status.HTTP_200_OK,
-    summary="Annuler un créneau d'entretien (soft delete)",
-    tags=["🎯 Entretiens"],
+    summary="Annuler un crÃ©neau d'entretien (soft delete)",
+    tags=["ðŸŽ¯ Entretiens"],
     openapi_extra={
         "responses": {
             "200": {
-                "description": "Entretien annulé avec succès",
+                "description": "Entretien annulÃ© avec succÃ¨s",
                 "content": {
                     "application/json": {
                         "example": {
-                            "message": "Entretien annulé avec succès",
+                            "message": "Entretien annulÃ© avec succÃ¨s",
                             "slot_id": "uuid"
                         }
                     }
                 }
             },
             "404": {
-                "description": "Créneau non trouvé"
+                "description": "CrÃ©neau non trouvÃ©"
             }
         }
     }
@@ -358,28 +391,31 @@ async def update_interview_slot(
 async def delete_interview_slot(
     slot_id: str,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Annuler un créneau d'entretien (soft delete)
+    Annuler un crÃ©neau d'entretien (soft delete)
     
     **Logique** :
-    - Ne supprime pas physiquement le créneau
+    - Ne supprime pas physiquement le crÃ©neau
     - Marque le statut comme "cancelled"
-    - Libère le créneau (`is_available = true`)
+    - LibÃ¨re le crÃ©neau (`is_available = true`)
     - Dissocie la candidature (`application_id = null`)
-    - Conserve les données pour l'historique
+    - Conserve les donnÃ©es pour l'historique
     """
     try:
         interview_service = InterviewService(db)
         await interview_service.delete_interview_slot(slot_id, str(current_user.id))
+        safe_log("info", "CrÃ©neau d'entretien annulÃ©", slot_id=slot_id, user_id=str(current_user.id))
         return {
-            "message": "Entretien annulé avec succès",
+            "message": "Entretien annulÃ© avec succÃ¨s",
             "slot_id": slot_id
         }
     except NotFoundError as e:
+        safe_log("warning", "CrÃ©neau non trouvÃ© pour annulation", slot_id=slot_id)
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
+        safe_log("error", "Erreur annulation crÃ©neau", slot_id=slot_id, error=str(e))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
@@ -387,7 +423,7 @@ async def delete_interview_slot(
     "/stats/overview",
     response_model=InterviewStatsResponse,
     summary="Statistiques globales des entretiens",
-    tags=["🎯 Entretiens"],
+    tags=["ðŸŽ¯ Entretiens"],
     openapi_extra={
         "responses": {
             "200": {
@@ -412,18 +448,21 @@ async def delete_interview_slot(
 )
 async def get_interview_statistics(
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Récupérer les statistiques des entretiens
+    RÃ©cupÃ©rer les statistiques des entretiens
     
     Retourne:
     - Nombre total d'entretiens
-    - Répartition par statut
+    - RÃ©partition par statut
     - Statistiques globales
     """
     try:
         interview_service = InterviewService(db)
-        return await interview_service.get_interview_statistics()
+        stats = await interview_service.get_interview_statistics()
+        safe_log("info", "Statistiques entretiens rÃ©cupÃ©rÃ©es", user_id=str(current_user.id))
+        return stats
     except Exception as e:
+        safe_log("error", "Erreur rÃ©cupÃ©ration statistiques entretiens", error=str(e))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")

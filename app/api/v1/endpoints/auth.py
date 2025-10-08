@@ -6,62 +6,125 @@ from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Dict, Any
 import structlog
-from pydantic import ValidationError
-from app.services.auth import AuthService, UnauthorizedError
+from pydantic import ValidationError as PydanticValidationError
+from uuid import UUID
 
-from app.db.session import get_async_session as get_async_db_session
+from app.db.database import get_db
 from app.schemas.auth import (
     LoginRequest, CandidateSignupRequest, CreateUserRequest, TokenResponse, 
-    RefreshTokenRequest, PasswordResetRequest, PasswordResetConfirm, ChangePasswordRequest
+    RefreshTokenRequest, PasswordResetRequest, PasswordResetConfirm, ChangePasswordRequest,
+    MatriculeVerificationResponse
 )
 from app.schemas.user import UserResponse
 from app.services.auth import AuthService
-from app.core.dependencies import get_current_active_user, get_current_admin_user
+from app.core.exceptions import UnauthorizedError
+from app.core.dependencies import get_current_active_user, get_current_admin_user, get_current_user
 from app.models.user import User
-from sqlalchemy import select
-from app.core.dependencies import get_current_user
-from app.schemas.auth import MatriculeVerificationResponse
 from app.models.seeg_agent import SeegAgent
 from app.core.security.security import TokenManager
 from app.core.rate_limit import limiter, AUTH_LIMITS, SIGNUP_LIMITS, DEFAULT_LIMITS
+from app.core.exceptions import ValidationError
+from sqlalchemy import select
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 
-async def _login_core(email: str, password: str, db: AsyncSession) -> TokenResponse:
+def safe_log(level: str, message: str, **kwargs):
+    """Log avec gestion d'erreur pour éviter les problèmes de handler."""
     try:
-        auth_service = AuthService(db)
-        user = await auth_service.authenticate_user(email, password)
+        getattr(logger, level)(message, **kwargs)
+    except (TypeError, AttributeError):
+        print(f"{level.upper()}: {message} - {kwargs}")
+
+
+async def _login_core(email: str, password: str, db: AsyncSession) -> TokenResponse:
+    """
+    Logique centrale de connexion - GESTION EXPLICITE DES TRANSACTIONS.
+    
+    Architecture propre : commit/rollback gérés ici, pas dans le service.
+    """
+    try:
+        safe_log("debug", "🔵 Début _login_core", email=email)
+        
+        # Étape 1: Créer le service
+        try:
+            auth_service = AuthService(db)
+            safe_log("debug", "✅ AuthService créé")
+        except Exception as e:
+            safe_log("error", "❌ Erreur création AuthService", error=str(e), error_type=type(e).__name__)
+            raise
+        
+        # Étape 2: Authentifier l'utilisateur
+        try:
+            user = await auth_service.authenticate_user(email, password)
+            safe_log("debug", "✅ authenticate_user terminé", user_found=user is not None)
+        except Exception as e:
+            safe_log("error", "❌ Erreur dans authenticate_user", error=str(e), error_type=type(e).__name__)
+            raise
+        
         if not user:
-            logger.warning("Tentative de connexion avec des identifiants incorrects", email=email)
+            safe_log("warning", "Tentative de connexion avec des identifiants incorrects", email=email)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Email ou mot de passe incorrect",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        tokens = await auth_service.create_access_token(user)
-        logger.info(
-            "Connexion réussie",
+        
+        # Étape 3: Commit de la mise à jour last_login
+        try:
+            safe_log("debug", "🔄 Tentative de commit...")
+            await db.commit()
+            safe_log("debug", "✅ Commit réussi")
+        except Exception as e:
+            safe_log("error", "❌ Erreur lors du commit", error=str(e), error_type=type(e).__name__)
+            raise
+        
+        # Étape 4: Refresh de l'utilisateur
+        try:
+            safe_log("debug", "🔄 Tentative de refresh...")
+            await db.refresh(user)
+            safe_log("debug", "✅ Refresh réussi")
+        except Exception as e:
+            safe_log("error", "❌ Erreur lors du refresh", error=str(e), error_type=type(e).__name__)
+            raise
+        
+        # Étape 5: Créer les tokens
+        try:
+            safe_log("debug", "🔄 Création des tokens...")
+            tokens = await auth_service.create_access_token(user)
+            safe_log("debug", "✅ Tokens créés")
+        except Exception as e:
+            safe_log("error", "❌ Erreur création tokens", error=str(e), error_type=type(e).__name__)
+            raise
+        
+        safe_log(
+            "info",
+            "✅ Connexion réussie",
             user_id=str(user.id),
             email=user.email,
             role=user.role,
         )
         return tokens
+        
     except HTTPException:
+        # HTTPException = erreurs métier, pas de rollback nécessaire
         raise
     except Exception as e:
-        logger.error("Erreur lors de la connexion", error=str(e), email=email)
+        # Erreur technique = rollback automatique par get_db()
+        safe_log("error", "❌ Erreur globale dans _login_core", error=str(e), error_type=type(e).__name__, email=email)
+        import traceback
+        safe_log("error", "Traceback complet", traceback=traceback.format_exc())
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erreur interne du serveur",
+            detail=f"Erreur interne du serveur: {str(e)}",
         )
 
 
 @router.post("/token", response_model=TokenResponse, summary="Obtenir un token (déprécié)", include_in_schema=False)
 async def login_token_deprecated(
     form_data: OAuth2PasswordRequestForm = Depends(),
-    db: AsyncSession = Depends(get_async_db_session),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Déprécié: utiliser /api/v1/auth/login
@@ -90,10 +153,10 @@ async def login_token_deprecated(
         "429": {"description": "Trop de tentatives de connexion"}
     }
 })
-@limiter.limit(AUTH_LIMITS)
+# @limiter.limit(AUTH_LIMITS)  # ⚠️ TEMPORAIREMENT DÉSACTIVÉ - Problème avec slowapi
 async def login(
     request: Request,
-    db: AsyncSession = Depends(get_async_db_session),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Connexion d'un utilisateur via un unique endpoint qui accepte:
@@ -139,7 +202,7 @@ async def login(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Erreur lors de la connexion unifiée", error=str(e))
+        safe_log("error", "Erreur lors de la connexion unifiée", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur interne du serveur",
@@ -162,14 +225,16 @@ async def login(
         "429": {"description": "Trop de tentatives d'inscription"}
     }
 })
-@limiter.limit(SIGNUP_LIMITS)
+# @limiter.limit(SIGNUP_LIMITS)  # ⚠️ TEMPORAIREMENT DÉSACTIVÉ - Problème avec slowapi
 async def signup_candidate(
     request: Request,
     signup_data: CandidateSignupRequest,
-    db: AsyncSession = Depends(get_async_db_session)
+    db: AsyncSession = Depends(get_db)
 ):
     """
-    Inscription d'un candidat (public)
+    Inscription d'un candidat (public) - GESTION EXPLICITE DES TRANSACTIONS.
+    
+    Architecture propre : commit/rollback gérés ici, pas dans le service.
     
     Args:
         signup_data: Données d'inscription du candidat
@@ -182,30 +247,87 @@ async def signup_candidate(
         HTTPException: Si l'inscription échoue
     """
     try:
-        auth_service = AuthService(db)
-        user = await auth_service.create_candidate(signup_data)
-        logger.info("Inscription candidat réussie", user_id=str(user.id), email=user.email)
-        return UserResponse.from_orm(user)
+        safe_log("debug", "🔵 Début signup_candidate", email=signup_data.email)
+        
+        # Étape 1: Créer le service
+        try:
+            auth_service = AuthService(db)
+            safe_log("debug", "✅ AuthService créé")
+        except Exception as e:
+            safe_log("error", "❌ Erreur création AuthService", error=str(e), error_type=type(e).__name__)
+            raise
+        
+        # Étape 2: Créer le candidat
+        try:
+            user = await auth_service.create_candidate(signup_data)
+            safe_log("debug", "✅ Candidat préparé", email=user.email)
+        except ValidationError as e:
+            safe_log("warning", "Validation échouée", error=str(e))
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        except Exception as e:
+            safe_log("error", "❌ Erreur dans create_candidate", error=str(e), error_type=type(e).__name__)
+            raise
+        
+        # Étape 3: Commit
+        try:
+            safe_log("debug", "🔄 Tentative de commit...")
+            await db.commit()
+            safe_log("debug", "✅ Commit réussi")
+        except Exception as e:
+            safe_log("error", "❌ Erreur lors du commit", error=str(e), error_type=type(e).__name__)
+            raise
+        
+        # Étape 4: Refresh
+        try:
+            safe_log("debug", "🔄 Tentative de refresh...")
+            await db.refresh(user)
+            safe_log("debug", "✅ Refresh réussi", user_id=str(user.id))
+        except Exception as e:
+            safe_log("error", "❌ Erreur lors du refresh", error=str(e), error_type=type(e).__name__)
+            raise
+        
+        # Étape 5: Créer la réponse
+        try:
+            safe_log("debug", "🔄 Création UserResponse...")
+            response = UserResponse.from_orm(user)
+            safe_log("debug", "✅ UserResponse créé")
+        except Exception as e:
+            safe_log("error", "❌ Erreur création UserResponse", error=str(e), error_type=type(e).__name__)
+            raise
+        
+        safe_log("info", "✅ Inscription candidat réussie", user_id=str(user.id), email=user.email)
+        return response
+        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Erreur lors de l'inscription candidat", error=str(e))
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
+        # Erreur technique = rollback automatique par get_db()
+        safe_log("error", "❌ Erreur globale signup_candidate", error=str(e), error_type=type(e).__name__)
+        import traceback
+        safe_log("error", "Traceback complet", traceback=traceback.format_exc())
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Erreur interne du serveur: {str(e)}")
 
 
 @router.post("/create-user", response_model=UserResponse, summary="Créer un utilisateur (admin/recruteur)")
 async def create_user(
     user_data: CreateUserRequest,
-    db: AsyncSession = Depends(get_async_db_session),
+    db: AsyncSession = Depends(get_db),
     current_admin: User = Depends(get_current_admin_user)
 ):
     """
-    Créer un utilisateur (admin/recruteur) - admin seulement
+    Créer un utilisateur (admin/recruteur) - admin seulement.
+    GESTION EXPLICITE DES TRANSACTIONS.
     """
     try:
         auth_service = AuthService(db)
         user = await auth_service.create_user(user_data)
-        logger.info(
+        
+        # ✅ Commit explicite de la création
+        await db.commit()
+        await db.refresh(user)
+        
+        safe_log(
+            "info",
             "Utilisateur créé par admin",
             user_id=str(user.id),
             email=user.email,
@@ -213,22 +335,32 @@ async def create_user(
             created_by=str(current_admin.id),
         )
         return UserResponse.from_orm(user)
+        
     except HTTPException:
         raise
+    except ValidationError as e:
+        safe_log("warning", "Erreur de validation lors de la création d'utilisateur", error=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        logger.error("Erreur lors de la création d'utilisateur", error=str(e))
+        safe_log("error", "Erreur lors de la création d'utilisateur", error=str(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
 
 
 @router.post("/create-first-admin", response_model=UserResponse, summary="Créer le premier administrateur")
 async def create_first_admin(
-    db: AsyncSession = Depends(get_async_db_session)
+    db: AsyncSession = Depends(get_db)
 ):
+    """
+    Créer le premier administrateur - GESTION EXPLICITE DES TRANSACTIONS.
+    """
     try:
+        # Vérifier qu'aucun admin n'existe
         result = await db.execute(select(User).where(User.role == "admin"))
         existing_admin = result.scalar_one_or_none()
         if existing_admin:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Un administrateur existe déjà")
+        
+        # Créer l'admin
         auth_service = AuthService(db)
         hashed_password = auth_service.password_manager.hash_password("Sevan@Seeg")
         admin = User(
@@ -239,14 +371,20 @@ async def create_first_admin(
             hashed_password=hashed_password,
         )
         db.add(admin)
+        
+        # ✅ Commit explicite de la création
         await db.commit()
         await db.refresh(admin)
-        logger.info("Premier administrateur créé", user_id=str(admin.id), email=admin.email)
+        
+        safe_log("info", "Premier administrateur créé", user_id=str(admin.id), email=admin.email)
         return UserResponse.from_orm(admin)
+        
     except HTTPException:
+        # Erreur métier, rollback automatique par get_db()
         raise
     except Exception as e:
-        logger.error("Erreur lors de la création du premier admin", error=str(e))
+        # Erreur technique, rollback automatique par get_db()
+        safe_log("error", "Erreur lors de la création du premier admin", error=str(e))
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
 
 
@@ -256,7 +394,8 @@ async def create_first_admin(
 async def get_current_user_profile(
     current_user: User = Depends(get_current_active_user)
 ):
-    logger.debug("Profil utilisateur demandé", user_id=str(current_user.id), email=current_user.email)
+    """Retourne le profil de l'utilisateur connecté avec ses informations complètes"""
+    safe_log("debug", "Profil utilisateur demandé", user_id=str(current_user.id), email=current_user.email)
     return UserResponse.from_orm(current_user)
 
 
@@ -285,11 +424,11 @@ async def get_current_user_profile(
         "429": {"description": "Trop de tentatives de rafraîchissement"}
     }
 })
-@limiter.limit(AUTH_LIMITS)
+# @limiter.limit(AUTH_LIMITS)  # ⚠️ TEMPORAIREMENT DÉSACTIVÉ - Problème avec slowapi
 async def refresh_token(
     request: Request,
     payload: RefreshTokenRequest,
-    db: AsyncSession = Depends(get_async_db_session),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Rafraîchir le token d'accès en utilisant le token de rafraîchissement
@@ -304,7 +443,7 @@ async def refresh_token(
         payload_data = token_manager.verify_token(payload.refresh_token)
         
         if not payload_data:
-            logger.warning("Tentative de refresh avec token invalide")
+            safe_log("warning", "Tentative de refresh avec token invalide")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token de rafraîchissement invalide",
@@ -313,7 +452,7 @@ async def refresh_token(
         
         # Vérifier que c'est bien un refresh token
         if payload_data.get("type") != "refresh":
-            logger.warning("Tentative de refresh avec un token d'accès")
+            safe_log("warning", "Tentative de refresh avec un token d'accès")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Type de token incorrect",
@@ -326,7 +465,7 @@ async def refresh_token(
         user = result.scalar_one_or_none()
         
         if not user:
-            logger.warning("Utilisateur non trouvé lors du refresh", user_id=user_id)
+            safe_log("warning", "Utilisateur non trouvé lors du refresh", user_id=user_id)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Utilisateur non trouvé",
@@ -335,7 +474,7 @@ async def refresh_token(
         
         # Vérifier que le compte est actif
         if not user.is_active:
-            logger.warning("Tentative de refresh pour compte désactivé", user_id=user_id)
+            safe_log("warning", "Tentative de refresh pour compte désactivé", user_id=user_id)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Compte désactivé",
@@ -346,14 +485,14 @@ async def refresh_token(
         auth_service = AuthService(db)
         tokens = await auth_service.create_access_token(user)
         
-        logger.info("Token rafraîchi avec succès", user_id=str(user.id), email=user.email)
+        safe_log("info", "Token rafraîchi avec succès", user_id=str(user.id), email=user.email)
         
         return tokens
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Erreur lors du rafraîchissement du token", error=str(e))
+        safe_log("error", "Erreur lors du rafraîchissement du token", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur interne du serveur",
@@ -361,9 +500,13 @@ async def refresh_token(
 
 
 @router.post("/logout", summary="Déconnexion")
-async def logout():
-    logger.info("Déconnexion utilisateur")
-    return {"message": "Déconnexion réussie"}
+async def logout(current_user: User = Depends(get_current_user)):
+    """
+    Déconnexion de l'utilisateur actuel.
+    Note: Avec JWT, la déconnexion se fait côté client en supprimant le token.
+    """
+    safe_log("info", "Déconnexion utilisateur", user_id=str(current_user.id))
+    return {"message": "Déconnexion réussie", "user_id": str(current_user.id)}
 
 
 @router.get("/verify-matricule", response_model=MatriculeVerificationResponse, summary="Vérifier le matricule de l'utilisateur connecté", openapi_extra={
@@ -382,7 +525,7 @@ async def logout():
 })
 async def verify_matricule(
     current_user: User = Depends(get_current_active_user),
-    db: AsyncSession = Depends(get_async_db_session)
+    db: AsyncSession = Depends(get_db)
 ):
     """
     Vérifie que le matricule fourni lors de l'inscription correspond à un agent actif dans la table seeg_agents.
@@ -407,7 +550,7 @@ async def verify_matricule(
             return MatriculeVerificationResponse(valid=True, agent_matricule=str(agent.matricule))
         return MatriculeVerificationResponse(valid=False, reason="Matricule non trouvé dans seeg_agents")
     except Exception as e:
-        logger.error("Erreur de vérification de matricule", error=str(e))
+        safe_log("error", "Erreur de vérification de matricule", error=str(e), matricule=str(current_user.matricule))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
@@ -417,14 +560,23 @@ async def verify_matricule(
 })
 async def forgot_password(
     payload: PasswordResetRequest,
-    db: AsyncSession = Depends(get_async_db_session),
+    db: AsyncSession = Depends(get_db),
 ):
+    """
+    Demande de réinitialisation du mot de passe.
+    
+    Pour des raisons de sécurité, retourne toujours un succès même si l'email n'existe pas.
+    Cela empêche l'énumération des utilisateurs.
+    """
     try:
         service = AuthService(db)
         await service.reset_password_request(payload.email)
+        safe_log("info", "Demande de réinitialisation mot de passe", email=payload.email)
         return {"success": True, "message": "Email envoyé si l'adresse existe"}
-    except Exception:
-        raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+    except Exception as e:
+        safe_log("error", "Erreur demande réinitialisation mot de passe", error=str(e))
+        # Retourner succès même en cas d'erreur pour éviter l'énumération
+        return {"success": True, "message": "Email envoyé si l'adresse existe"}
 
 
 @router.post("/reset-password", summary="Confirmer la réinitialisation du mot de passe", openapi_extra={
@@ -433,15 +585,32 @@ async def forgot_password(
 })
 async def reset_password(
     payload: PasswordResetConfirm,
-    db: AsyncSession = Depends(get_async_db_session),
+    db: AsyncSession = Depends(get_db),
 ):
+    """
+    Confirmer la réinitialisation du mot de passe avec le token reçu par email.
+    GESTION EXPLICITE DES TRANSACTIONS.
+    
+    Le token a une durée de validité limitée (typiquement 1 heure).
+    """
     try:
         service = AuthService(db)
-        await service.reset_password_confirm(payload.token, payload.new_password)
+        user = await service.reset_password_confirm(payload.token, payload.new_password)
+        
+        # ✅ Commit explicite du changement de mot de passe
+        await db.commit()
+        
+        safe_log("info", "Mot de passe réinitialisé avec succès", user_id=str(user.id))
         return {"success": True, "message": "Mot de passe réinitialisé"}
-    except ValidationError as e:
+        
+    except (ValidationError, PydanticValidationError) as e:
+        safe_log("warning", "Erreur validation réinitialisation mot de passe", error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
+    except UnauthorizedError as e:
+        safe_log("warning", "Token de réinitialisation invalide")
+        raise HTTPException(status_code=400, detail="Token invalide ou expiré")
+    except Exception as e:
+        safe_log("error", "Erreur réinitialisation mot de passe", error=str(e))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
@@ -452,15 +621,31 @@ async def reset_password(
 async def change_password(
     payload: ChangePasswordRequest,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_async_db_session),
+    db: AsyncSession = Depends(get_db),
 ):
+    """
+    Changer le mot de passe de l'utilisateur connecté.
+    GESTION EXPLICITE DES TRANSACTIONS.
+    
+    Nécessite le mot de passe actuel pour confirmation.
+    """
     try:
         service = AuthService(db)
-        await service.change_password(str(current_user.id), payload.current_password, payload.new_password)
+        user = await service.change_password(str(current_user.id), payload.current_password, payload.new_password)
+        
+        # ✅ Commit explicite du changement de mot de passe
+        await db.commit()
+        
+        safe_log("info", "Mot de passe changé avec succès", user_id=str(current_user.id))
         return {"success": True, "message": "Mot de passe modifié"}
+        
     except UnauthorizedError as e:
+        safe_log("warning", "Tentative de changement avec mauvais mot de passe", user_id=str(current_user.id))
         raise HTTPException(status_code=401, detail=str(e))
-    except ValidationError as e:
+    except (ValidationError, PydanticValidationError) as e:
+        safe_log("warning", "Erreur validation changement mot de passe", user_id=str(current_user.id), error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
+    except Exception as e:
+        safe_log("error", "Erreur changement mot de passe", user_id=str(current_user.id), error=str(e))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+

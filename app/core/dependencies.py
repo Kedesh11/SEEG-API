@@ -9,7 +9,7 @@ from sqlalchemy import select
 from typing import Optional
 import structlog
 
-from app.db.session import get_async_session as get_async_db_session
+from app.db.database import get_db
 from app.models.user import User
 from app.core.security.security import TokenManager
 
@@ -20,7 +20,7 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_async_db_session)
+    db: AsyncSession = Depends(get_db)
 ) -> User:
     """
     Récupérer l'utilisateur actuel à partir du token JWT

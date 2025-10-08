@@ -1,0 +1,237 @@
+{
+  "info": {
+    "name": "SEEG API - Authentication",
+    "description": "Collection complète des endpoints d'authentification",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    },
+    {
+      "key": "azureUrl",
+      "value": "https://seeg-backend-api.azurewebsites.net",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refresh_token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Create First Admin",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/create-first-admin",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "auth", "create-first-admin"]
+        },
+        "description": "Créer le premier administrateur (exécuter une seule fois)"
+      }
+    },
+    {
+      "name": "2. Login Admin",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    var jsonData = pm.response.json();",
+              "    pm.collectionVariables.set('access_token', jsonData.access_token);",
+              "    pm.collectionVariables.set('refresh_token', jsonData.refresh_token);",
+              "    console.log('Tokens saved!');",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"sevankedesh11@gmail.com\",\n  \"password\": \"Sevan@Seeg\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/login",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "auth", "login"]
+        },
+        "description": "Connexion administrateur (sauvegarde automatique des tokens)"
+      }
+    },
+    {
+      "name": "3. Signup Candidate",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"sandryunin0@spotify.com\",\n  \"password\": \"TestPassword123!@#\",\n  \"first_name\": \"Sharline\",\n  \"last_name\": \"Andryunin\",\n  \"matricule\": 761176,\n  \"phone\": \"387-161-7303\",\n  \"date_of_birth\": \"1977-03-31\",\n  \"sexe\": \"F\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/signup",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "auth", "signup"]
+        },
+        "description": "Inscription d'un nouveau candidat (public - pas d'auth)"
+      }
+    },
+    {
+      "name": "4. Get My Profile",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/me",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "auth", "me"]
+        },
+        "description": "Récupérer le profil de l'utilisateur connecté (requiert token)"
+      }
+    },
+    {
+      "name": "5. Refresh Token",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "if (pm.response.code === 200) {",
+              "    var jsonData = pm.response.json();",
+              "    pm.collectionVariables.set('access_token', jsonData.access_token);",
+              "    pm.collectionVariables.set('refresh_token', jsonData.refresh_token);",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/refresh",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "auth", "refresh"]
+        },
+        "description": "Rafraîchir le token d'accès"
+      }
+    },
+    {
+      "name": "6. Forgot Password",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"test@example.com\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/forgot-password",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "auth", "forgot-password"]
+        },
+        "description": "Demander la réinitialisation du mot de passe"
+      }
+    },
+    {
+      "name": "7. Verify Matricule",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/verify-matricule",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "auth", "verify-matricule"]
+        },
+        "description": "Vérifier le matricule (candidats uniquement)"
+      }
+    },
+    {
+      "name": "8. Logout",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{access_token}}",
+            "type": "text"
+          }
+        ],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/auth/logout",
+          "host": ["{{baseUrl}}"],
+          "path": ["api", "v1", "auth", "logout"]
+        },
+        "description": "Déconnexion"
+      }
+    },
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": ["{{baseUrl}}"],
+          "path": ["health"]
+        },
+        "description": "Vérifier l'état de l'API"
+      }
+    }
+  ]
+}
+

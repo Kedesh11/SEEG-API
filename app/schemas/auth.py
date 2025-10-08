@@ -2,15 +2,28 @@
 Schémas Pydantic pour l'authentification
 """
 from typing import Optional
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from datetime import date
 from app.core.enums.user_enums import UserRole
+from app.core.validators import Validators
 
 
 class LoginRequest(BaseModel):
     """Schéma pour la connexion"""
-    email: EmailStr = Field(..., description="Adresse email")
+    email: str = Field(..., description="Adresse email")
     password: str = Field(..., min_length=1, description="Mot de passe")
+
+    # Validation de l'email
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v):
+        return Validators.validate_email(v)
+    
+    # Validation du mot de passe (lenient pour le login)
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v):
+        return Validators.validate_password(v, min_length=8)
 
     class Config:
         json_schema_extra = {
@@ -23,14 +36,32 @@ class LoginRequest(BaseModel):
 
 class CandidateSignupRequest(BaseModel):
     """Schéma pour l'inscription des candidats uniquement"""
-    email: EmailStr = Field(..., description="Adresse email")
-    password: str = Field(..., min_length=8, description="Mot de passe")
+    email: str = Field(..., description="Adresse email")
+    password: str = Field(..., description="Mot de passe")
     first_name: str = Field(..., min_length=1, max_length=100, description="Prénom")
     last_name: str = Field(..., min_length=1, max_length=100, description="Nom")
     matricule: int = Field(..., description="Matricule SEEG (obligatoire pour les candidats)")
     phone: Optional[str] = Field(None, max_length=20, description="Numéro de téléphone")
     date_of_birth: date = Field(..., description="Date de naissance (obligatoire pour les candidats)")
     sexe: str = Field(..., description="Sexe (obligatoire pour les candidats)")
+
+    # Validation de l'email
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v):
+        return Validators.validate_email(v)
+    
+    # Validation du mot de passe
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v):
+        return Validators.validate_password(v, min_length=12)
+    
+    # Validation de la date de naissance
+    @field_validator('date_of_birth')
+    @classmethod
+    def validate_date_of_birth(cls, v):
+        return Validators.validate_date_of_birth(v)
 
     class Config:
         json_schema_extra = {
@@ -49,12 +80,24 @@ class CandidateSignupRequest(BaseModel):
 
 class CreateUserRequest(BaseModel):
     """Schéma pour créer un utilisateur (admin/recruteur) - admin seulement"""
-    email: EmailStr = Field(..., description="Adresse email")
-    password: str = Field(..., min_length=8, description="Mot de passe")
+    email: str = Field(..., description="Adresse email")
+    password: str = Field(..., description="Mot de passe")
     first_name: str = Field(..., min_length=1, max_length=100, description="Prénom")
     last_name: str = Field(..., min_length=1, max_length=100, description="Nom")
     role: UserRole = Field(..., description="Rôle de l'utilisateur")
     phone: Optional[str] = Field(None, max_length=20, description="Numéro de téléphone")
+
+    # Validation de l'email
+    @field_validator('email')
+    @classmethod
+    def validate_email(cls, v):
+        return Validators.validate_email(v)
+    
+    # Validation du mot de passe
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v):
+        return Validators.validate_password(v, min_length=12)
 
     class Config:
         json_schema_extra = {
@@ -134,7 +177,13 @@ class PasswordResetRequest(BaseModel):
 class PasswordResetConfirm(BaseModel):
     """Schéma pour confirmer la réinitialisation de mot de passe"""
     token: str = Field(..., description="Token de réinitialisation")
-    new_password: str = Field(..., min_length=8, description="Nouveau mot de passe")
+    new_password: str = Field(..., description="Nouveau mot de passe")
+
+    # Validation du nouveau mot de passe
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password(cls, v):
+        return Validators.validate_password(v, min_length=12)
 
     class Config:
         json_schema_extra = {
@@ -148,7 +197,13 @@ class PasswordResetConfirm(BaseModel):
 class ChangePasswordRequest(BaseModel):
     """Schéma pour changer le mot de passe"""
     current_password: str = Field(..., min_length=1, description="Mot de passe actuel")
-    new_password: str = Field(..., min_length=8, description="Nouveau mot de passe")
+    new_password: str = Field(..., description="Nouveau mot de passe")
+
+    # Validation du nouveau mot de passe
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password(cls, v):
+        return Validators.validate_password(v, min_length=12)
 
     class Config:
         json_schema_extra = {
