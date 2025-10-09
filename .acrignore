@@ -1,0 +1,77 @@
+# ACR Build ignore file
+# Virtual environments
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Tests
+tests/
+.pytest_cache/
+coverage.xml
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation  
+docs/
+*.md
+README.md
+LICENSE
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+azure-pipelines.yml
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+logs-recent/
+logs-recent.zip
+logs.zip
+
+# Temporary
+tmp/
+temp/
+*.tmp
+deployments/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Scripts
+scripts/
+start_api.ps1
+check_migrations.py
+create_tables_direct.py
+test_db_connection.py
+

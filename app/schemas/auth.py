@@ -35,12 +35,12 @@ class LoginRequest(BaseModel):
 
 
 class CandidateSignupRequest(BaseModel):
-    """Schéma pour l'inscription des candidats uniquement"""
+    """Schéma pour l'inscription des candidats (internes et externes)"""
     email: str = Field(..., description="Adresse email")
     password: str = Field(..., description="Mot de passe")
     first_name: str = Field(..., min_length=1, max_length=100, description="Prénom")
     last_name: str = Field(..., min_length=1, max_length=100, description="Nom")
-    matricule: int = Field(..., description="Matricule SEEG (obligatoire pour les candidats)")
+    matricule: Optional[int] = Field(None, description="Matricule SEEG (obligatoire pour candidats INTERNES, null pour EXTERNES)")
     phone: Optional[str] = Field(None, max_length=20, description="Numéro de téléphone")
     date_of_birth: date = Field(..., description="Date de naissance (obligatoire pour les candidats)")
     sexe: str = Field(..., description="Sexe (obligatoire pour les candidats)")
@@ -66,14 +66,14 @@ class CandidateSignupRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "email": "new.candidate@seeg.ga",
+                "email": "candidat@seeg.ga",
                 "password": "Password#2025",
-                "first_name": "Aïcha",
-                "last_name": "Mouketou",
+                "first_name": "Jean",
+                "last_name": "Dupont",
                 "matricule": 123456,
                 "phone": "+24106223344",
-                "date_of_birth": "1994-06-12",
-                "sexe": "F"
+                "date_of_birth": "1990-05-15",
+                "sexe": "M"
             }
         }
 

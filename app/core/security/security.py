@@ -148,14 +148,73 @@ class TokenManager:
 
 
 class RoleManager:
-    """Gestionnaire des rôles et permissions"""
+    """
+    Gestionnaire des rôles et permissions.
     
-    # Définition des rôles
+    Hiérarchie des rôles:
+    1. admin: Toutes les permissions (gestion système)
+    2. recruiter: Gestion complète du recrutement (CRUD sur tout)
+    3. observer: Lecture seule (monitoring, statistiques)
+    4. candidate: Actions limitées à ses propres données
+    """
+    
+    # Définition complète des permissions par rôle
     ROLES = {
-        "candidate": ["read_own_profile", "create_application", "read_own_applications"],
-        "recruiter": ["read_all_applications", "update_application_status", "create_job_offer", "read_job_offers"],
-        "admin": ["*"],  # Toutes les permissions
-        "observer": ["read_all_applications", "read_job_offers", "read_statistics"]
+        "admin": ["*"],  # Toutes les permissions système
+        
+        "recruiter": [
+            # Offres d'emploi
+            "create_job_offer",
+            "read_job_offers",
+            "update_job_offer",
+            "delete_job_offer",
+            "publish_job_offer",
+            # Candidatures
+            "read_all_applications",
+            "update_application_status",
+            "delete_application",
+            # Candidats
+            "read_all_candidates",
+            "read_candidate_profile",
+            # Entretiens
+            "create_interview",
+            "update_interview",
+            "delete_interview",
+            "read_interviews",
+            # Évaluations
+            "create_evaluation",
+            "update_evaluation",
+            "read_evaluations",
+            # Notifications
+            "send_notification",
+            # Statistiques
+            "read_statistics"
+        ],
+        
+        "observer": [
+            # Lecture seule - AUCUNE modification
+            "read_job_offers",
+            "read_all_applications",
+            "read_all_candidates",
+            "read_interviews",
+            "read_evaluations",
+            "read_statistics"
+        ],
+        
+        "candidate": [
+            # Profil personnel
+            "read_own_profile",
+            "update_own_profile",
+            # Offres (avec filtrage interne/externe)
+            "read_job_offers",
+            # Candidatures personnelles
+            "create_application",
+            "read_own_applications",
+            "update_own_application",  # Retirer une candidature
+            # Documents
+            "upload_document",
+            "read_own_documents"
+        ]
     }
     
     @staticmethod

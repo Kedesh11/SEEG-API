@@ -26,7 +26,6 @@ def upgrade() -> None:
     # Ajouter les nouveaux champs
     op.add_column('interview_slots', sa.Column('is_available', sa.Boolean(), nullable=False, server_default='false'))
     op.add_column('interview_slots', sa.Column('location', sa.String(), nullable=True))
-    op.add_column('interview_slots', sa.Column('notes', sa.Text(), nullable=True))
     
     # Rendre les champs nullable pour supporter les créneaux disponibles
     op.alter_column('interview_slots', 'application_id', nullable=True)
@@ -63,7 +62,6 @@ def downgrade() -> None:
     op.alter_column('interview_slots', 'job_title', nullable=False)
     
     # Supprimer les nouveaux champs
-    op.drop_column('interview_slots', 'notes')
     op.drop_column('interview_slots', 'location')
     op.drop_column('interview_slots', 'is_available')
 

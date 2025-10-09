@@ -18,6 +18,7 @@ class UserBase(BaseModel):
     matricule: Optional[int] = None
     email_verified: Optional[bool] = False
     is_active: Optional[bool] = True
+    is_internal_candidate: Optional[bool] = False  # True = interne, False = externe
 
 class UserCreate(UserBase):
     password: str

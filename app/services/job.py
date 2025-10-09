@@ -21,14 +21,17 @@ class JobOfferService:
         self.db = db
     
     async def create_job_offer(self, job_data: JobOfferCreate) -> JobOffer:
-        """Créer une nouvelle offre d'emploi"""
+        """
+        Créer une nouvelle offre d'emploi - LOGIQUE MÉTIER PURE.
+        NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
+        """
         try:
             job_offer = JobOffer(**job_data.dict())
             self.db.add(job_offer)
-            await self.db.commit()
-            await self.db.refresh(job_offer)
+            # ✅ PAS de commit ici - c'est l'endpoint qui décide
+            # ✅ PAS de refresh ici - sera fait après commit par l'endpoint
             
-            logger.info("Offre d'emploi créée", job_id=str(job_offer.id), title=job_offer.title)
+            logger.info("Offre d'emploi préparée", title=job_offer.title)
             return job_offer
         except Exception as e:
             logger.error("Erreur création offre d'emploi", error=str(e))
@@ -50,28 +53,56 @@ class JobOfferService:
         skip: int = 0, 
         limit: int = 100,
         recruiter_id: Optional[UUID] = None,
-        status: Optional[str] = None
+        status: Optional[str] = None,
+        current_user: Optional[Any] = None  # Pour filtrage interne/externe
     ) -> List[JobOffer]:
-        """Récupérer la liste des offres d'emploi"""
+        """
+        Récupérer la liste des offres d'emploi avec filtrage interne/externe.
+        
+        Logique de filtrage:
+        - Candidat INTERNE (is_internal_candidate=true) : Voit TOUTES les offres
+        - Candidat EXTERNE (is_internal_candidate=false) : Voit UNIQUEMENT les offres accessibles (is_internal_only=false)
+        - Recruteur/Admin : Voit TOUTES les offres
+        """
         try:
             query = select(JobOffer)
             
+            # Filtrage par recruteur
             if recruiter_id:
                 query = query.where(JobOffer.recruiter_id == recruiter_id)
             
+            # Filtrage par statut
             if status:
                 query = query.where(JobOffer.status == status)
+            
+            # Filtrage INTERNE/EXTERNE selon le type de candidat
+            if current_user and current_user.role == "candidate":
+                if not current_user.is_internal_candidate:
+                    # Candidat EXTERNE : uniquement les offres non-internes
+                    query = query.where(JobOffer.is_internal_only == False)
+                    logger.debug("Filtrage offres pour candidat externe", user_id=str(current_user.id))
+                else:
+                    # Candidat INTERNE : toutes les offres
+                    logger.debug("Affichage toutes offres pour candidat interne", user_id=str(current_user.id))
             
             query = query.offset(skip).limit(limit).order_by(JobOffer.created_at.desc())
             
             result = await self.db.execute(query)
-            return result.scalars().all()
+            jobs = result.scalars().all()
+            
+            logger.info("Offres récupérées", count=len(jobs), 
+                       is_internal_user=current_user.is_internal_candidate if current_user and hasattr(current_user, 'is_internal_candidate') else None)
+            return jobs
+            
         except Exception as e:
             logger.error("Erreur récupération liste offres d'emploi", error=str(e))
             raise BusinessLogicError("Erreur lors de la récupération des offres d'emploi")
     
     async def update_job_offer(self, job_id: UUID, job_data: JobOfferUpdate) -> JobOffer:
-        """Mettre à jour une offre d'emploi"""
+        """
+        Mettre à jour une offre d'emploi - LOGIQUE MÉTIER PURE.
+        NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
+        """
         try:
             # Vérifier que l'offre existe
             job_offer = await self.get_job_offer(job_id)
@@ -86,10 +117,7 @@ class JobOfferService:
                     .where(JobOffer.id == job_id)
                     .values(**update_data)
                 )
-                await self.db.commit()
-                
-                # Récupérer l'offre mise à jour
-                job_offer = await self.get_job_offer(job_id)
+                # ✅ PAS de commit ici
             
             logger.info("Offre d'emploi mise à jour", job_id=str(job_id))
             return job_offer
@@ -101,7 +129,10 @@ class JobOfferService:
             raise BusinessLogicError("Erreur lors de la mise à jour de l'offre d'emploi")
     
     async def delete_job_offer(self, job_id: UUID) -> bool:
-        """Supprimer une offre d'emploi"""
+        """
+        Supprimer une offre d'emploi - LOGIQUE MÉTIER PURE.
+        NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
+        """
         try:
             # Vérifier que l'offre existe
             job_offer = await self.get_job_offer(job_id)
@@ -111,9 +142,9 @@ class JobOfferService:
             await self.db.execute(
                 delete(JobOffer).where(JobOffer.id == job_id)
             )
-            await self.db.commit()
+            # ✅ PAS de commit ici
             
-            logger.info("Offre d'emploi supprimée", job_id=str(job_id))
+            logger.info("Offre d'emploi préparée pour suppression", job_id=str(job_id))
             return True
             
         except NotFoundError:

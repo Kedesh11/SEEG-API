@@ -103,10 +103,7 @@ class UserService:
                     .where(User.id == user_id)
                     .values(**update_data)
                 )
-                await self.db.commit()
-                
-                # Récupérer l'utilisateur mis à jour
-                user = await self.get_user_by_id(user_id)
+                # ✅ PAS de commit ici
             
             logger.info("Utilisateur mis à jour", user_id=str(user_id))
             return user
@@ -128,9 +125,9 @@ class UserService:
             await self.db.execute(
                 delete(User).where(User.id == user_id)
             )
-            await self.db.commit()
+            # ✅ PAS de commit ici
             
-            logger.info("Utilisateur supprimé", user_id=str(user_id))
+            logger.info("Utilisateur préparé pour suppression", user_id=str(user_id))
             return True
             
         except NotFoundError:
@@ -170,10 +167,10 @@ class UserService:
             )
             
             self.db.add(profile)
-            await self.db.commit()
-            await self.db.refresh(profile)
+            # ✅ PAS de commit ici
+            # ✅ PAS de refresh ici
             
-            logger.info("Profil candidat créé", user_id=str(user_id), profile_id=str(profile.id))
+            logger.info("Profil candidat préparé", user_id=str(user_id))
             return profile
             
         except (NotFoundError, ValidationError):
@@ -198,10 +195,7 @@ class UserService:
                     .where(CandidateProfile.user_id == user_id)
                     .values(**update_data)
                 )
-                await self.db.commit()
-                
-                # Récupérer le profil mis à jour
-                profile = await self.get_candidate_profile(user_id)
+                # ✅ PAS de commit ici
             
             logger.info("Profil candidat mis à jour", user_id=str(user_id))
             return profile

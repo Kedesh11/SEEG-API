@@ -115,7 +115,14 @@ async def get_current_admin_user(current_user: User = Depends(get_current_active
 
 async def get_current_recruiter_user(current_user: User = Depends(get_current_active_user)) -> User:
     """
-    Récupérer l'utilisateur actuel s'il est recruteur ou administrateur
+    Récupérer l'utilisateur actuel s'il est recruteur ou administrateur.
+    
+    Permissions:
+    - Créer, modifier, supprimer des offres d'emploi
+    - Gérer les candidatures (changer statuts)
+    - Voir tous les candidats
+    - Planifier des entretiens
+    - Créer des évaluations
     
     Args:
         current_user: Utilisateur authentifié
@@ -132,6 +139,69 @@ async def get_current_recruiter_user(current_user: User = Depends(get_current_ac
                       role=current_user.role)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not enough permissions"
+            detail="Acces refuse: role recruteur ou admin requis"
+        )
+    return current_user
+
+async def get_current_observer_user(current_user: User = Depends(get_current_active_user)) -> User:
+    """
+    Récupérer l'utilisateur actuel s'il est observateur, recruteur ou administrateur.
+    
+    Permissions (LECTURE SEULE):
+    - Voir toutes les offres d'emploi
+    - Voir toutes les candidatures
+    - Voir les statistiques
+    - Voir les entretiens
+    - Voir les évaluations
+    
+    AUCUNE action de modification/création/suppression autorisée.
+    
+    Args:
+        current_user: Utilisateur authentifié
+        
+    Returns:
+        User: Utilisateur observateur, recruteur ou administrateur
+        
+    Raises:
+        HTTPException: Si l'utilisateur n'a pas les permissions d'observateur
+    """
+    if current_user.role not in ["observer", "recruiter", "admin"]:
+        logger.warning("Tentative d'accès observateur par un utilisateur non autorise", 
+                      user_id=str(current_user.id), 
+                      role=current_user.role)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acces refuse: role observateur, recruteur ou admin requis"
+        )
+    return current_user
+
+async def get_current_candidate_user(current_user: User = Depends(get_current_active_user)) -> User:
+    """
+    Récupérer l'utilisateur actuel s'il est candidat.
+    
+    Permissions:
+    - Voir son propre profil
+    - Modifier son propre profil
+    - Voir les offres d'emploi (filtrées selon interne/externe)
+    - Soumettre des candidatures
+    - Voir ses propres candidatures
+    - Upload de documents PDF
+    
+    Args:
+        current_user: Utilisateur authentifié
+        
+    Returns:
+        User: Utilisateur candidat
+        
+    Raises:
+        HTTPException: Si l'utilisateur n'est pas un candidat
+    """
+    if current_user.role != "candidate":
+        logger.warning("Tentative d'accès candidat par un non-candidat", 
+                      user_id=str(current_user.id), 
+                      role=current_user.role)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acces refuse: role candidat requis"
         )
     return current_user

@@ -37,21 +37,21 @@ class FileService:
         uploaded_by: str
     ) -> Dict[str, Any]:
         """
-        Télécharger un fichier
+        TÃ©lÃ©charger un fichier
         
         Args:
             file_content: Contenu du fichier
             filename: Nom du fichier
             application_id: ID de la candidature
             document_type: Type de document
-            uploaded_by: ID de l'utilisateur qui télécharge
+            uploaded_by: ID de l'utilisateur qui tÃ©lÃ©charge
             
         Returns:
-            Dict contenant les informations du fichier téléchargé
+            Dict contenant les informations du fichier tÃ©lÃ©chargÃ©
             
         Raises:
-            FileError: Si le téléchargement échoue
-            ValidationError: Si les données sont invalides
+            FileError: Si le tÃ©lÃ©chargement Ã©choue
+            ValidationError: Si les donnÃ©es sont invalides
         """
         try:
             # Validation de la taille du fichier
@@ -62,9 +62,9 @@ class FileService:
             # Validation du type de fichier
             file_extension = Path(filename).suffix.lower().lstrip('.')
             if file_extension not in settings.ALLOWED_FILE_TYPES:
-                raise ValidationError(f"Type de fichier non autorisé. Types autorisés: {', '.join(settings.ALLOWED_FILE_TYPES)}")
+                raise ValidationError(f"Type de fichier non autorisÃ©. Types autorisÃ©s: {', '.join(settings.ALLOWED_FILE_TYPES)}")
             
-            # Génération d'un nom de fichier unique
+            # GÃ©nÃ©ration d'un nom de fichier unique
             file_id = str(uuid.uuid4())
             safe_filename = self._sanitize_filename(filename)
             unique_filename = f"{file_id}_{safe_filename}"
@@ -75,14 +75,14 @@ class FileService:
             # Calcul du hash du fichier
             file_hash = hashlib.sha256(file_content).hexdigest()
             
-            # Détermination du type MIME
+            # DÃ©termination du type MIME
             mime_type, _ = mimetypes.guess_type(filename)
             
             # Sauvegarde du fichier
             async with aiofiles.open(file_path, 'wb') as f:
                 await f.write(file_content)
             
-            # Enregistrement en base de données
+            # Enregistrement en base de donnÃ©es
             document = ApplicationDocument(
                 application_id=application_id,
                 filename=filename,
@@ -96,7 +96,7 @@ class FileService:
             )
             
             self.db.add(document)
-            await self.db.commit()
+            #  PAS de commit ici
             await self.db.refresh(document)
             
             logger.info(
@@ -131,11 +131,11 @@ class FileService:
                 application_id=application_id,
                 error=str(e)
             )
-            raise FileError(f"Échec du téléchargement du fichier: {str(e)}")
+            raise FileError(f"Ã‰chec du tÃ©lÃ©chargement du fichier: {str(e)}")
     
     async def get_file(self, document_id: str) -> Dict[str, Any]:
         """
-        Récupérer les informations d'un fichier
+        RÃ©cupÃ©rer les informations d'un fichier
         
         Args:
             document_id: ID du document
@@ -152,9 +152,9 @@ class FileService:
         document = result.scalar_one_or_none()
         
         if not document:
-            raise FileError(f"Document avec l'ID {document_id} non trouvé")
+            raise FileError(f"Document avec l'ID {document_id} non trouvÃ©")
         
-        # Vérification de l'existence du fichier
+        # VÃ©rification de l'existence du fichier
         file_path = Path(document.file_path)
         if not file_path.exists():
             raise FileError(f"Le fichier physique n'existe pas: {document.file_path}")
@@ -171,7 +171,7 @@ class FileService:
     
     async def download_file(self, document_id: str) -> bytes:
         """
-        Télécharger le contenu d'un fichier
+        TÃ©lÃ©charger le contenu d'un fichier
         
         Args:
             document_id: ID du document
@@ -180,7 +180,7 @@ class FileService:
             bytes: Contenu du fichier
             
         Raises:
-            FileError: Si le fichier n'existe pas ou ne peut pas être lu
+            FileError: Si le fichier n'existe pas ou ne peut pas Ãªtre lu
         """
         result = await self.db.execute(
             select(ApplicationDocument).where(ApplicationDocument.id == document_id)
@@ -188,7 +188,7 @@ class FileService:
         document = result.scalar_one_or_none()
         
         if not document:
-            raise FileError(f"Document avec l'ID {document_id} non trouvé")
+            raise FileError(f"Document avec l'ID {document_id} non trouvÃ©")
         
         file_path = Path(document.file_path)
         if not file_path.exists():
@@ -224,7 +224,7 @@ class FileService:
             deleted_by: ID de l'utilisateur qui supprime
             
         Returns:
-            bool: True si la suppression a réussi
+            bool: True si la suppression a rÃ©ussi
             
         Raises:
             FileError: Si le fichier n'existe pas
@@ -236,7 +236,7 @@ class FileService:
             document = result.scalar_one_or_none()
             
             if not document:
-                raise FileError(f"Document avec l'ID {document_id} non trouvé")
+                raise FileError(f"Document avec l'ID {document_id} non trouvÃ©")
             
             file_path = Path(document.file_path)
             
@@ -248,7 +248,7 @@ class FileService:
             await self.db.execute(
                 delete(ApplicationDocument).where(ApplicationDocument.id == document_id)
             )
-            await self.db.commit()
+            #  PAS de commit ici
             
             logger.info(
                 "File deleted",
@@ -260,17 +260,17 @@ class FileService:
             return True
             
         except Exception as e:
-            await self.db.rollback()
+            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to delete file",
                 document_id=document_id,
                 error=str(e)
             )
-            raise FileError(f"Échec de la suppression du fichier: {str(e)}")
+            raise FileError(f"Ã‰chec de la suppression du fichier: {str(e)}")
     
     async def get_application_files(self, application_id: str) -> List[Dict[str, Any]]:
         """
-        Récupérer tous les fichiers d'une candidature
+        RÃ©cupÃ©rer tous les fichiers d'une candidature
         
         Args:
             application_id: ID de la candidature
@@ -300,7 +300,7 @@ class FileService:
     
     async def get_file_statistics(self) -> Dict[str, Any]:
         """
-        Récupérer les statistiques des fichiers
+        RÃ©cupÃ©rer les statistiques des fichiers
         
         Returns:
             Dict contenant les statistiques
@@ -340,15 +340,15 @@ class FileService:
     
     def _sanitize_filename(self, filename: str) -> str:
         """
-        Nettoyer le nom de fichier pour la sécurité
+        Nettoyer le nom de fichier pour la sÃ©curitÃ©
         
         Args:
             filename: Nom de fichier original
             
         Returns:
-            str: Nom de fichier nettoyé
+            str: Nom de fichier nettoyÃ©
         """
-        # Suppression des caractères dangereux
+        # Suppression des caractÃ¨res dangereux
         dangerous_chars = ['..', '/', '\\', ':', '*', '?', '"', '<', '>', '|']
         safe_filename = filename
         
@@ -367,14 +367,14 @@ class FileService:
         Nettoyer les fichiers orphelins (sans enregistrement en base)
         
         Returns:
-            int: Nombre de fichiers supprimés
+            int: Nombre de fichiers supprimÃ©s
         """
         try:
-            # Récupération de tous les fichiers en base
+            # RÃ©cupÃ©ration de tous les fichiers en base
             result = await self.db.execute(select(ApplicationDocument.file_path))
             db_files = {Path(row[0]) for row in result.fetchall()}
             
-            # Récupération de tous les fichiers physiques
+            # RÃ©cupÃ©ration de tous les fichiers physiques
             physical_files = set(self.upload_dir.glob('*'))
             
             # Identification des fichiers orphelins

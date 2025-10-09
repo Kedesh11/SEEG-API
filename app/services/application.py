@@ -25,9 +25,9 @@ class ApplicationService:
         self.db = db
     
     async def create_application(self, application_data: ApplicationCreate, user_id: str = None) -> Application:
-        """Créer une nouvelle candidature"""
+        """CrÃ©er une nouvelle candidature"""
         try:
-            # Vérifier qu'il n'y a pas déjà une candidature pour ce job
+            # VÃ©rifier qu'il n'y a pas dÃ©jÃ  une candidature pour ce job
             existing_result = await self.db.execute(
                 select(Application).where(
                     Application.candidate_id == application_data.candidate_id,
@@ -37,23 +37,23 @@ class ApplicationService:
             existing_application = existing_result.scalar_one_or_none()
             
             if existing_application:
-                raise ValidationError("Une candidature existe déjà pour cette offre d'emploi")
+                raise ValidationError("Une candidature existe dÃ©jÃ  pour cette offre d'emploi")
             
             application = Application(**application_data.dict())
             self.db.add(application)
-            await self.db.commit()
+            #  PAS de commit ici
             await self.db.refresh(application)
             
-            logger.info("Candidature créée", application_id=str(application.id), candidate_id=str(application.candidate_id))
+            logger.info("Candidature crÃ©Ã©e", application_id=str(application.id), candidate_id=str(application.candidate_id))
             return application
         except ValidationError:
             raise
         except Exception as e:
-            logger.error("Erreur création candidature", error=str(e))
-            raise BusinessLogicError("Erreur lors de la création de la candidature")
+            logger.error("Erreur crÃ©ation candidature", error=str(e))
+            raise BusinessLogicError("Erreur lors de la crÃ©ation de la candidature")
     
     async def get_application_by_id(self, application_id: str) -> Optional[Application]:
-        """Récupérer une candidature par son ID avec cache"""
+        """RÃ©cupÃ©rer une candidature par son ID avec cache"""
         from app.core.cache import cache_application
         from app.db.query_optimizer import QueryOptimizer
         
@@ -67,7 +67,7 @@ class ApplicationService:
                 application = result.scalar_one_or_none()
                 
                 if not application:
-                    raise NotFoundError("Candidature non trouvée")
+                    raise NotFoundError("Candidature non trouvÃ©e")
                 
                 return application
                 
@@ -76,14 +76,14 @@ class ApplicationService:
             except NotFoundError:
                 raise
             except Exception as e:
-                logger.error("Erreur récupération candidature", application_id=app_id, error=str(e))
-                raise BusinessLogicError("Erreur lors de la récupération de la candidature")
+                logger.error("Erreur rÃ©cupÃ©ration candidature", application_id=app_id, error=str(e))
+                raise BusinessLogicError("Erreur lors de la rÃ©cupÃ©ration de la candidature")
         
         return await _get_application(application_id)
     
     async def get_application_with_relations(self, application_id: str) -> Optional[Application]:
         """
-        Récupérer une candidature avec toutes ses relations pour le PDF
+        RÃ©cupÃ©rer une candidature avec toutes ses relations pour le PDF
         (users, candidate_profiles, job_offers)
         """
         from app.core.cache import cache_key_wrapper
@@ -95,7 +95,7 @@ class ApplicationService:
                 application = await get_application_complete(self.db, app_id)
                 
                 if not application:
-                    raise NotFoundError("Candidature non trouvée")
+                    raise NotFoundError("Candidature non trouvÃ©e")
                 
                 return application
             except ValueError:
@@ -103,8 +103,8 @@ class ApplicationService:
             except NotFoundError:
                 raise
             except Exception as e:
-                logger.error("Erreur récupération candidature complète", application_id=app_id, error=str(e))
-                raise BusinessLogicError("Erreur lors de la récupération de la candidature")
+                logger.error("Erreur rÃ©cupÃ©ration candidature complÃ¨te", application_id=app_id, error=str(e))
+                raise BusinessLogicError("Erreur lors de la rÃ©cupÃ©ration de la candidature")
         
         return await _get_full_application(application_id)
     
@@ -116,7 +116,7 @@ class ApplicationService:
         job_offer_id: Optional[str] = None,
         candidate_id: Optional[str] = None
     ) -> tuple[List[Application], int]:
-        """Récupérer la liste des candidatures avec filtres"""
+        """RÃ©cupÃ©rer la liste des candidatures avec filtres"""
         try:
             query = select(Application)
             count_query = select(func.count(Application.id))
@@ -137,7 +137,7 @@ class ApplicationService:
             # Pagination
             query = query.offset(skip).limit(limit)
             
-            # Exécuter les requêtes
+            # ExÃ©cuter les requÃªtes
             result = await self.db.execute(query)
             applications = result.scalars().all()
             
@@ -146,31 +146,31 @@ class ApplicationService:
             
             return applications, total
         except ValueError as e:
-            raise ValidationError("Paramètres de filtrage invalides")
+            raise ValidationError("ParamÃ¨tres de filtrage invalides")
         except Exception as e:
-            logger.error("Erreur récupération candidatures", error=str(e))
-            raise BusinessLogicError("Erreur lors de la récupération des candidatures")
+            logger.error("Erreur rÃ©cupÃ©ration candidatures", error=str(e))
+            raise BusinessLogicError("Erreur lors de la rÃ©cupÃ©ration des candidatures")
     
     async def update_application(self, application_id: str, application_data: ApplicationUpdate) -> Application:
-        """Mettre à jour une candidature"""
+        """Mettre Ã  jour une candidature"""
         try:
             application = await self.get_application_by_id(application_id)
             
-            # Mettre à jour les champs fournis
+            # Mettre Ã  jour les champs fournis
             update_data = application_data.dict(exclude_unset=True)
             for field, value in update_data.items():
                 setattr(application, field, value)
             
-            await self.db.commit()
+            #  PAS de commit ici
             await self.db.refresh(application)
             
-            logger.info("Candidature mise à jour", application_id=application_id)
+            logger.info("Candidature mise Ã  jour", application_id=application_id)
             return application
         except NotFoundError:
             raise
         except Exception as e:
-            logger.error("Erreur mise à jour candidature", application_id=application_id, error=str(e))
-            raise BusinessLogicError("Erreur lors de la mise à jour de la candidature")
+            logger.error("Erreur mise Ã  jour candidature", application_id=application_id, error=str(e))
+            raise BusinessLogicError("Erreur lors de la mise Ã  jour de la candidature")
     
     async def delete_application(self, application_id: str) -> None:
         """Supprimer une candidature"""
@@ -178,26 +178,26 @@ class ApplicationService:
             application = await self.get_application_by_id(application_id)
             
             await self.db.delete(application)
-            await self.db.commit()
+            #  PAS de commit ici
             
-            logger.info("Candidature supprimée", application_id=application_id)
+            logger.info("Candidature supprimÃ©e", application_id=application_id)
         except NotFoundError:
             raise
         except Exception as e:
             logger.error("Erreur suppression candidature", application_id=application_id, error=str(e))
             raise BusinessLogicError("Erreur lors de la suppression de la candidature")
     
-    # Méthodes pour les documents PDF
+    # MÃ©thodes pour les documents PDF
     async def create_document(self, document_data: ApplicationDocumentCreate) -> ApplicationDocument:
-        """Créer un nouveau document PDF"""
+        """CrÃ©er un nouveau document PDF"""
         try:
-            # Vérifier que l'application existe
+            # VÃ©rifier que l'application existe
             application = await self.get_application_by_id(str(document_data.application_id))
             
-            # Décoder les données base64
+            # DÃ©coder les donnÃ©es base64
             file_data = base64.b64decode(document_data.file_data)
             
-            # Créer le document
+            # CrÃ©er le document
             document = ApplicationDocument(
                 application_id=document_data.application_id,
                 document_type=document_data.document_type,
@@ -208,25 +208,25 @@ class ApplicationService:
             )
             
             self.db.add(document)
-            await self.db.commit()
+            #  PAS de commit ici
             await self.db.refresh(document)
             
-            logger.info("Document créé", document_id=str(document.id), application_id=str(document.application_id))
+            logger.info("Document crÃ©Ã©", document_id=str(document.id), application_id=str(document.application_id))
             return document
         except NotFoundError:
             raise
         except Exception as e:
-            logger.error("Erreur création document", error=str(e))
-            raise BusinessLogicError("Erreur lors de la création du document")
+            logger.error("Erreur crÃ©ation document", error=str(e))
+            raise BusinessLogicError("Erreur lors de la crÃ©ation du document")
     
     async def get_application_documents(
         self, 
         application_id: str, 
         document_type: Optional[str] = None
     ) -> List[ApplicationDocument]:
-        """Récupérer les documents d'une candidature"""
+        """RÃ©cupÃ©rer les documents d'une candidature"""
         try:
-            # Vérifier que l'application existe
+            # VÃ©rifier que l'application existe
             await self.get_application_by_id(application_id)
             
             query = select(ApplicationDocument).where(
@@ -245,17 +245,17 @@ class ApplicationService:
         except ValueError:
             raise ValidationError("ID de candidature invalide")
         except Exception as e:
-            logger.error("Erreur récupération documents", application_id=application_id, error=str(e))
-            raise BusinessLogicError("Erreur lors de la récupération des documents")
+            logger.error("Erreur rÃ©cupÃ©ration documents", application_id=application_id, error=str(e))
+            raise BusinessLogicError("Erreur lors de la rÃ©cupÃ©ration des documents")
     
     async def get_document_with_data(
         self, 
         application_id: str, 
         document_id: str
     ) -> Optional[ApplicationDocumentWithData]:
-        """Récupérer un document avec ses données binaires"""
+        """RÃ©cupÃ©rer un document avec ses donnÃ©es binaires"""
         try:
-            # Vérifier que l'application existe
+            # VÃ©rifier que l'application existe
             await self.get_application_by_id(application_id)
             
             result = await self.db.execute(
@@ -269,9 +269,9 @@ class ApplicationService:
             document = result.scalar_one_or_none()
             
             if not document:
-                raise NotFoundError("Document non trouvé")
+                raise NotFoundError("Document non trouvÃ©")
             
-            # Encoder les données en base64 pour la réponse
+            # Encoder les donnÃ©es en base64 pour la rÃ©ponse
             file_data_b64 = base64.b64encode(document.file_data).decode('utf-8')
             
             return ApplicationDocumentWithData(
@@ -289,13 +289,13 @@ class ApplicationService:
         except ValueError:
             raise ValidationError("ID invalide")
         except Exception as e:
-            logger.error("Erreur récupération document", document_id=document_id, error=str(e))
-            raise BusinessLogicError("Erreur lors de la récupération du document")
+            logger.error("Erreur rÃ©cupÃ©ration document", document_id=document_id, error=str(e))
+            raise BusinessLogicError("Erreur lors de la rÃ©cupÃ©ration du document")
     
     async def delete_document(self, application_id: str, document_id: str) -> None:
         """Supprimer un document"""
         try:
-            # Vérifier que l'application existe
+            # VÃ©rifier que l'application existe
             await self.get_application_by_id(application_id)
             
             result = await self.db.execute(
@@ -309,12 +309,12 @@ class ApplicationService:
             document = result.scalar_one_or_none()
             
             if not document:
-                raise NotFoundError("Document non trouvé")
+                raise NotFoundError("Document non trouvÃ©")
             
             await self.db.delete(document)
-            await self.db.commit()
+            #  PAS de commit ici
             
-            logger.info("Document supprimé", document_id=document_id, application_id=application_id)
+            logger.info("Document supprimÃ©", document_id=document_id, application_id=application_id)
         except NotFoundError:
             raise
         except ValueError:
@@ -324,7 +324,7 @@ class ApplicationService:
             raise BusinessLogicError("Erreur lors de la suppression du document")
     
     async def get_application_stats(self) -> Dict[str, Any]:
-        """Récupérer les statistiques des candidatures"""
+        """RÃ©cupÃ©rer les statistiques des candidatures"""
         try:
             # Compter par statut
             status_result = await self.db.execute(
@@ -350,14 +350,14 @@ class ApplicationService:
                 "document_types": doc_type_counts
             }
         except Exception as e:
-            logger.error("Erreur récupération statistiques", error=str(e))
-            raise BusinessLogicError("Erreur lors de la récupération des statistiques")
+            logger.error("Erreur rÃ©cupÃ©ration statistiques", error=str(e))
+            raise BusinessLogicError("Erreur lors de la rÃ©cupÃ©ration des statistiques")
     
-    # Méthodes pour les brouillons (inchangées)
+    # MÃ©thodes pour les brouillons (inchangÃ©es)
     async def save_draft(self, draft_data: dict) -> ApplicationDraft:
         """Sauvegarder un brouillon de candidature"""
         try:
-            # Vérifier si un brouillon existe déjà
+            # VÃ©rifier si un brouillon existe dÃ©jÃ 
             result = await self.db.execute(
                 select(ApplicationDraft).where(
                     ApplicationDraft.user_id == draft_data["user_id"],
@@ -367,25 +367,25 @@ class ApplicationService:
             draft = result.scalar_one_or_none()
             
             if draft:
-                # Mettre à jour le brouillon existant
+                # Mettre Ã  jour le brouillon existant
                 draft.form_data = draft_data.get("form_data")
                 draft.ui_state = draft_data.get("ui_state")
             else:
-                # Créer un nouveau brouillon
+                # CrÃ©er un nouveau brouillon
                 draft = ApplicationDraft(**draft_data)
                 self.db.add(draft)
             
-            await self.db.commit()
+            #  PAS de commit ici
             await self.db.refresh(draft)
             
-            logger.info("Brouillon sauvegardé", user_id=str(draft.user_id), job_offer_id=str(draft.job_offer_id))
+            logger.info("Brouillon sauvegardÃ©", user_id=str(draft.user_id), job_offer_id=str(draft.job_offer_id))
             return draft
         except Exception as e:
             logger.error("Erreur sauvegarde brouillon", error=str(e))
             raise BusinessLogicError("Erreur lors de la sauvegarde du brouillon")
     
     async def get_draft(self, user_id: str, job_offer_id: str) -> Optional[ApplicationDraft]:
-        """Récupérer un brouillon de candidature"""
+        """RÃ©cupÃ©rer un brouillon de candidature"""
         try:
             result = await self.db.execute(
                 select(ApplicationDraft).where(
@@ -397,8 +397,8 @@ class ApplicationService:
         except ValueError:
             raise ValidationError("IDs invalides")
         except Exception as e:
-            logger.error("Erreur récupération brouillon", error=str(e))
-            raise BusinessLogicError("Erreur lors de la récupération du brouillon")
+            logger.error("Erreur rÃ©cupÃ©ration brouillon", error=str(e))
+            raise BusinessLogicError("Erreur lors de la rÃ©cupÃ©ration du brouillon")
     
     async def delete_draft(self, user_id: str, job_offer_id: str) -> None:
         """Supprimer un brouillon de candidature"""
@@ -413,8 +413,8 @@ class ApplicationService:
             
             if draft:
                 await self.db.delete(draft)
-                await self.db.commit()
-                logger.info("Brouillon supprimé", user_id=user_id, job_offer_id=job_offer_id)
+                #  PAS de commit ici
+                logger.info("Brouillon supprimÃ©", user_id=user_id, job_offer_id=job_offer_id)
         except ValueError:
             raise ValidationError("IDs invalides")
         except Exception as e:
@@ -422,16 +422,16 @@ class ApplicationService:
             raise BusinessLogicError("Erreur lors de la suppression du brouillon")
 
     async def get_application_draft(self, application_id: str, user_id: str) -> Optional[ApplicationDraft]:
-        """Récupérer le brouillon lié à une candidature (via son job_offer_id)."""
+        """RÃ©cupÃ©rer le brouillon liÃ© Ã  une candidature (via son job_offer_id)."""
         try:
             application = await self.get_application_by_id(application_id)
             return await self.get_draft(user_id=user_id, job_offer_id=str(application.job_offer_id))
         except Exception as e:
             logger.error("Erreur get_application_draft", application_id=application_id, error=str(e))
-            raise BusinessLogicError("Erreur lors de la récupération du brouillon")
+            raise BusinessLogicError("Erreur lors de la rÃ©cupÃ©ration du brouillon")
 
     async def upsert_application_draft(self, application_id: str, user_id: str, draft_data: "ApplicationDraftUpdate") -> ApplicationDraft:
-        """Créer/met à jour le brouillon pour la candidature donnée (basé sur user_id + job_offer_id)."""
+        """CrÃ©er/met Ã  jour le brouillon pour la candidature donnÃ©e (basÃ© sur user_id + job_offer_id)."""
         try:
             application = await self.get_application_by_id(application_id)
             payload = {
@@ -446,7 +446,7 @@ class ApplicationService:
             raise BusinessLogicError("Erreur lors de l'enregistrement du brouillon")
 
     async def delete_application_draft(self, application_id: str, user_id: str) -> None:
-        """Supprimer le brouillon pour la candidature donnée."""
+        """Supprimer le brouillon pour la candidature donnÃ©e."""
         try:
             application = await self.get_application_by_id(application_id)
             await self.delete_draft(user_id=user_id, job_offer_id=str(application.job_offer_id))
@@ -466,10 +466,10 @@ class ApplicationService:
             return result.scalars().all()
         except Exception as e:
             logger.error("Erreur list_application_history", application_id=application_id, error=str(e))
-            raise BusinessLogicError("Erreur lors de la récupération de l'historique")
+            raise BusinessLogicError("Erreur lors de la rÃ©cupÃ©ration de l'historique")
 
     async def add_application_history(self, application_id: str, item: "ApplicationHistoryCreate", changed_by_user_id: str | None) -> ApplicationHistory:
-        """Ajouter une entrée d'historique et éventuellement mettre à jour le statut de la candidature."""
+        """Ajouter une entrÃ©e d'historique et Ã©ventuellement mettre Ã  jour le statut de la candidature."""
         try:
             application = await self.get_application_by_id(application_id)
             history = ApplicationHistory(
@@ -480,18 +480,18 @@ class ApplicationService:
                 notes=item.notes,
             )
             self.db.add(history)
-            # Mettre à jour le statut de l'application si new_status fourni
+            # Mettre Ã  jour le statut de l'application si new_status fourni
             if item.new_status and item.new_status != application.status:
                 application.status = item.new_status
-            await self.db.commit()
+            #  PAS de commit ici
             await self.db.refresh(history)
             return history
         except Exception as e:
             logger.error("Erreur add_application_history", application_id=application_id, error=str(e))
-            raise BusinessLogicError("Erreur lors de l'ajout à l'historique")
+            raise BusinessLogicError("Erreur lors de l'ajout Ã  l'historique")
 
     async def get_advanced_statistics(self) -> Dict[str, Any]:
-        """Statistiques avancées des candidatures: par statut, par offre, par mois, documents par type."""
+        """Statistiques avancÃ©es des candidatures: par statut, par offre, par mois, documents par type."""
         try:
             # Totaux par statut
             status_rows = await self.db.execute(
@@ -532,8 +532,8 @@ class ApplicationService:
                 "documents_by_type": documents_by_type,
             }
         except Exception as e:
-            logger.error("Erreur statistiques avancées", error=str(e))
-            # Retourner une structure vide mais cohérente plutôt que 500
+            logger.error("Erreur statistiques avancÃ©es", error=str(e))
+            # Retourner une structure vide mais cohÃ©rente plutÃ´t que 500
             return {
                 "total_applications": 0,
                 "status_breakdown": {},

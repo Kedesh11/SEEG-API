@@ -1,741 +1,1125 @@
-# 🚀 Backend FastAPI - One HCM SEEG
+# 🏢 One HCM SEEG Backend API
 
-[![CI](https://img.shields.io/badge/CI-passing-brightgreen)]()
-[![Coverage](https://img.shields.io/badge/coverage-46%25-yellow)]()
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue)]()
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109%2B-green)]()
-[![Security](https://img.shields.io/badge/security-9%2F10-brightgreen)]()
+API de gestion des ressources humaines pour la SEEG (Société d'Énergie et d'Eau du Gabon)
 
-Backend API pour le système de gestion RH One HCM SEEG, développé avec FastAPI et PostgreSQL.
-
-> **✅ Production-Ready**: Tests 100%, CI/CD automatisé, Rate Limiting, Documentation complète
-
-## 🌐 Frontend de Production
-
-Le frontend est déployé sur : **https://www.seeg-talentsource.com/**
-
-## 🚀 Déploiement sur Azure
-
-La totalité de la documentation de déploiement est maintenant regroupée ici. Suivez les étapes ci-dessous pour préparer et déployer l'API en production.
-
-### 1. Préparer l’environnement de travail
-
-#### Prérequis logiciels
-| Outil | Version minimale | Vérification |
-|-------|------------------|--------------|
-| Python | 3.11 | `python --version`
-| Docker Desktop | 28.4.0 | `docker --version`
-| Azure CLI | 2.77.0 | `az --version`
-
-> **Important** : ouvrez PowerShell « Exécuter en tant qu’administrateur » pour installer Azure CLI et interagir avec Docker.
-
-#### Installation rapide
-```powershell
-# Installer Azure CLI (session admin)
-$ProgressPreference = 'SilentlyContinue'
-Invoke-WebRequest -Uri https://aka.ms/installazurecliwindows -OutFile $env:TEMP\AzureCLI.msi
-Start-Process msiexec.exe -Wait -ArgumentList "/i $env:TEMP\AzureCLI.msi /quiet"
-Remove-Item $env:TEMP\AzureCLI.msi
-
-# Vérifications
-az --version
-docker --version
-```
-
-### 2. Se connecter à Azure
-```powershell
-az login
-az account show
-```
-
-### 3. Préparer les secrets de production
-| Secret | Valeur attendue |
-|--------|-----------------|
-| `DATABASE_URL` | `postgresql+asyncpg://USER:PASSWORD@seeg-postgres-server.postgres.database.azure.com:5432/postgres` |
-| `DATABASE_URL_SYNC` | `postgresql://USER:PASSWORD@seeg-postgres-server.postgres.database.azure.com:5432/postgres` |
-| `SECRET_KEY` | Chaîne aléatoire de 64 caractères minimum (généré automatiquement par le script) |
-| `SMTP_USERNAME` | `support@seeg-talentsource.com` |
-| `SMTP_PASSWORD` | **App Password Gmail** (16 caractères) |
-
-> Vous pouvez créer un App Password Gmail depuis https://myaccount.google.com/security → « Mots de passe des applications ».
-
-### 4. Déploiement automatisé (recommandé)
-
-Le script `scripts/deploy-azure.ps1` automatise toutes les étapes : création des ressources Azure, build Docker, push vers ACR, configuration App Service.
-
-```powershell
-cd "C:\Users\Sevan Kedesh IKISSA\Desktop\Projects\Programme\SEEG\SEEG-API"
-.\env\Scripts\Activate.ps1
-.\scripts\deploy-azure.ps1
-```
-
-Étapes effectuées par le script :
-1. Vérification des prérequis (Azure CLI, Docker).
-2. Génération d’une `SECRET_KEY` sécurisée.
-3. Récupération interactive des secrets (DB, SMTP).
-4. Construction et push de l’image vers `onehcmseeg.azurecr.io`.
-5. Configuration de l’App Service `one-hcm-seeg-backend`.
-6. Tests de santé (`/health`) et affichage des URLs finales.
-
-Durée totale ≈ 15 minutes.
-
-### 5. Déploiement manuel (alternative)
-
-Si vous préférez exécuter chaque étape manuellement :
-
-```powershell
-# Variables d’exemple
-$RG="one-hcm-seeg-rg"
-$APP="one-hcm-seeg-backend"
-$ACR="onehcmseeg"
-$IMG="onehcmseeg.azurecr.io/one-hcm-seeg-backend:latest"
-
-# 1. Build & push Docker
-docker build -t $IMG .
-az acr login --name $ACR
-docker push $IMG
-
-# 2. Configurer l’App Service
-az webapp config container set --name $APP --resource-group $RG --docker-custom-image-name $IMG
-
-# 3. Mettre à jour les App Settings
-az webapp config appsettings set --name $APP --resource-group $RG --settings `
-    DATABASE_URL="..." DATABASE_URL_SYNC="..." SECRET_KEY="..." `
-    SMTP_USERNAME="support@seeg-talentsource.com" SMTP_PASSWORD="<APP_PASSWORD>" `
-    ENVIRONMENT="production" DEBUG="false" ALLOWED_ORIGINS="https://www.seeg-talentsource.com,https://seeg-hcm.vercel.app"
-
-# 4. Redémarrer
-az webapp restart --name $APP --resource-group $RG
-```
-
-### 6. Vérifications post-déploiement
-```powershell
-# Health check
-Invoke-WebRequest -Uri "https://one-hcm-seeg-backend.azurewebsites.net/health" -UseBasicParsing
-
-# Documentation API
-Start-Process "https://one-hcm-seeg-backend.azurewebsites.net/docs"
-
-# Création du premier administrateur
-$body = @{
-    email = "admin@seeg.ga"
-    password = "Admin@2025Secure!"
-    first_name = "Admin"
-    last_name = "SEEG"
-} | ConvertTo-Json
-Invoke-RestMethod -Method Post -Uri "https://one-hcm-seeg-backend.azurewebsites.net/api/v1/auth/create-first-admin" -Body $body -ContentType "application/json"
-```
-
-### 7. Migrations de base de données
-
-#### Option A : Script automatisé (recommandé)
-```powershell
-.\scripts\run-migrations.ps1
-```
-
-#### Option B : Exécution manuelle
-```powershell
-# Depuis votre machine
-.\env\Scripts\Activate.ps1
-alembic upgrade head
-
-# Ou directement dans l'App Service
-az webapp ssh --name one-hcm-seeg-backend --resource-group one-hcm-seeg-rg
-alembic upgrade head
-exit
-```
-
-### 8. Procédure de rollback
-```powershell
-# Lister les tags d’images
-az acr repository show-tags --name onehcmseeg --repository one-hcm-seeg-backend --orderby time_desc
-
-# Revenir à une version précédente
-$PREVIOUS_TAG="v1.0.0-20250107-120000"
-az webapp config container set --name one-hcm-seeg-backend --resource-group one-hcm-seeg-rg --docker-custom-image-name "onehcmseeg.azurecr.io/one-hcm-seeg-backend:$PREVIOUS_TAG"
-az webapp restart --name one-hcm-seeg-backend --resource-group one-hcm-seeg-rg
-```
-
-### 9. Troubleshooting rapide
-| Problème | Symptôme | Solution |
-|----------|----------|----------|
-| Azure CLI non reconnu | `az : command not found` | Installer Azure CLI, redémarrer PowerShell |
-| Docker inaccessible | `docker_engine: file not found` | Démarrer Docker Desktop, lancer PowerShell en admin |
-| App Service introuvable | `app ... introuvable` | Vérifier `$RESOURCE_GROUP`, `$APP` |
-| Logs Application Insights absents | `APPLICATIONINSIGHTS_CONNECTION_STRING` vide | Configurer via `az webapp config appsettings set` |
-| Erreurs 500 | `/health` échoue | `az webapp log tail --name one-hcm-seeg-backend --resource-group one-hcm-seeg-rg` |
-
-### 10. URLs importantes
-- API : `https://one-hcm-seeg-backend.azurewebsites.net`
-- Documentation interactive : `https://one-hcm-seeg-backend.azurewebsites.net/docs`
-- Health check : `https://one-hcm-seeg-backend.azurewebsites.net/health`
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-00C7B7?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+[![Azure](https://img.shields.io/badge/Azure-Ready-0078D4?logo=microsoft-azure)](https://azure.microsoft.com/)
+[![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
 
 ---
 
-## 🖥️ Développement Local
+## 📋 Table des matières
 
-### Prérequis
+- [Aperçu](#apercu)
+- [Fonctionnalités](#fonctionnalites)
+- [Architecture](#architecture)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Déploiement](#deploiement)
+- [API Documentation](#api-documentation)
+- [Développement](#developpement)
+- [Tests](#tests)
+- [Monitoring](#monitoring)
+- [Sécurité](#securite)
 
-- Python 3.11+
-- PostgreSQL (Azure Database ou local)
-- Redis (optionnel, pour les tâches en arrière-plan)
+---
 
-### Installation
+## 🎯 Aperçu
 
-1. **Cloner le repository**
-```bash
-git clone <repository-url>
-cd one-hcm-seeg/backend
-```
+**One HCM SEEG Backend** est une API RESTful complète pour gérer l'ensemble du processus de recrutement de la SEEG :
 
-2. **Créer un environnement virtuel**
-```bash
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# ou
-venv\Scripts\activate     # Windows
-```
+- 🔐 **Authentification** avec JWT et refresh tokens
+- 👥 **Gestion des utilisateurs** (candidats internes/externes, recruteurs, admins)
+- 💼 **Offres d'emploi** avec filtrage interne/externe
+- 📝 **Candidatures** avec tracking complet
+- 📄 **Documents PDF** (CV, lettres, diplômes)
+- 📊 **Évaluations** (protocoles MTP)
+- 📅 **Entretiens** avec planification
+- 🔔 **Notifications** en temps réel
 
-3. **Installer les dépendances**
-```bash
-pip install -r requirements.txt
-```
+### Frontend
+- **Production** : [https://www.seeg-talentsource.com](https://www.seeg-talentsource.com)
+- **Staging** : [https://seeg-hcm.vercel.app](https://seeg-hcm.vercel.app)
 
-4. **Configurer les variables d'environnement**
-```bash
-cp .env.example .env
-# Éditer .env avec vos paramètres
-```
+---
 
-5. **Démarrer le serveur**
-```bash
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
+## ✨ Fonctionnalités
 
-## 📚 Documentation API
+### 🔐 Authentification & Autorisation
+- Inscription candidats (internes avec matricule / externes sans matricule)
+- Connexion multi-format (JSON, form-urlencoded)
+- JWT avec access & refresh tokens (durées configurables)
+- Gestion des rôles (candidate, recruiter, admin, observer)
+- Réinitialisation de mot de passe par email
+- Vérification de matricule SEEG
 
-- **Swagger UI** : http://localhost:8000/docs
-- **ReDoc** : http://localhost:8000/redoc
+### 👥 Gestion des candidats
+- **Candidats INTERNES** : Employés SEEG avec matricule
+  - `is_internal_candidate = true`
+  - Accès à TOUTES les offres d'emploi
+  - Inscription avec matricule obligatoire
+- **Candidats EXTERNES** : Candidatures externes sans matricule
+  - `is_internal_candidate = false`
+  - Accès uniquement aux offres non-internes
+  - Inscription sans matricule
+- Profils enrichis avec compétences et expérience
+- Upload de documents (CV, lettres, diplômes)
+- Historique complet des candidatures
 
-## ⭐ Nouvelles Fonctionnalités
+### 💼 Offres d'emploi
+- Création et gestion par les recruteurs
+- **Filtrage automatique INTERNE/EXTERNE** :
+  - Recruteur définit `is_internal_only` (true/false)
+  - Candidats internes voient TOUTES les offres
+  - Candidats externes voient UNIQUEMENT les offres accessibles
+- Statuts multiples (draft, active, closed, cancelled)
+- Statistiques par recruteur
+- Recherche et filtrage avancés
 
-### 🔐 Rate Limiting
-Protection contre les abus avec limites par endpoint:
-- **Login**: 5 requêtes/minute
-- **Signup**: 3 requêtes/minute
-- **Upload**: 10 requêtes/minute
-- **Autres**: 60 requêtes/minute
+### 📊 Évaluations
+- Protocoles MTP (Méthode de Travail Personnalisé)
+- Scoring automatisé
+- Recommandations de recrutement
+- Suivi de l'évolution des candidats
 
-### 🔄 Refresh Token
-Renouvellement sécurisé des tokens d'accès:
-```bash
-POST /api/v1/auth/refresh
-```
+### 📄 Gestion documentaire
+- Upload PDF sécurisé (10MB max)
+- Stockage en base de données (BYTEA)
+- Validation stricte (magic number + extension)
+- Types : CV, lettre motivation, diplômes, certificats
 
-### ✅ Validation PDF Renforcée
-- Taille maximum: 10 MB
-- Vérification magic number `%PDF`
-- Messages d'erreur explicites
-
-### 🚀 CI/CD Automatisé
-- Tests automatiques (Python 3.11, 3.12, 3.13)
-- Déploiement staging/production
-- Migrations automatiques
-- Health checks
-
-### 🔐 Sécurité Renforcée
-- ✅ Validation automatique au démarrage en production
-  - Vérification de `SECRET_KEY` (pas de valeur par défaut)
-  - Vérification de `DATABASE_URL` (pas de localhost)
-  - Avertissement si `DEBUG` activé
-- ✅ Variables d'environnement sécurisées
-- ✅ Pas de secrets en clair dans le code
-- ✅ `.gitignore` mis à jour pour exclure `.env.production`
-
-### 📊 Score Qualité
-- ✅ Tests: 21/22 (95.5%)
-- ✅ Coverage: 46%
-- ✅ Sécurité: 9/10
-- ✅ Documentation: Complète
-- ✅ **Production-Ready** : Validation automatique des configurations
+---
 
 ## 🏗️ Architecture
 
+### Principes appliqués
+- ✅ **Clean Architecture** - Séparation claire des couches
+- ✅ **SOLID Principles** - Code maintenable et extensible
+- ✅ **Dependency Injection** - Testabilité maximale
+- ✅ **Unit of Work Pattern** - Gestion des transactions
+
+### Structure en couches
+
 ```
-app/
-├── api/v1/endpoints/     # Endpoints API
-├── core/                 # Configuration et sécurité
-├── db/                   # Base de données
-├── models/               # Modèles SQLAlchemy
-├── schemas/              # Schémas Pydantic
-├── services/             # Logique métier
-└── utils/                # Utilitaires
-```
-
-## 🔐 Endpoints Principaux
-
-### Authentification
-- `POST /api/v1/auth/login` - Connexion
-- `POST /api/v1/auth/signup` - Inscription
-- `POST /api/v1/auth/refresh` - Rafraîchir token
-
-### Offres d'emploi
-- `GET /api/v1/jobs/` - Liste des offres
-- `POST /api/v1/jobs/` - Créer une offre
-- `GET /api/v1/jobs/{id}` - Détails d'une offre
-
-### Candidatures
-- `GET /api/v1/applications/` - Liste des candidatures
-- `POST /api/v1/applications/` - Créer une candidature
-- `PUT /api/v1/applications/{id}/status` - Mettre à jour le statut
-
-### Documents PDF
-- `POST /api/v1/applications/{id}/documents` - Upload d'un document PDF
-- `POST /api/v1/applications/{id}/documents/multiple` - Upload de plusieurs documents
-- `GET /api/v1/applications/{id}/documents` - Récupérer les documents
-- `GET /api/v1/applications/{id}/documents/{doc_id}` - Récupérer un document avec données
-- `DELETE /api/v1/applications/{id}/documents/{doc_id}` - Supprimer un document
-
-### Évaluations
-- `POST /api/v1/evaluations/protocol1` - Évaluation Protocol 1
-- `POST /api/v1/evaluations/protocol2` - Évaluation Protocol 2
-
-## 📄 Gestion des Documents PDF
-
-### Vue d'ensemble
-
-Le système permet aux candidats d'uploader des documents PDF directement dans la base de données. Cette fonctionnalité remplace l'ancien système basé sur des URLs et offre une sécurité et une intégrité des données améliorées.
-
-### Types de documents supportés
-
-- **`cover_letter`** : Lettres de motivation
-- **`cv`** : Curriculum Vitae
-- **`certificats`** : Certificats de formation
-- **`diplome`** : Diplômes
-
-### Caractéristiques techniques
-
-- **Format** : PDF uniquement
-- **Stockage** : Base de données PostgreSQL (type BYTEA)
-- **Validation** : Vérification du magic number PDF et de l'extension
-- **Encodage** : Base64 pour l'API
-- **Sécurité** : Validation stricte des types de fichiers
-
-### API Endpoints pour les PDF
-
-#### Upload d'un document
-
-```http
-POST /api/v1/applications/{application_id}/documents
-Content-Type: multipart/form-data
-
-document_type: string (cover_letter|cv|certificats|diplome)
-file: binary (fichier PDF)
+┌─────────────────────────────────────┐
+│   PRESENTATION LAYER                │
+│   (Endpoints FastAPI)               │
+│   - Validation entrées              │
+│   - Transactions explicites         │
+│   - Gestion erreurs HTTP            │
+└──────────────┬──────────────────────┘
+               │ Depends(get_db)
+               ↓
+┌─────────────────────────────────────┐
+│   SERVICE LAYER                     │
+│   (Business Logic)                  │
+│   - Logique métier pure             │
+│   - PAS de commit/rollback          │
+│   - Retourne objets métier          │
+└──────────────┬──────────────────────┘
+               │ utilise
+               ↓
+┌─────────────────────────────────────┐
+│   DATA ACCESS LAYER                 │
+│   (SQLAlchemy + PostgreSQL)         │
+│   - Accès base de données           │
+│   - Rollback automatique si erreur  │
+│   - Session gérée par get_db()      │
+└─────────────────────────────────────┘
 ```
 
-**Réponse :**
-```json
-{
-  "success": true,
-  "message": "Document uploadé avec succès",
-  "data": {
-    "id": "uuid",
-    "application_id": "uuid",
-    "document_type": "cv",
-    "file_name": "mon_cv.pdf",
-    "file_size": 1024000,
-    "file_type": "application/pdf",
-    "uploaded_at": "2024-01-01T00:00:00Z"
-  }
-}
+### Stack technique
+
+**Backend**
+- FastAPI 0.109+ (async/await)
+- SQLAlchemy 2.0+ (ORM async)
+- PostgreSQL 16 (base de données)
+- Redis (cache & rate limiting)
+- Alembic (migrations)
+
+**Sécurité**
+- JWT (python-jose)
+- Bcrypt (hashing passwords)
+- CORS configuré
+- Rate limiting (slowapi - désactivé temporairement)
+
+**Monitoring**
+- Structlog (logging JSON)
+- OpenTelemetry (tracing)
+- Prometheus (métriques)
+- Application Insights (Azure)
+
+---
+
+## 🚀 Installation
+
+### Prérequis
+
+- Python 3.12+
+- PostgreSQL 16+
+- Redis (optionnel, pour cache)
+- Git
+
+### Installation locale
+
+```bash
+# 1. Cloner le repository
+git clone <votre-repo>
+cd SEEG-API
+
+# 2. Créer l'environnement virtuel
+python -m venv env
+
+# 3. Activer l'environnement (Windows)
+.\env\Scripts\Activate.ps1
+
+# 4. Installer les dépendances
+pip install -r requirements.txt
+
+# 5. Copier et configurer .env
+copy env.example .env
+# Editer .env avec vos paramètres
+
+# 6. Créer la base de données
+psql -U postgres -c "CREATE DATABASE recruteur;"
+
+# 7. Appliquer les migrations
+alembic upgrade head
+
+# 8. Créer le premier administrateur
+python -c "
+import asyncio
+from app.db.database import AsyncSessionLocal
+from app.services.auth import AuthService
+from app.schemas.auth import CreateUserRequest
+
+async def create_admin():
+    async with AsyncSessionLocal() as db:
+        service = AuthService(db)
+        admin_data = CreateUserRequest(
+            email='admin@seeg.ga',
+            password='AdminSecure123!',
+            first_name='Admin',
+            last_name='SEEG',
+            role='admin'
+        )
+        user = await service.create_user(admin_data)
+        await db.commit()
+        print(f'✅ Admin créé: {user.email}')
+
+asyncio.run(create_admin())
+"
+
+# 9. Démarrer le serveur
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-#### Upload de plusieurs documents
+L'API sera accessible sur : **http://localhost:8000**  
+Documentation Swagger : **http://localhost:8000/docs**
 
-```http
-POST /api/v1/applications/{application_id}/documents/multiple
-Content-Type: multipart/form-data
+---
 
-files: binary[] (fichiers PDF)
-document_types: string[] (types correspondants)
+## ⚙️ Configuration
+
+### Fichier .env
+
+Variables essentielles :
+
+```bash
+# Environnement
+ENVIRONMENT=development
+DEBUG=true
+
+# Base de données
+DATABASE_URL=postgresql+asyncpg://postgres:<password>@localhost:5432/recruteur
+DATABASE_URL_SYNC=postgresql://postgres:<password>@localhost:5432/recruteur
+
+# Sécurité (CHANGEZ EN PRODUCTION)
+SECRET_KEY=<minimum-32-caracteres-aleatoires>
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# CORS
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
+ALLOWED_CREDENTIALS=true
+
+# Email (optionnel)
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=<votre-email>
+SMTP_PASSWORD=<app-password>
 ```
 
-#### Récupération des documents
+### Générer une SECRET_KEY sécurisée
 
-```http
-GET /api/v1/applications/{application_id}/documents
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-**Paramètres optionnels :**
-- `document_type` : Filtrer par type de document
+---
 
-#### Récupération d'un document avec données
+## 🐳 Déploiement
 
-```http
-GET /api/v1/applications/{application_id}/documents/{document_id}
+### Docker Compose (Local/Staging)
+
+```bash
+# Démarrer tous les services
+docker-compose up -d
+
+# Services inclus :
+# - seeg-api (API FastAPI)
+# - postgres (PostgreSQL 16)
+# - redis (Cache)
+# - jaeger (Tracing)
+# - prometheus (Métriques)
+# - grafana (Visualisation)
+# - nginx (Reverse proxy)
+
+# Vérifier les logs
+docker-compose logs -f seeg-api
+
+# Arrêter
+docker-compose down
 ```
 
-**Réponse :**
-```json
-{
-  "success": true,
-  "message": "Document récupéré avec succès",
-  "data": {
-    "id": "uuid",
-    "application_id": "uuid",
-    "document_type": "cv",
-    "file_name": "mon_cv.pdf",
-    "file_size": 1024000,
-    "file_type": "application/pdf",
-    "uploaded_at": "2024-01-01T00:00:00Z",
-    "file_data": "base64_encoded_pdf_content"
-  }
-}
+### Azure App Service (Production)
+
+#### Prérequis Azure
+- Azure CLI installé
+- App Service créé
+- Azure PostgreSQL configuré
+
+#### Configuration Azure
+
+1. **Variables d'environnement** (App Service → Configuration) :
+
+```bash
+ENVIRONMENT=production
+DEBUG=false
+SECRET_KEY=<generer-une-cle-securisee>
+DATABASE_URL=postgresql+asyncpg://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres
+DATABASE_URL_SYNC=postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres
+ALLOWED_ORIGINS=https://www.seeg-talentsource.com,https://seeg-hcm.vercel.app
+APPLICATIONINSIGHTS_CONNECTION_STRING=<votre-connection-string>
 ```
 
-#### Suppression d'un document
+2. **Déploiement avec mise à jour continue** :
 
-```http
-DELETE /api/v1/applications/{application_id}/documents/{document_id}
+```bash
+# Lancer le script de mise à jour
+.\scripts\mise_a_jour.ps1
+
+# Le script vous demandera si vous voulez executer les migrations
+# Tapez 'y' pour oui
+
+# Si les migrations echouent localement (normal car DB Azure):
+# Tapez 'y' pour continuer le deploiement
+
+# Les migrations seront appliquées AUTOMATIQUEMENT au demarrage
+# du conteneur Docker sur Azure via docker-entrypoint.sh
 ```
 
-### Structure de la base de données
+**Important** : Les migrations locales peuvent échouer si vous n'avez pas accès à la DB Azure en local. C'est normal ! Les migrations s'exécuteront automatiquement au démarrage du conteneur sur Azure.
 
-#### Table `application_documents`
+3. **Vérifier le déploiement** :
 
-| Colonne | Type | Description |
-|---------|------|-------------|
-| `id` | UUID | Identifiant unique |
-| `application_id` | UUID | Référence vers la candidature |
-| `document_type` | VARCHAR | Type de document |
-| `file_name` | VARCHAR | Nom du fichier |
-| `file_data` | BYTEA | Contenu binaire du PDF |
-| `file_size` | INTEGER | Taille en octets |
-| `file_type` | VARCHAR | Type MIME (application/pdf) |
-| `uploaded_at` | TIMESTAMP | Date d'upload |
+```bash
+# Health check
+curl https://seeg-backend-api.azurewebsites.net/health
 
-#### Table `applications` (modifiée)
+# Swagger UI
+https://seeg-backend-api.azurewebsites.net/docs
+```
 
-**Champs supprimés :**
-- `motivation` (Text)
-- `url_lettre_integrite` (String)
-- `url_idee_projet` (String)
-- `cover_letter` (Text)
+4. **Créer les utilisateurs (après déploiement)** :
 
-### Validation et sécurité
+```bash
+# Se connecter à Azure
+az webapp ssh --name seeg-backend-api --resource-group seeg-backend-rg
 
-#### Validation des fichiers
+# Ou localement avec DATABASE_URL pointant vers Azure
+python scripts/create_recruiters_after_migration.py
+```
 
-1. **Extension** : Doit se terminer par `.pdf`
-2. **Magic number** : Doit commencer par `%PDF`
-3. **Type MIME** : Vérification du contenu
-4. **Taille** : Limite configurable (par défaut 10MB)
+---
 
-#### Sécurité
+## 📚 API Documentation
 
-- **Authentification** : Tous les endpoints nécessitent une authentification
-- **Autorisation** : Vérification des droits d'accès aux candidatures
-- **Validation stricte** : Rejet des fichiers non-PDF
-- **Stockage sécurisé** : Données binaires dans la base de données
+### Endpoints principaux
+
+#### 🔐 Authentification (`/api/v1/auth`)
+
+| Méthode | Endpoint | Description | Auth |
+|---------|----------|-------------|------|
+| POST | `/login` | Connexion | Non |
+| POST | `/signup` | Inscription candidat | Non |
+| POST | `/create-user` | Créer utilisateur | Admin |
+| GET | `/me` | Profil utilisateur | Oui |
+| POST | `/refresh` | Rafraîchir token | Non |
+| POST | `/logout` | Déconnexion | Oui |
+| POST | `/forgot-password` | Mot de passe oublié | Non |
+| POST | `/reset-password` | Réinitialiser MdP | Non |
+| POST | `/change-password` | Changer MdP | Oui |
+| GET | `/verify-matricule` | Vérifier matricule | Candidat |
+
+#### 👥 Utilisateurs (`/api/v1/users`)
+- GET `/` - Liste des utilisateurs
+- GET `/{id}` - Détails utilisateur
+- PUT `/{id}` - Modifier utilisateur
+- DELETE `/{id}` - Supprimer utilisateur
+
+#### 💼 Offres d'emploi (`/api/v1/jobs`)
+- GET `/` - Liste des offres **(filtrées automatiquement selon type candidat)**
+  - Candidat INTERNE → Toutes les offres
+  - Candidat EXTERNE → Uniquement offres is_internal_only=false
+  - Recruteur/Admin → Toutes les offres
+- POST `/` - Créer offre (avec champ `is_internal_only`)
+- GET `/{id}` - Détails offre
+- PUT `/{id}` - Modifier offre (peut changer `is_internal_only`)
+- DELETE `/{id}` - Supprimer offre
+
+#### 📝 Candidatures (`/api/v1/applications`)
+- POST `/` - Soumettre candidature
+- GET `/` - Lister candidatures
+- GET `/{id}` - Détails candidature
+- PUT `/{id}/status` - Changer statut
+- POST `/{id}/documents` - Upload PDF
 
 ### Exemples d'utilisation
 
-#### JavaScript (Frontend)
+#### Inscription candidat INTERNE (employé SEEG)
 
-```javascript
-// Upload d'un fichier PDF
-const uploadDocument = async (applicationId, file, documentType) => {
-  const formData = new FormData();
-  formData.append('document_type', documentType);
-  formData.append('file', file);
-  
-  const response = await fetch(`/api/v1/applications/${applicationId}/documents`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`
-    },
-    body: formData
-  });
-  
-  return response.json();
-};
+```bash
+POST /api/v1/auth/signup
+Content-Type: application/json
 
-// Récupération des documents
-const getDocuments = async (applicationId) => {
-  const response = await fetch(`/api/v1/applications/${applicationId}/documents`, {
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
-  });
-  
-  return response.json();
-};
+{
+  "email": "employe@seeg.ga",
+  "password": "SecurePass123!@#",
+  "first_name": "Marie",
+  "last_name": "Obame",
+  "matricule": 145678,        # ← Avec matricule = INTERNE
+  "phone": "+241066123456",
+  "date_of_birth": "1988-03-15",
+  "sexe": "F"
+}
+
+# Réponse: is_internal_candidate = true
 ```
 
-#### Python (Backend)
+#### Inscription candidat EXTERNE
+
+```bash
+POST /api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "email": "candidat@gmail.com",
+  "password": "SecurePass123!@#",
+  "first_name": "Jean",
+  "last_name": "Dupont",
+  "matricule": null,          # ← Sans matricule = EXTERNE
+  "phone": "+241077999888",
+  "date_of_birth": "1995-07-20",
+  "sexe": "M"
+}
+
+# Réponse: is_internal_candidate = false
+```
+
+#### Créer une offre réservée aux internes
+
+```bash
+POST /api/v1/jobs
+Authorization: Bearer <recruteur_token>
+Content-Type: application/json
+
+{
+  "title": "Technicien Réseau Senior",
+  "description": "Poste réservé aux employés SEEG",
+  "location": "Libreville",
+  "contract_type": "CDI",
+  "is_internal_only": true,    # ← Réservée aux INTERNES uniquement
+  ...
+}
+```
+
+#### Lister les offres (filtrage automatique)
+
+```bash
+GET /api/v1/jobs
+Authorization: Bearer <candidat_externe_token>
+
+# Réponse: Uniquement les offres avec is_internal_only = false
+# Les offres internes ne sont PAS visibles pour ce candidat externe
+```
+
+#### Connexion
+
+```bash
+POST /api/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@seeg.ga",
+  "password": "SecurePass123!"
+}
+
+# Réponse:
+{
+  "access_token": "eyJhbGci...",
+  "refresh_token": "eyJhbGci...",
+  "token_type": "bearer",
+  "expires_in": 1800
+}
+```
+
+#### Requête authentifiée
+
+```bash
+GET /api/v1/auth/me
+Authorization: Bearer <access_token>
+
+# Réponse: Profil utilisateur complet
+```
+
+---
+
+## 💻 Développement
+
+### Structure du projet
+
+```
+SEEG-API/
+├── app/
+│   ├── api/v1/endpoints/      # Endpoints FastAPI
+│   ├── core/                  # Configuration, sécurité, logging
+│   ├── db/                    # Database, migrations, UoW
+│   ├── models/                # Models SQLAlchemy
+│   ├── schemas/               # Schemas Pydantic
+│   ├── services/              # Business logic (PURE)
+│   ├── middleware/            # Middlewares custom
+│   └── main.py                # Point d'entrée
+├── tests/                     # Tests pytest
+├── scripts/                   # Scripts utilitaires
+├── monitoring/                # Config Prometheus/Grafana
+├── Dockerfile                 # Multi-stage build
+├── docker-compose.yml         # Stack complète
+├── alembic.ini                # Config migrations
+├── requirements.txt           # Dépendances Python
+└── README.md                  # Ce fichier
+```
+
+### Principes de développement
+
+#### 1. Architecture en couches
+
+**Endpoints** (Presentation Layer)
+- Gestion des requêtes HTTP
+- Validation des entrées (Pydantic)
+- **Gestion des transactions** (commit/rollback)
+- Conversion des réponses
 
 ```python
-from app.services.application import ApplicationService
-from app.schemas.application import ApplicationDocumentCreate
-import base64
-
-# Création d'un document
-async def create_document(db, application_id, file_path, document_type):
-    with open(file_path, 'rb') as f:
-        file_content = f.read()
+@router.post("/signup")
+async def signup(data: SignupRequest, db: AsyncSession = Depends(get_db)):
+    # Service fait la logique
+    user = await auth_service.create_candidate(data)
     
-    file_data_b64 = base64.b64encode(file_content).decode('utf-8')
+    # Endpoint gère la transaction
+    await db.commit()
+    await db.refresh(user)
     
-    document_data = ApplicationDocumentCreate(
-        application_id=application_id,
-        document_type=document_type,
-        file_name=os.path.basename(file_path),
-        file_data=file_data_b64,
-        file_size=len(file_content),
-        file_type="application/pdf"
-    )
-    
-    service = ApplicationService(db)
-    return await service.create_document(document_data)
+    return UserResponse.from_orm(user)
 ```
+
+**Services** (Business Logic Layer)
+- Logique métier pure
+- **NE FAIT PAS** de commit/rollback
+- Retourne des objets métier
+
+```python
+class AuthService:
+    async def create_candidate(self, data) -> User:
+        # Validations métier
+        # Création de l'objet
+        user = User(...)
+        self.db.add(user)
+        # ✅ PAS de commit ici
+        return user
+```
+
+**Database** (Data Access Layer)
+- Gestion du lifecycle des sessions
+- Rollback automatique en cas d'erreur
+
+```python
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    session = AsyncSessionLocal()
+    try:
+        yield session
+    except Exception:
+        await session.rollback()
+        raise
+    finally:
+        await session.close()
+```
+
+#### 2. Gestion des erreurs
+
+```python
+# Exceptions personnalisées
+class ValidationError(Exception): pass
+class NotFoundError(Exception): pass
+class UnauthorizedError(Exception): pass
+class BusinessLogicError(Exception): pass
+
+# Dans les services
+raise ValidationError("Email déjà utilisé")
+
+# Dans les endpoints
+except ValidationError as e:
+    raise HTTPException(400, detail=str(e))
+```
+
+#### 3. Logging structuré
+
+```python
+import structlog
+
+logger = structlog.get_logger(__name__)
+logger.info("User created", user_id=user.id, email=user.email)
+```
+
+### Créer une nouvelle migration
+
+```bash
+# 1. Modifier le modèle dans app/models/
+# 2. Générer la migration
+alembic revision --autogenerate -m "description"
+
+# 3. Vérifier le fichier généré
+# app/db/migrations/versions/<date>_<description>.py
+
+# 4. Appliquer la migration
+alembic upgrade head
+```
+
+### Ajouter un nouveau endpoint
+
+1. **Créer le schema** (`app/schemas/`)
+2. **Ajouter la méthode au service** (`app/services/`) - SANS commit
+3. **Créer l'endpoint** (`app/api/v1/endpoints/`) - AVEC commit
+4. **Ajouter les tests** (`tests/`)
+
+---
+
+## 🧪 Tests
+
+### Lancer les tests
+
+```bash
+# Tous les tests
+pytest
+
+# Avec coverage
+pytest --cov=app --cov-report=html
+
+# Tests spécifiques
+pytest tests/test_auth_endpoints.py -v
+pytest tests/test_auth_endpoints.py::test_login_success -v
+```
+
+### Tests manuels avec Postman
+
+Une collection Postman complète est fournie :
+- Import `SEEG_API.postman_collection.json`
+- Variables automatiques (tokens sauvegardés)
+- 8+ requêtes préconfigurées
+
+### Tests avec curl
+
+```bash
+# Health check
+curl http://localhost:8000/health
+
+# Login
+curl -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@seeg.ga","password":"Admin123!"}'
+
+# Avec token
+curl http://localhost:8000/api/v1/auth/me \
+  -H "Authorization: Bearer <access_token>"
+```
+
+---
+
+## 📊 Monitoring
+
+### Métriques (Prometheus)
+
+Accessible sur : **http://localhost:9090** (Docker Compose)
+
+Endpoints exposés :
+- `/monitoring/metrics` - Métriques Prometheus
+- `/monitoring/health` - Health check détaillé
+
+### Tracing (Jaeger)
+
+Accessible sur : **http://localhost:16686** (Docker Compose)
+
+- Tracing distribué des requêtes
+- Analyse des performances
+- Détection des goulots d'étranglement
+
+### Logs
+
+- Format : JSON structuré (production) ou console (dev)
+- Niveau : Configurable via `LOG_LEVEL`
+- Stockage : `logs/` directory
+
+```bash
+# Voir les logs en temps réel
+tail -f logs/app.log
+```
+
+### Azure Application Insights
+
+Configuration :
+```bash
+APPLICATIONINSIGHTS_CONNECTION_STRING=<votre-connection-string>
+```
+
+Fonctionnalités :
+- Tracing automatique des requêtes
+- Détection d'anomalies
+- Alertes configurables
+- Dashboards intégrés
+
+---
+
+## 🔒 Sécurité
+
+### Authentification
+
+- **JWT** avec signature HS256
+- **Access tokens** : 30 minutes
+- **Refresh tokens** : 7 jours
+- **Bcrypt** pour les mots de passe (cost=12)
+
+### Validation
+
+- **Pydantic** pour toutes les entrées
+- **Email** : Format validé
+- **Mot de passe** : Minimum 12 caractères (signup), 8 (login)
+- **Date de naissance** : Âge minimum 18 ans
+
+### CORS
+
+Configuration par environnement :
+- **Dev** : localhost:3000, localhost:8080
+- **Prod** : seeg-talentsource.com, seeg-hcm.vercel.app
+
+### Rate Limiting
+
+⚠️ **Temporairement désactivé** (problème compatibilité slowapi)
+
+Configuration cible :
+- Auth : 5/minute, 20/heure
+- Signup : 3/minute, 10/heure
+- Upload : 10/minute, 50/heure
+- Autres : 60/minute, 500/heure
+
+---
+
+## 🛡️ Contrôle d'Accès par Rôles (RBAC)
+
+### Hiérarchie des Rôles
+
+```
+1. ADMIN (Administrateur)
+   └── Toutes les permissions système
+
+2. RECRUITER (Recruteur)
+   └── Gestion complète du recrutement
+
+3. OBSERVER (Observateur)
+   └── Lecture seule (monitoring)
+
+4. CANDIDATE (Candidat)
+   └── Actions limitées à ses propres données
+```
+
+### Permissions par Rôle
+
+#### 👤 CANDIDATE (Candidat)
+
+**Autorisé :**
+- Voir et modifier son propre profil
+- Voir les offres (filtrées selon interne/externe)
+- Soumettre des candidatures
+- Voir ses propres candidatures
+- Upload de documents (CV, lettres, diplômes)
+
+**Interdit :**
+- Voir le profil d'autres candidats
+- Voir toutes les candidatures
+- Créer/modifier des offres d'emploi
+- Changer le statut de candidatures
+
+#### 👁️ OBSERVER (Observateur)
+
+**Autorisé (LECTURE SEULE) :**
+- Voir toutes les offres d'emploi
+- Voir toutes les candidatures
+- Voir tous les entretiens
+- Voir toutes les évaluations
+- Voir les statistiques
+
+**Interdit (AUCUNE ACTION) :**
+- Créer/modifier/supprimer quoi que ce soit
+- Toute action de modification
+
+#### 💼 RECRUITER (Recruteur)
+
+**Autorisé (TOUT FAIRE) :**
+- **Offres** : Créer, modifier, supprimer, publier
+- **Candidatures** : Voir toutes, changer statuts
+- **Candidats** : Voir tous les profils
+- **Entretiens** : Créer, modifier, annuler
+- **Évaluations** : Créer, modifier (protocoles MTP)
+- **Notifications** : Envoyer aux candidats
+- **Statistiques** : Voir et exporter
+
+**Interdit :**
+- Modifier les offres d'autres recruteurs (sauf admin)
+- Gérer les utilisateurs (admin uniquement)
+
+#### 🔑 ADMIN (Administrateur)
+
+**Autorisé (TOUT) :**
+- Toutes les permissions RECRUITER
+- Créer/modifier/supprimer des utilisateurs
+- Changer les rôles
+- Modifier les offres de tous les recruteurs
+- Accès aux logs système
+- Configuration de l'application
+
+### Dependencies FastAPI
+
+```python
+# Tous les utilisateurs authentifiés
+Depends(get_current_active_user)
+
+# Candidats uniquement
+Depends(get_current_candidate_user)
+
+# Observateurs, Recruteurs et Admin (lecture)
+Depends(get_current_observer_user)
+
+# Recruteurs et Admin (actions)
+Depends(get_current_recruiter_user)
+
+# Admin uniquement
+Depends(get_current_admin_user)
+```
+
+### Matrice de Permissions
+
+| Action | Candidate | Observer | Recruiter | Admin |
+|--------|-----------|----------|-----------|-------|
+| Voir offres (filtrées) | ✅ | ✅ | ✅ | ✅ |
+| Créer offre | ❌ | ❌ | ✅ | ✅ |
+| Modifier offre | ❌ | ❌ | ✅ (propre) | ✅ (toutes) |
+| Candidater | ✅ | ❌ | ❌ | ❌ |
+| Voir candidatures | ✅ (propres) | ✅ (toutes) | ✅ (toutes) | ✅ (toutes) |
+| Changer statut | ❌ | ❌ | ✅ | ✅ |
+| Planifier entretien | ❌ | ❌ | ✅ | ✅ |
+| Voir statistiques | ❌ | ✅ | ✅ | ✅ |
+| Gérer utilisateurs | ❌ | ❌ | ❌ | ✅ |
+
+---
 
 ## 🗄️ Base de données
 
-### Migration
+### Modèle principal
 
-#### Historique des migrations
+#### Table `users`
 
-- **Migration initiale** : `a9cb9ffa6018` - Création des tables
-- **Migration PDF** : `c233e3cf8f4e` - Modification pour le stockage PDF
+```sql
+CREATE TABLE users (
+    id UUID PRIMARY KEY,
+    email VARCHAR UNIQUE NOT NULL,
+    first_name VARCHAR NOT NULL,
+    last_name VARCHAR NOT NULL,
+    role VARCHAR NOT NULL,  -- candidate, recruiter, admin, observer
+    phone VARCHAR,
+    date_of_birth TIMESTAMP,
+    sexe VARCHAR,
+    matricule INTEGER UNIQUE,  -- NULL pour candidats externes
+    hashed_password VARCHAR NOT NULL,
+    email_verified BOOLEAN DEFAULT false,
+    last_login TIMESTAMP,
+    is_active BOOLEAN DEFAULT true,
+    is_internal_candidate BOOLEAN DEFAULT false,  -- NEW: Detection auto interne/externe
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
 
-#### Commandes de migration
+CREATE INDEX ix_users_email ON users(email);
+CREATE INDEX ix_users_matricule ON users(matricule);
+CREATE INDEX ix_users_is_internal_candidate ON users(is_internal_candidate, role);
+```
+
+#### Table `job_offers`
+
+```sql
+CREATE TABLE job_offers (
+    id UUID PRIMARY KEY,
+    recruiter_id UUID REFERENCES users(id),
+    title VARCHAR NOT NULL,
+    description TEXT NOT NULL,
+    location VARCHAR NOT NULL,
+    contract_type VARCHAR NOT NULL,
+    is_internal_only BOOLEAN DEFAULT false,  -- NEW: true = Réservée internes uniquement
+    status VARCHAR DEFAULT 'active',
+    -- ... autres champs ...
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX ix_job_offers_is_internal_only ON job_offers(is_internal_only, status);
+```
+
+#### Système INTERNES/EXTERNES
+
+**Sur le candidat** (`is_internal_candidate`) :
+- **Avec matricule** → `is_internal_candidate = true` (Employé SEEG)
+- **Sans matricule** → `is_internal_candidate = false` (Externe)
+
+**Sur l'offre** (`is_internal_only`) :
+- **true** → Réservée aux employés SEEG uniquement
+- **false** → Accessible à tous (internes + externes)
+
+**Filtrage automatique** (GET /api/v1/jobs) :
+```python
+# Dans le service JobOfferService
+if current_user.role == "candidate":
+    if not current_user.is_internal_candidate:
+        # Candidat EXTERNE: uniquement offres non-internes
+        query = query.where(JobOffer.is_internal_only == False)
+# Candidat INTERNE ou Recruteur: toutes les offres
+```
+
+### Migrations
 
 ```bash
-# Appliquer les migrations
+# Appliquer toutes les migrations
 alembic upgrade head
 
-# Vérifier l'état
-alembic current
+# Revenir en arrière
+alembic downgrade -1
 
-# Créer une nouvelle migration
-alembic revision --autogenerate -m "Description"
+# Historique
+alembic history
+
+# Migration spécifique
+alembic upgrade <revision_id>
 ```
 
-### Configuration Azure
+---
 
-```ini
-# alembic.ini
-sqlalchemy.url = postgresql+asyncpg://Sevan:Sevan%%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres
+## 📖 Guide des bonnes pratiques
+
+### ✅ À FAIRE
+
+- ✅ Utiliser `Depends(get_db)` pour la session
+- ✅ Faire les commits dans les endpoints
+- ✅ Laisser les services purs (pas de commit)
+- ✅ Gérer les exceptions spécifiques
+- ✅ Logger les actions importantes
+- ✅ Valider les entrées avec Pydantic
+- ✅ Utiliser les types hints partout
+
+### ❌ À NE PAS FAIRE
+
+- ❌ Commits dans les services
+- ❌ Rollbacks manuels (get_db() le fait)
+- ❌ Ignorer les exceptions
+- ❌ Hardcoder des secrets
+- ❌ Retourner des mots de passe
+- ❌ Exposer les stack traces en production
+
+### Exemple complet
+
+```python
+# SERVICE (logique pure)
+class MyService:
+    async def create_something(self, data) -> Something:
+        obj = Something(**data.dict())
+        self.db.add(obj)
+        # ✅ PAS de commit
+        return obj
+
+# ENDPOINT (gestion transaction)
+@router.post("/something")
+async def create(data: CreateRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        service = MyService(db)
+        obj = await service.create_something(data)
+        
+        # ✅ Commit explicite
+        await db.commit()
+        await db.refresh(obj)
+        
+        return Response.from_orm(obj)
+    except ValidationError as e:
+        # Rollback automatique par get_db()
+        raise HTTPException(400, detail=str(e))
 ```
 
-## 🐳 Docker (local et production)
+---
 
-### Structure Docker
+## 🔧 Scripts utilitaires
 
-- `Dockerfile` (multi-étapes) : construit l'image backend FastAPI
-- `docker-compose.yml` : services locaux (app, db, …)
+### `scripts/mise_a_jour.ps1`
+Script de mise à jour continue
 
-### Scripts disponibles
+### `scripts/deploy-azure.ps1`
+Déploiement automatisé sur Azure
 
-Le projet inclut 3 scripts PowerShell essentiels :
+### `scripts/manual_auth_tests.py`
+Tests manuels des endpoints auth
 
-| Script | Description |
-|--------|-------------|
-| `scripts/deploy-azure.ps1` | Déploiement complet sur Azure (création ressources, build, push, config) |
-| `scripts/mise_a_jour.ps1` | Mise à jour continue : rebuild image et redéploiement |
-| `scripts/run-migrations.ps1` | Exécution des migrations Alembic sur la base de production |
+---
 
-### Exemple de .env
+## 📝 Changelog
 
-```env
-# Application
-ENV=dev
-LOG_LEVEL=info
-SECRET_KEY=change_me
-ACCESS_TOKEN_EXPIRE_MINUTES=120
+### Version 1.0.0 (2025-10-08)
 
-# Base de données (async pour SQLAlchemy 2 + asyncpg)
-DATABASE_URL=postgresql+asyncpg://<user>:<password>@<host>:5432/<db>
-# Connexion sync (certaines opérations/scripts)
-DATABASE_URL_SYNC=postgresql+psycopg2://<user>:<password>@<host>:5432/<db>
+**🎉 Features**
+- ✅ Système d'authentification complet
+- ✅ Distinction candidats INTERNES/EXTERNES
+- ✅ Upload de documents PDF
+- ✅ Évaluations MTP
+- ✅ Monitoring complet (Prometheus, Jaeger, App Insights)
 
-# CORS
-BACKEND_CORS_ORIGINS=["http://localhost:5173","https://www.seeg-talentsource.com"]
-```
+**🏗️ Architecture**
+- ✅ Refactorisation complète avec best practices
+- ✅ SOLID principles appliqués
+- ✅ Unit of Work Pattern implémenté
+- ✅ 8 services refactorisés (46 commits retirés)
+- ✅ Transactions explicites dans tous les endpoints
 
-### Build & run local (Docker)
+**🔧 Fixes**
+- ✅ Gestion robuste des sessions DB
+- ✅ Architecture propre avec séparation des couches
+- ✅ Rollback automatique en cas d'erreur
+- ✅ Logging structuré partout
+
+---
+
+## 🤝 Contribution
+
+### Workflow Git
 
 ```bash
-# Depuis le dossier backend
-docker build -t seeg-backend:local .
+# 1. Créer une branche
+git checkout -b feature/ma-fonctionnalite
 
-docker run --rm -p 8000:8000 \
-  --env-file .env \
-  --name seeg-backend seeg-backend:local
+# 2. Faire vos modifications
+
+# 3. Tests
+pytest
+
+# 4. Commit
+git add .
+git commit -m "feat: description"
+
+# 5. Push
+git push origin feature/ma-fonctionnalite
+
+# 6. Créer une Pull Request
 ```
 
-Explication:
-- `docker build -t seeg-backend:local .` : construit l'image locale
-- `docker run ... -p 8000:8000` : expose le port 8000
-- `--env-file .env` : injecte les variables d'environnement
-- Le `Dockerfile` définit la commande d'entrée qui lance `uvicorn`
+### Standards de code
 
-### Docker Compose (optionnel)
+- **PEP 8** pour Python
+- **Type hints** obligatoires
+- **Docstrings** pour toutes les fonctions publiques
+- **Tests** pour les nouvelles fonctionnalités
+
+---
+
+## 📞 Support
+
+### Problèmes courants
+
+#### 1. Erreur de connexion DB
 
 ```bash
-docker compose up --build
+# Vérifier que PostgreSQL est démarré
+psql -U postgres -c "SELECT 1"
+
+# Vérifier la base existe
+psql -U postgres -l | grep recruteur
 ```
 
-### Rebuild & Push vers Azure Container Registry (ACR)
+#### 2. Erreur 401 Unauthorized
+
+- Vérifier que le token n'est pas expiré
+- Vérifier le format : `Authorization: Bearer <token>`
+
+#### 3. Erreur CORS
+
+- Vérifier `ALLOWED_ORIGINS` dans .env
+- Vérifier que le frontend utilise le bon domaine
+
+#### 4. Import errors
+
+- Vérifier que l'environnement virtuel est activé
+- Vérifier `pip install -r requirements.txt`
+
+### Logs & Debugging
 
 ```bash
-# Variables (exemple)
-ACR_NAME=seegacr
-ACR_LOGIN=${ACR_NAME}.azurecr.io
-IMAGE=${ACR_LOGIN}/seeg-backend:latest
+# Activer le mode DEBUG
+DEBUG=true
 
-# Connexion ACR (si besoin)
-az acr login --name ${ACR_NAME}
+# Niveau de logs détaillé
+LOG_LEVEL=DEBUG
 
-# Build multi-plateforme (optionnel) ou simple
-az acr build --registry ${ACR_NAME} --image seeg-backend:latest .
-# ou en local
-# docker build -t ${IMAGE} . && docker push ${IMAGE}
+# Voir les requêtes SQL
+echo=True  # Dans database.py
 ```
 
-Explication:
-- `az acr login` : s'authentifie à l'ACR
-- `az acr build` : construit l'image dans ACR (build cloud), évite d'uploader les artefacts locaux
-- `docker build && docker push` : alternative locale si préférée
+---
 
-## ☁️ Déploiement sur Azure App Service (Container)
+## 📄 Licence
 
-Prérequis:
-- `az login`
-- Ressource Group existant (ou à créer)
-- ACR existant avec l'image poussée (`seeg-backend:latest`)
+Propriété de la SEEG (Société d'Énergie et d'Eau du Gabon)
 
-Variables d'exemple:
-```bash
-RG=seeg-backend-rg
-LOC=westeurope
-PLAN=seeg-backend-plan
-APP=seeg-backend-api
-ACR_NAME=seegacr
-ACR_LOGIN=${ACR_NAME}.azurecr.io
-IMAGE=${ACR_LOGIN}/seeg-backend:latest
-```
+---
 
-### 1) Créer le groupe de ressources (si nécessaire)
-```bash
-az group create --name ${RG} --location ${LOC}
-```
-- Crée un Resource Group pour regrouper les ressources Azure
+## 👨‍💻 Développeurs
 
-### 2) Créer le plan App Service (Linux, B1 par ex.)
-```bash
-az appservice plan create \
-  --name ${PLAN} \
-  --resource-group ${RG} \
-  --is-linux \
-  --sku B1
-```
-- Crée un plan d'hébergement (dimensionnement et facturation)
+**Lead Developer** : Sevan Kedesh IKISSA PENDY  
+**Email** : sevankedesh11@gmail.com
 
-### 3) Créer l'App Service (Web App conteneur)
-```bash
-az webapp create \
-  --name ${APP} \
-  --resource-group ${RG} \
-  --plan ${PLAN} \
-  --deployment-container-image-name ${IMAGE}
-```
-- Crée l'application et la pointe sur l'image container
+---
 
-### 4) Donner accès de l'App à l'ACR (pull)
-```bash
-az webapp config container set \
-  --name ${APP} \
-  --resource-group ${RG} \
-  --docker-custom-image-name ${IMAGE} \
-  --docker-registry-server-url https://${ACR_LOGIN}
-```
-- Configure le conteneur et l'URL du registre
+## 🚀 Statut
 
-Si l'ACR est privé, lier l'identité/les credentials:
-```bash
-az webapp config container set \
-  --name ${APP} \
-  --resource-group ${RG} \
-  --docker-registry-server-user $(az acr credential show --name ${ACR_NAME} --query username -o tsv) \
-  --docker-registry-server-password $(az acr credential show --name ${ACR_NAME} --query passwords[0].value -o tsv)
-```
-- Renseigne user/password ACR si Managed Identity non utilisée
+**Version actuelle** : 1.0.0  
+**Environnement** : Production Ready ✅  
+**Tests** : 8/8 endpoints auth (100%) ✅  
+**Architecture** : Clean Code ✅  
+**Déploiement** : Azure + Docker ✅
 
-### 5) Variables d'environnement (App Settings)
-```bash
-az webapp config appsettings set \
-  --name ${APP} \
-  --resource-group ${RG} \
-  --settings \
-  ENV=prod \
-  LOG_LEVEL=info \
-  DATABASE_URL="<postgres-async-url>" \
-  DATABASE_URL_SYNC="<postgres-sync-url>" \
-  SECRET_KEY="<secret>" \
-  ACCESS_TOKEN_EXPIRE_MINUTES=120
-```
-- Définit les variables lues par l'app (équivalent `.env`)
+---
 
-### 6) Activer les logs (utile debug)
-```bash
-az webapp log config \
-  --name ${APP} \
-  --resource-group ${RG} \
-  --docker-container-logging filesystem
-```
-- Active les logs du conteneur accessibles via `az webapp log tail`
-
-### 7) Déployer une nouvelle image (rollout)
-Option A (changer le tag ou forcer l’update):
-```bash
-az webapp config container set \
-  --name ${APP} \
-  --resource-group ${RG} \
-  --docker-custom-image-name ${IMAGE}
-
-az webapp restart --name ${APP} --resource-group ${RG}
-```
-- Met à jour la config conteneur et redémarre l'app
-
-Option B (déploiement ZIP de code, peu utilisé ici car conteneur):
-```bash
-az webapp deploy --name ${APP} --resource-group ${RG} --src-path backend.zip
-```
-- Déploie un package (non nécessaire pour mode conteneur)
-
-### 7.1) (Recommandé) Exécuter les migrations Alembic après déploiement
-
-Selon votre stratégie, exécuter les migrations peut se faire via une tâche séparée (GitHub Actions, Azure Pipelines) ou manuellement depuis un pod/console:
-
-Option A — Tâche CI/CD qui lance Alembic (idéal):
-```bash
-# Exemple (à adapter à votre pipeline)
-python -m alembic upgrade head
-```
-
-Option B — Exécuter dans un conteneur éphémère (si image contient alembic.ini):
-```bash
-# Démarrer un conteneur temporaire avec la même image
-az webapp ssh --name ${APP} --resource-group ${RG}
-# Puis dans le shell du conteneur
-alembic upgrade head
-```
-
-Notes:
-- Vérifier que `DATABASE_URL`/`DATABASE_URL_SYNC` sont configurées dans les App Settings
-- Les migrations doivent être idempotentes; surveiller les logs pendant l’exécution
-
-### 8) Suivre les logs en direct
-```
-```
+**Construit avec ❤️ pour la SEEG**

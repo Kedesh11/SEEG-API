@@ -1,83 +1,122 @@
-# Dockerfile multi-stage pour SEEG-API
-# Build optimisé pour production avec sécurité renforcée
+# ============================================================================
+# Dockerfile pour SEEG-API - Architecture Clean & Production-Ready
+# ============================================================================
+# Principes appliqués:
+# - Multi-stage build pour optimisation de taille
+# - Couches cachées pour rapidité de rebuild
+# - Sécurité: utilisateur non-root, scan de vulnérabilités
+# - Compatibilité: Azure App Service, Python 3.12
+# ============================================================================
 
-# Stage 1: Builder
-FROM python:3.12-slim as builder
+# ============================================================================
+# STAGE 1: Builder - Compilation des dépendances
+# ============================================================================
+FROM python:3.12-slim AS builder
 
-# Variables d'environnement pour Python
+# Variables d'environnement pour optimisation Python
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=100
 
 WORKDIR /build
 
-# Installer les dépendances système nécessaires pour la compilation
+# Installer UNIQUEMENT les dépendances de compilation
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
     libpq-dev \
     libmagic1 \
     libmagic-dev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Copier et installer les dépendances Python
+# Copier requirements et installer dans un répertoire utilisateur
 COPY requirements.txt .
-RUN pip install --user --no-warn-script-location -r requirements.txt
 
-# Stage 2: Runtime
-FROM python:3.12-slim
+# Installation avec retry et timeout pour fiabilité
+RUN pip install --user --no-warn-script-location \
+    --timeout=100 --retries=3 \
+    -r requirements.txt
 
-# Variables d'environnement
+# ============================================================================
+# STAGE 2: Runtime - Image finale légère
+# ============================================================================
+FROM python:3.12-slim AS runtime
+
+# Métadonnées de l'image
+LABEL maintainer="SEEG IT Team" \
+    version="1.0.0" \
+    description="One HCM SEEG Backend API" \
+    org.opencontainers.image.source="https://github.com/Kedesh11/SEEG-API"
+
+# Variables d'environnement runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH=/home/appuser/.local/bin:$PATH \
-    ENVIRONMENT=production
+    ENVIRONMENT=production \
+    PYTHONIOENCODING=utf-8 \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
 
-# Installer seulement les dépendances runtime nécessaires
+# Installer UNIQUEMENT les dépendances runtime (pas de compilateurs)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
     curl \
     libmagic1 \
     netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/*
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Créer un utilisateur non-root
-RUN useradd -m -u 1000 appuser
+# Créer utilisateur non-root avec UID/GID fixe pour sécurité
+RUN groupadd -r appuser -g 1000 && \
+    useradd -r -u 1000 -g appuser -m -s /bin/bash appuser
 
+# Définir le répertoire de travail
 WORKDIR /app
 
-# Copier les dépendances Python depuis le builder
+# Copier les dépendances Python compilées depuis builder
 COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
 
-# Copier le code de l'application
+# Copier le code applicatif
 COPY --chown=appuser:appuser app/ ./app/
 COPY --chown=appuser:appuser alembic.ini ./
-
-# Copier le script de démarrage
+COPY --chown=appuser:appuser scripts/ ./scripts/
+COPY --chown=appuser:appuser logging.yaml ./
 COPY --chown=appuser:appuser docker-entrypoint.sh ./
 
-# Copier la configuration de logging
-COPY --chown=appuser:appuser logging.yaml ./
+# Permissions d'exécution pour l'entrypoint
+RUN chmod +x docker-entrypoint.sh && \
+    chown appuser:appuser docker-entrypoint.sh
 
-# Passer à l'utilisateur non-root
+# Basculer vers utilisateur non-root
 USER appuser
 
-# Rendre le script exécutable
-RUN chmod +x docker-entrypoint.sh
-
-# Exposer les ports
+# Exposer les ports (8000 pour l'API, 9090 pour Prometheus)
 EXPOSE 8000 9090
 
-# Variables d'environnement pour le monitoring
+# Variables d'environnement pour monitoring
 ENV LOG_LEVEL=INFO \
+    LOG_FORMAT=json \
     ENABLE_TRACING=true \
     METRICS_ENABLED=true
 
-# Health check amélioré
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+# Health check amélioré avec retry et timeout adapté
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:8000/monitoring/health || exit 1
 
-# Commande de démarrage
+# Point d'entrée: migrations automatiques puis démarrage
 ENTRYPOINT ["./docker-entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--access-log", "--log-config", "logging.yaml"]
+
+# Commande par défaut: Uvicorn avec workers adapté à Azure
+# Note: Azure App Service peut override via WEBSITES_PORT
+CMD ["uvicorn", "app.main:app", \
+    "--host", "0.0.0.0", \
+    "--port", "8000", \
+    "--workers", "4", \
+    "--access-log", \
+    "--log-config", "logging.yaml", \
+    "--proxy-headers", \
+    "--forwarded-allow-ips", "*"]

@@ -27,6 +27,7 @@ class User(BaseModel):
     email_verified = Column(Boolean, default=False, nullable=False)  # Email vérifié ou non
     last_login = Column(DateTime(timezone=True), nullable=True)  # Dernière connexion
     is_active = Column(Boolean, default=True, nullable=False)  # Compte actif ou désactivé
+    is_internal_candidate = Column(Boolean, default=False, nullable=False)  # True = interne (avec matricule), False = externe (sans matricule)
     
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))

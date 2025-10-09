@@ -104,9 +104,9 @@ app = FastAPI(
     
     Cette API permet de gérer l'ensemble du processus de recrutement de la SEEG :
     
-    * **Authentification** : Connexion, inscription, gestion des tokens
+    * **Authentification** : Connexion, inscription (internes/externes), gestion des tokens
     * **Utilisateurs** : Gestion des profils candidats, recruteurs et administrateurs
-    * **Offres d'emploi** : Création, modification et consultation des postes
+    * **Offres d'emploi** : Création, modification et consultation avec filtrage automatique (internes/externes)
     * **Candidatures** : Soumission et suivi des candidatures
     * **Évaluations** : Protocoles d'évaluation des candidats
     * **Notifications** : Système de notifications
@@ -377,7 +377,7 @@ from app.api.v1.endpoints.monitoring import router as monitoring_router
 # Inclusion des routes dans l'application
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["🔐 Authentification"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["👥 Utilisateurs"])
-app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["💼 Offres d'emploi"])
+app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["💼 Offres d'emploi (filtrage auto interne/externe)"])
 app.include_router(applications.router, prefix="/api/v1/applications", tags=["📝 Candidatures", "📄 Documents PDF"])
 app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["📊 Évaluations"])
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["🔔 Notifications"])
@@ -466,10 +466,12 @@ def validate_production_config():
 
 if __name__ == "__main__":
     import uvicorn
+    port = int(os.getenv("PORT", 8000))  # Azure App Service définit $PORT
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
-        port=8000,
+        port=port,
         reload=settings.DEBUG,
         log_level="info"
     )
+

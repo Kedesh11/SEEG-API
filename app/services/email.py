@@ -33,7 +33,7 @@ class EmailService:
         if settings.ENVIRONMENT == "testing":
             self.mail_config = None
             self.fastmail = None
-            logger.info("FastMail désactivé en environnement de test")
+            logger.info("FastMail dÃ©sactivÃ© en environnement de test")
             return
             
         try:
@@ -73,16 +73,16 @@ class EmailService:
             subject: Sujet de l'email
             body: Corps de l'email (texte)
             html_body: Corps de l'email (HTML)
-            sender: Expéditeur (optionnel)
+            sender: ExpÃ©diteur (optionnel)
             cc: Copie carbone
-            bcc: Copie carbone cachée
-            attachments: Pièces jointes
+            bcc: Copie carbone cachÃ©e
+            attachments: PiÃ¨ces jointes
             
         Returns:
-            bool: True si l'envoi a réussi
+            bool: True si l'envoi a rÃ©ussi
             
         Raises:
-            EmailError: Si l'envoi échoue
+            EmailError: Si l'envoi Ã©choue
         """
         try:
             # Normalisation des destinataires
@@ -94,13 +94,13 @@ class EmailService:
             # En environnement de test, simuler l'envoi
             if settings.ENVIRONMENT == "testing":
                 logger.info(
-                    "Email simulé en environnement de test",
+                    "Email simulÃ© en environnement de test",
                     to=recipients,
                     subject=subject
                 )
                 return True
             
-            # Création du message
+            # CrÃ©ation du message
             message = MessageSchema(
                 subject=subject,
                 recipients=recipients,
@@ -128,7 +128,7 @@ class EmailService:
                     subject=subject
                 )
             
-            # Log de l'email dans la base de données
+            # Log de l'email dans la base de donnÃ©es
             await self._log_email(
                 to=recipients,
                 subject=subject,
@@ -149,7 +149,7 @@ class EmailService:
                 error=error_msg
             )
             
-            # Log de l'erreur dans la base de données
+            # Log de l'erreur dans la base de donnÃ©es
             await self._log_email(
                 to=recipients if 'recipients' in locals() else to,
                 subject=subject,
@@ -159,17 +159,17 @@ class EmailService:
                 error_message=error_msg
             )
             
-            raise EmailError(f"Échec de l'envoi de l'email: {error_msg}")
+            raise EmailError(f"Ã‰chec de l'envoi de l'email: {error_msg}")
     
     async def _send_smtp_direct(self, message: MessageSchema):
         """
         Envoi direct via SMTP (fallback)
         
         Args:
-            message: Message à envoyer
+            message: Message Ã  envoyer
         """
         try:
-            # Création du message MIME
+            # CrÃ©ation du message MIME
             msg = MIMEMultipart('alternative')
             msg['Subject'] = message.subject
             msg['From'] = f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM_EMAIL}>"
@@ -220,23 +220,23 @@ class EmailService:
             application_id: ID de la candidature
             
         Returns:
-            bool: True si l'envoi a réussi
+            bool: True si l'envoi a rÃ©ussi
         """
         subject = f"Confirmation de candidature - {job_title}"
         
         body = f"""
 Bonjour {candidate_name},
 
-Nous avons bien reçu votre candidature pour le poste de {job_title}.
+Nous avons bien reÃ§u votre candidature pour le poste de {job_title}.
 
-Votre candidature a été enregistrée avec succès et sera examinée par notre équipe de recrutement.
+Votre candidature a Ã©tÃ© enregistrÃ©e avec succÃ¨s et sera examinÃ©e par notre Ã©quipe de recrutement.
 
-Numéro de candidature: {application_id}
+NumÃ©ro de candidature: {application_id}
 
-Nous vous contacterons dans les plus brefs délais pour vous informer de la suite du processus.
+Nous vous contacterons dans les plus brefs dÃ©lais pour vous informer de la suite du processus.
 
 Cordialement,
-L'équipe RH - SEEG
+L'Ã©quipe RH - SEEG
         """
         
         html_body = f"""
@@ -244,11 +244,11 @@ L'équipe RH - SEEG
         <body>
             <h2>Confirmation de candidature</h2>
             <p>Bonjour {candidate_name},</p>
-            <p>Nous avons bien reçu votre candidature pour le poste de <strong>{job_title}</strong>.</p>
-            <p>Votre candidature a été enregistrée avec succès et sera examinée par notre équipe de recrutement.</p>
-            <p><strong>Numéro de candidature:</strong> {application_id}</p>
-            <p>Nous vous contacterons dans les plus brefs délais pour vous informer de la suite du processus.</p>
-            <p>Cordialement,<br>L'équipe RH - SEEG</p>
+            <p>Nous avons bien reÃ§u votre candidature pour le poste de <strong>{job_title}</strong>.</p>
+            <p>Votre candidature a Ã©tÃ© enregistrÃ©e avec succÃ¨s et sera examinÃ©e par notre Ã©quipe de recrutement.</p>
+            <p><strong>NumÃ©ro de candidature:</strong> {application_id}</p>
+            <p>Nous vous contacterons dans les plus brefs dÃ©lais pour vous informer de la suite du processus.</p>
+            <p>Cordialement,<br>L'Ã©quipe RH - SEEG</p>
         </body>
         </html>
         """
@@ -269,7 +269,7 @@ L'équipe RH - SEEG
         notes: Optional[str] = None
     ) -> bool:
         """
-        Envoyer un email de mise à jour du statut de candidature
+        Envoyer un email de mise Ã  jour du statut de candidature
         
         Args:
             candidate_email: Email du candidat
@@ -279,18 +279,18 @@ L'équipe RH - SEEG
             notes: Notes additionnelles
             
         Returns:
-            bool: True si l'envoi a réussi
+            bool: True si l'envoi a rÃ©ussi
         """
         status_messages = {
             "under_review": "en cours d'examen",
-            "shortlisted": "présélectionnée",
-            "interview_scheduled": "convoquée pour un entretien",
-            "accepted": "acceptée",
+            "shortlisted": "prÃ©sÃ©lectionnÃ©e",
+            "interview_scheduled": "convoquÃ©e pour un entretien",
+            "accepted": "acceptÃ©e",
             "rejected": "non retenue"
         }
         
         status_text = status_messages.get(new_status, new_status)
-        subject = f"Mise à jour de votre candidature - {job_title}"
+        subject = f"Mise Ã  jour de votre candidature - {job_title}"
         
         body = f"""
 Bonjour {candidate_name},
@@ -299,21 +299,21 @@ Nous vous informons que votre candidature pour le poste de {job_title} est maint
 
 {f"Notes: {notes}" if notes else ""}
 
-Nous vous remercions pour votre intérêt et vous tiendrons informé(e) de toute évolution.
+Nous vous remercions pour votre intÃ©rÃªt et vous tiendrons informÃ©(e) de toute Ã©volution.
 
 Cordialement,
-L'équipe RH - SEEG
+L'Ã©quipe RH - SEEG
         """
         
         html_body = f"""
         <html>
         <body>
-            <h2>Mise à jour de votre candidature</h2>
+            <h2>Mise Ã  jour de votre candidature</h2>
             <p>Bonjour {candidate_name},</p>
             <p>Nous vous informons que votre candidature pour le poste de <strong>{job_title}</strong> est maintenant <strong>{status_text}</strong>.</p>
             {f"<p><strong>Notes:</strong> {notes}</p>" if notes else ""}
-            <p>Nous vous remercions pour votre intérêt et vous tiendrons informé(e) de toute évolution.</p>
-            <p>Cordialement,<br>L'équipe RH - SEEG</p>
+            <p>Nous vous remercions pour votre intÃ©rÃªt et vous tiendrons informÃ©(e) de toute Ã©volution.</p>
+            <p>Cordialement,<br>L'Ã©quipe RH - SEEG</p>
         </body>
         </html>
         """
@@ -348,45 +348,45 @@ L'équipe RH - SEEG
             additional_notes: Notes additionnelles
             
         Returns:
-            bool: True si l'envoi a réussi
+            bool: True si l'envoi a rÃ©ussi
         """
-        subject = f"Invitation à un entretien - {job_title}"
+        subject = f"Invitation Ã  un entretien - {job_title}"
         
-        formatted_date = interview_date.strftime("%d/%m/%Y à %H:%M")
+        formatted_date = interview_date.strftime("%d/%m/%Y Ã  %H:%M")
         
         body = f"""
 Bonjour {candidate_name},
 
-Nous avons le plaisir de vous inviter à un entretien pour le poste de {job_title}.
+Nous avons le plaisir de vous inviter Ã  un entretien pour le poste de {job_title}.
 
-Détails de l'entretien:
+DÃ©tails de l'entretien:
 - Date et heure: {formatted_date}
 - Lieu: {interview_location}
 - Interviewer: {interviewer_name}
 
 {f"Notes additionnelles: {additional_notes}" if additional_notes else ""}
 
-Veuillez confirmer votre présence en répondant à cet email.
+Veuillez confirmer votre prÃ©sence en rÃ©pondant Ã  cet email.
 
 Cordialement,
-L'équipe RH - SEEG
+L'Ã©quipe RH - SEEG
         """
         
         html_body = f"""
         <html>
         <body>
-            <h2>Invitation à un entretien</h2>
+            <h2>Invitation Ã  un entretien</h2>
             <p>Bonjour {candidate_name},</p>
-            <p>Nous avons le plaisir de vous inviter à un entretien pour le poste de <strong>{job_title}</strong>.</p>
-            <h3>Détails de l'entretien:</h3>
+            <p>Nous avons le plaisir de vous inviter Ã  un entretien pour le poste de <strong>{job_title}</strong>.</p>
+            <h3>DÃ©tails de l'entretien:</h3>
             <ul>
                 <li><strong>Date et heure:</strong> {formatted_date}</li>
                 <li><strong>Lieu:</strong> {interview_location}</li>
                 <li><strong>Interviewer:</strong> {interviewer_name}</li>
             </ul>
             {f"<p><strong>Notes additionnelles:</strong> {additional_notes}</p>" if additional_notes else ""}
-            <p>Veuillez confirmer votre présence en répondant à cet email.</p>
-            <p>Cordialement,<br>L'équipe RH - SEEG</p>
+            <p>Veuillez confirmer votre prÃ©sence en rÃ©pondant Ã  cet email.</p>
+            <p>Cordialement,<br>L'Ã©quipe RH - SEEG</p>
         </body>
         </html>
         """
@@ -430,7 +430,7 @@ L'équipe RH - SEEG
             )
             
             self.db.add(email_log)
-            await self.db.commit()
+            #  PAS de commit ici
             
         except Exception as e:
             logger.error("Failed to log email", error=str(e))
@@ -442,15 +442,15 @@ L'équipe RH - SEEG
         status: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Récupérer les logs d'emails
+        RÃ©cupÃ©rer les logs d'emails
         
         Args:
-            skip: Nombre d'éléments à ignorer
-            limit: Nombre maximum d'éléments à retourner
+            skip: Nombre d'Ã©lÃ©ments Ã  ignorer
+            limit: Nombre maximum d'Ã©lÃ©ments Ã  retourner
             status: Filtrer par statut
             
         Returns:
-            Dict contenant les logs et les métadonnées de pagination
+            Dict contenant les logs et les mÃ©tadonnÃ©es de pagination
         """
         query = select(EmailLog)
         count_query = select(func.count(EmailLog.id))

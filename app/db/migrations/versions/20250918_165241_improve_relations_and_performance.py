@@ -63,7 +63,6 @@ def upgrade():
     op.add_column('notifications', sa.Column('priority', sa.String(), default='normal'))
     
     # 3. Ajouter des index simples pour les performances
-    op.create_index('idx_users_role', 'users', ['role'])
     op.create_index('idx_candidate_profiles_gender', 'candidate_profiles', ['gender'])
     op.create_index('idx_candidate_profiles_experience', 'candidate_profiles', ['years_experience'])
     op.create_index('idx_job_offers_department', 'job_offers', ['department'])
@@ -120,7 +119,6 @@ def downgrade():
     op.drop_index('idx_job_offers_department', 'job_offers')
     op.drop_index('idx_candidate_profiles_experience', 'candidate_profiles')
     op.drop_index('idx_candidate_profiles_gender', 'candidate_profiles')
-    op.drop_index('idx_users_role', 'users')
     
     # Supprimer les colonnes ajoutées
     op.drop_column('notifications', 'priority')

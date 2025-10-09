@@ -18,6 +18,7 @@ class JobOfferBase(BaseModel):
     benefits: Optional[List[str]] = None
     responsibilities: Optional[List[str]] = None
     status: str = "active"
+    is_internal_only: bool = False  # True = Offre réservée aux candidats INTERNES, False = Accessible à tous
     application_deadline: Optional[datetime] = None
     date_limite: Optional[datetime] = None
     reporting_line: Optional[str] = None
@@ -42,6 +43,7 @@ class JobOfferUpdate(BaseModel):
     benefits: Optional[List[str]] = None
     responsibilities: Optional[List[str]] = None
     status: Optional[str] = None
+    is_internal_only: Optional[bool] = None  # True = Offre réservée aux candidats INTERNES, False = Accessible à tous
     application_deadline: Optional[datetime] = None
     date_limite: Optional[datetime] = None
     reporting_line: Optional[str] = None

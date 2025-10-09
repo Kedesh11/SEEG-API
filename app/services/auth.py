@@ -116,6 +116,10 @@ class AuthService:
             # Hasher le mot de passe
             hashed = self.password_manager.hash_password(user_data.password)
             
+            # Déterminer si c'est un candidat interne ou externe
+            # Interne = a un matricule, Externe = pas de matricule
+            is_internal = user_data.matricule is not None
+            
             # Créer l'utilisateur
             user = User(
                 email=user_data.email,
@@ -127,13 +131,17 @@ class AuthService:
                 matricule=user_data.matricule,
                 date_of_birth=user_data.date_of_birth,
                 sexe=user_data.sexe,
+                is_internal_candidate=is_internal,  # ✅ Déterminé automatiquement
             )
             self.db.add(user)
             
             # ✅ PAS de commit ici - c'est l'endpoint qui décide
             # ✅ PAS de refresh ici - sera fait après commit par l'endpoint
             
-            safe_log("info", "Candidat préparé pour création", email=user.email)
+            safe_log("info", "Candidat préparé pour création", 
+                    email=user.email, 
+                    is_internal=is_internal,
+                    has_matricule=user_data.matricule is not None)
             return user
             
         except ValidationError:

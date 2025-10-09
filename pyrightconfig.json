@@ -1,0 +1,24 @@
+{
+    "venvPath": ".",
+    "venv": "env",
+    "pythonVersion": "3.12",
+    "reportMissingImports": true,
+    "reportMissingModuleSource": false,
+    "exclude": [
+        "env",
+        ".venv",
+        "**/__pycache__",
+        "**/node_modules",
+        "**/.pytest_cache"
+    ],
+    "executionEnvironments": [
+        {
+            "root": ".",
+            "pythonVersion": "3.12",
+            "pythonPlatform": "Windows",
+            "extraPaths": [
+                "./app"
+            ]
+        }
+    ]
+}

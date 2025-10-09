@@ -27,19 +27,30 @@ def safe_log(level: str, message: str, **kwargs):
 
 @router.get("/", response_model=List[JobOfferResponse], summary="Liste des offres d'emploi")
 async def get_job_offers(
-    skip: int = Query(0, ge=0, description="Nombre d'ÃƒÂ©lÃƒÂ©ments ÃƒÂ  ignorer"),
-    limit: int = Query(100, ge=1, le=1000, description="Nombre d'ÃƒÂ©lÃƒÂ©ments ÃƒÂ  retourner"),
+    skip: int = Query(0, ge=0, description="Nombre d'elements a ignorer"),
+    limit: int = Query(100, ge=1, le=1000, description="Nombre d'elements a retourner"),
     status_filter: Optional[str] = Query(None, description="Filtrer par statut"),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """RÃƒÂ©cupÃƒÂ©rer la liste des offres d'emploi"""
+    """
+    Recuperer la liste des offres d'emploi avec FILTRAGE AUTOMATIQUE.
+    
+    Filtrage selon le type de candidat:
+    - Candidat INTERNE (employe SEEG avec matricule): Voit TOUTES les offres
+    - Candidat EXTERNE (sans matricule): Voit UNIQUEMENT les offres accessibles (is_internal_only=false)
+    - Recruteur/Admin: Voit TOUTES les offres
+    """
     try:
         job_service = JobOfferService(db)
-        job_offers = await job_service.get_job_offers(skip=skip, limit=limit, status=status_filter)
-        safe_log("info", "Offres d'emploi rÃƒÂ©cupÃƒÂ©rÃƒÂ©es", count=len(job_offers))
+        job_offers = await job_service.get_job_offers(skip=skip, limit=limit, status=status_filter, current_user=current_user)
+        safe_log("info", "Offres d'emploi recuperees", 
+                count=len(job_offers),
+                user_type="interne" if current_user.is_internal_candidate else "externe",
+                role=current_user.role)
         return [JobOfferResponse.from_orm(job) for job in job_offers]
     except Exception as e:
-        safe_log("error", "Erreur rÃƒÂ©cupÃƒÂ©ration offres d'emploi", error=str(e))
+        safe_log("error", "Erreur recuperation offres d'emploi", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur lors de la rÃƒÂ©cupÃƒÂ©ration des offres d'emploi"
@@ -75,9 +86,13 @@ async def create_job_offer(
 @router.get("/{job_id}", response_model=JobOfferResponse, summary="DÃƒÂ©tails d'une offre d'emploi")
 async def get_job_offer(
     job_id: UUID,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """RÃƒÂ©cupÃƒÂ©rer les dÃƒÂ©tails d'une offre d'emploi"""
+    """
+    Recuperer les details d'une offre d'emploi.
+    Accessible par tous les utilisateurs authentifies.
+    """
     try:
         job_service = JobOfferService(db)
         job_offer = await job_service.get_job_offer(job_id)

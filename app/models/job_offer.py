@@ -1,7 +1,7 @@
 """
 Modèle JobOffer basé sur le schéma Supabase
 """
-from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, JSON
+from sqlalchemy import Column, String, Text, Integer, DateTime, Boolean, ForeignKey, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -25,6 +25,7 @@ class JobOffer(BaseModel):
     benefits = Column(JSON)      # Array of strings stored as JSON
     responsibilities = Column(JSON)  # Array of strings stored as JSON
     status = Column(String, default="active")
+    is_internal_only = Column(Boolean, default=False, nullable=False)  # True = Réservée aux candidats INTERNES uniquement, False = Accessible à TOUS (internes + externes)
     application_deadline = Column(DateTime(timezone=True))
     date_limite = Column(DateTime(timezone=True))
     reporting_line = Column(String)

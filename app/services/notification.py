@@ -28,13 +28,13 @@ class NotificationService:
         notification_data: NotificationCreate
     ) -> NotificationResponse:
         """
-        Créer une nouvelle notification
+        CrÃ©er une nouvelle notification
         
         Args:
-            notification_data: Données de la notification
+            notification_data: DonnÃ©es de la notification
             
         Returns:
-            NotificationResponse: Notification créée
+            NotificationResponse: Notification crÃ©Ã©e
         """
         try:
             notification = Notification(
@@ -47,7 +47,7 @@ class NotificationService:
             )
             
             self.db.add(notification)
-            await self.db.commit()
+            #  PAS de commit ici
             await self.db.refresh(notification)
             
             logger.info(
@@ -60,7 +60,7 @@ class NotificationService:
             return NotificationResponse.model_validate(notification)
             
         except Exception as e:
-            await self.db.rollback()
+            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to create notification",
                 error=str(e),
@@ -74,7 +74,7 @@ class NotificationService:
         user_id: str
     ) -> NotificationResponse:
         """
-        Récupérer une notification par son ID
+        RÃ©cupÃ©rer une notification par son ID
         
         Args:
             notification_id: ID de la notification
@@ -94,7 +94,7 @@ class NotificationService:
         notification = result.scalar_one_or_none()
         
         if not notification:
-            raise NotFoundError(f"Notification avec l'ID {notification_id} non trouvée")
+            raise NotFoundError(f"Notification avec l'ID {notification_id} non trouvÃ©e")
         
         return NotificationResponse.model_validate(notification)
     
@@ -112,8 +112,8 @@ class NotificationService:
         order: Optional[str] = None,
     ) -> NotificationListResponse:
         """
-        Récupérer les notifications d'un utilisateur (avec filtres et tri)
-        Retourne un schéma conforme à NotificationListResponse
+        RÃ©cupÃ©rer les notifications d'un utilisateur (avec filtres et tri)
+        Retourne un schÃ©ma conforme Ã  NotificationListResponse
         { notifications, total, page, per_page, total_pages }
         """
         query = select(Notification).where(Notification.user_id == user_id)
@@ -192,10 +192,10 @@ class NotificationService:
             user_id: ID de l'utilisateur
             
         Returns:
-            NotificationResponse: Notification mise à jour
+            NotificationResponse: Notification mise Ã  jour
         """
         try:
-            # Vérification de l'existence de la notification
+            # VÃ©rification de l'existence de la notification
             result = await self.db.execute(
                 select(Notification).where(
                     and_(
@@ -207,14 +207,14 @@ class NotificationService:
             notification = result.scalar_one_or_none()
             
             if not notification:
-                raise NotFoundError(f"Notification avec l'ID {notification_id} non trouvée")
+                raise NotFoundError(f"Notification avec l'ID {notification_id} non trouvÃ©e")
             
-            # Mise à jour du statut
+            # Mise Ã  jour du statut
             notification.is_read = True
             notification.read_at = datetime.now(timezone.utc)
             notification.updated_at = datetime.now(timezone.utc)
             
-            await self.db.commit()
+            #  PAS de commit ici
             await self.db.refresh(notification)
             
             logger.info(
@@ -226,7 +226,7 @@ class NotificationService:
             return NotificationResponse.model_validate(notification)
             
         except Exception as e:
-            await self.db.rollback()
+            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to mark notification as read",
                 notification_id=notification_id,
@@ -243,7 +243,7 @@ class NotificationService:
             user_id: ID de l'utilisateur
             
         Returns:
-            int: Nombre de notifications mises à jour
+            int: Nombre de notifications mises Ã  jour
         """
         try:
             result = await self.db.execute(
@@ -261,7 +261,7 @@ class NotificationService:
                 )
             )
             
-            await self.db.commit()
+            #  PAS de commit ici
             
             updated_count = result.rowcount
             logger.info(
@@ -273,7 +273,7 @@ class NotificationService:
             return updated_count
             
         except Exception as e:
-            await self.db.rollback()
+            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to mark all notifications as read",
                 user_id=user_id,
@@ -283,7 +283,7 @@ class NotificationService:
     
     async def get_unread_count(self, user_id: str) -> int:
         """
-        Récupérer le nombre de notifications non lues
+        RÃ©cupÃ©rer le nombre de notifications non lues
         
         Args:
             user_id: ID de l'utilisateur
@@ -303,7 +303,7 @@ class NotificationService:
     
     async def get_user_notification_statistics(self, user_id: str) -> NotificationStatsResponse:
         """
-        Récupérer les statistiques des notifications d'un utilisateur
+        RÃ©cupÃ©rer les statistiques des notifications d'un utilisateur
         
         Args:
             user_id: ID de l'utilisateur
@@ -342,10 +342,10 @@ class NotificationService:
         Nettoyer les anciennes notifications
         
         Args:
-            days_old: Nombre de jours pour considérer une notification comme ancienne
+            days_old: Nombre de jours pour considÃ©rer une notification comme ancienne
             
         Returns:
-            int: Nombre de notifications supprimées
+            int: Nombre de notifications supprimÃ©es
         """
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_old)
@@ -359,7 +359,7 @@ class NotificationService:
                 )
             )
             
-            await self.db.commit()
+            #  PAS de commit ici
             
             deleted_count = result.rowcount
             logger.info(
@@ -371,7 +371,7 @@ class NotificationService:
             return deleted_count
             
         except Exception as e:
-            await self.db.rollback()
+            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to cleanup old notifications",
                 error=str(e)

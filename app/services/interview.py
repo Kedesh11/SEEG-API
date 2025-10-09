@@ -31,30 +31,30 @@ class InterviewService:
         created_by: str
     ) -> InterviewSlotResponse:
         """
-        Créer un nouveau créneau d'entretien
+        CrÃ©er un nouveau crÃ©neau d'entretien
         
         Args:
-            slot_data: Données du créneau d'entretien
-            created_by: ID de l'utilisateur qui crée le créneau
+            slot_data: DonnÃ©es du crÃ©neau d'entretien
+            created_by: ID de l'utilisateur qui crÃ©e le crÃ©neau
             
         Returns:
-            InterviewSlotResponse: Créneau d'entretien créé
+            InterviewSlotResponse: CrÃ©neau d'entretien crÃ©Ã©
             
         Raises:
             NotFoundError: Si la candidature n'existe pas
-            BusinessLogicError: Si le créneau est déjà occupé
+            BusinessLogicError: Si le crÃ©neau est dÃ©jÃ  occupÃ©
         """
         try:
-            # Vérification de l'existence de la candidature
+            # VÃ©rification de l'existence de la candidature
             app_result = await self.db.execute(
                 select(Application).where(Application.id == slot_data.application_id)
             )
             application = app_result.scalar_one_or_none()
             
             if not application:
-                raise NotFoundError("Candidature non trouvée")
+                raise NotFoundError("Candidature non trouvÃ©e")
             
-            # Vérification si le créneau existe déjà
+            # VÃ©rification si le crÃ©neau existe dÃ©jÃ 
             existing_slot_result = await self.db.execute(
                 select(InterviewSlot).where(
                     and_(
@@ -66,13 +66,13 @@ class InterviewService:
             existing_slot = existing_slot_result.scalar_one_or_none()
             
             if existing_slot:
-                # Si le créneau existe et est occupé par une autre application
+                # Si le crÃ©neau existe et est occupÃ© par une autre application
                 if not existing_slot.is_available and existing_slot.application_id != slot_data.application_id:
                     raise BusinessLogicError(
-                        f"Le créneau {slot_data.date} à {slot_data.time} est déjà occupé"
+                        f"Le crÃ©neau {slot_data.date} Ã  {slot_data.time} est dÃ©jÃ  occupÃ©"
                     )
                 
-                # Si le créneau existe mais est disponible, le mettre à jour
+                # Si le crÃ©neau existe mais est disponible, le mettre Ã  jour
                 if existing_slot.is_available:
                     existing_slot.application_id = slot_data.application_id
                     existing_slot.candidate_name = slot_data.candidate_name
@@ -83,7 +83,7 @@ class InterviewService:
                     existing_slot.notes = slot_data.notes
                     existing_slot.updated_at = datetime.now(timezone.utc)
                     
-                    await self.db.commit()
+                    #  PAS de commit ici
                     await self.db.refresh(existing_slot)
                     
                     logger.info(
@@ -94,7 +94,7 @@ class InterviewService:
                     
                     return InterviewSlotResponse.model_validate(existing_slot)
             
-            # Créer un nouveau créneau
+            # CrÃ©er un nouveau crÃ©neau
             interview_slot = InterviewSlot(
                 date=slot_data.date,
                 time=slot_data.time,
@@ -108,7 +108,7 @@ class InterviewService:
             )
             
             self.db.add(interview_slot)
-            await self.db.commit()
+            #  PAS de commit ici
             await self.db.refresh(interview_slot)
             
             logger.info(
@@ -122,10 +122,10 @@ class InterviewService:
             return InterviewSlotResponse.model_validate(interview_slot)
             
         except (NotFoundError, BusinessLogicError):
-            await self.db.rollback()
+            #  PAS de rollback ici - géré par get_db()
             raise
         except Exception as e:
-            await self.db.rollback()
+            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to create interview slot",
                 error=str(e),
@@ -135,13 +135,13 @@ class InterviewService:
     
     async def get_interview_slot(self, slot_id: str) -> InterviewSlotResponse:
         """
-        Récupérer un créneau d'entretien par son ID
+        RÃ©cupÃ©rer un crÃ©neau d'entretien par son ID
         
         Args:
-            slot_id: ID du créneau d'entretien
+            slot_id: ID du crÃ©neau d'entretien
             
         Returns:
-            InterviewSlotResponse: Créneau d'entretien
+            InterviewSlotResponse: CrÃ©neau d'entretien
         """
         result = await self.db.execute(
             select(InterviewSlot).where(InterviewSlot.id == slot_id)
@@ -149,7 +149,7 @@ class InterviewService:
         interview_slot = result.scalar_one_or_none()
         
         if not interview_slot:
-            raise NotFoundError(f"Créneau d'entretien avec l'ID {slot_id} non trouvé")
+            raise NotFoundError(f"CrÃ©neau d'entretien avec l'ID {slot_id} non trouvÃ©")
         
         return InterviewSlotResponse.model_validate(interview_slot)
     
@@ -165,20 +165,20 @@ class InterviewService:
         order: Optional[str] = None
     ) -> InterviewSlotListResponse:
         """
-        Récupérer la liste des créneaux d'entretien avec filtres
+        RÃ©cupÃ©rer la liste des crÃ©neaux d'entretien avec filtres
         
         Args:
-            skip: Nombre d'éléments à ignorer
-            limit: Nombre maximum d'éléments à retourner
+            skip: Nombre d'Ã©lÃ©ments Ã  ignorer
+            limit: Nombre maximum d'Ã©lÃ©ments Ã  retourner
             application_id: Filtrer par candidature
             status: Filtrer par statut
-            is_available: Filtrer par disponibilité
-            date_from: Date de début (YYYY-MM-DD)
+            is_available: Filtrer par disponibilitÃ©
+            date_from: Date de dÃ©but (YYYY-MM-DD)
             date_to: Date de fin (YYYY-MM-DD)
             order: Ordre de tri (ex: "date:asc,time:asc")
             
         Returns:
-            InterviewSlotListResponse: Liste des créneaux d'entretien
+            InterviewSlotListResponse: Liste des crÃ©neaux d'entretien
         """
         query = select(InterviewSlot)
         count_query = select(func.count(InterviewSlot.id))
@@ -200,7 +200,7 @@ class InterviewService:
         if date_to:
             conditions.append(InterviewSlot.date <= date_to)
         
-        # Exclure les créneaux sans application_id si is_available=false
+        # Exclure les crÃ©neaux sans application_id si is_available=false
         if is_available is False:
             conditions.append(InterviewSlot.application_id.isnot(None))
         
@@ -208,7 +208,7 @@ class InterviewService:
             query = query.where(and_(*conditions))
             count_query = count_query.where(and_(*conditions))
         
-        # Tri par défaut: date ASC, time ASC
+        # Tri par dÃ©faut: date ASC, time ASC
         query = query.order_by(InterviewSlot.date.asc(), InterviewSlot.time.asc())
         
         # Pagination
@@ -238,37 +238,37 @@ class InterviewService:
         updated_by: str
     ) -> InterviewSlotResponse:
         """
-        Mettre à jour un créneau d'entretien
+        Mettre Ã  jour un crÃ©neau d'entretien
         
         Logique complexe pour changement de date/heure:
-        1. Si date ou time changent, libérer l'ancien créneau
-        2. Vérifier si le nouveau créneau existe
-        3. Si disponible, l'occuper; sinon créer un nouveau
+        1. Si date ou time changent, libÃ©rer l'ancien crÃ©neau
+        2. VÃ©rifier si le nouveau crÃ©neau existe
+        3. Si disponible, l'occuper; sinon crÃ©er un nouveau
         
         Args:
-            slot_id: ID du créneau d'entretien
-            slot_data: Données de mise à jour
-            updated_by: ID de l'utilisateur qui effectue la mise à jour
+            slot_id: ID du crÃ©neau d'entretien
+            slot_data: DonnÃ©es de mise Ã  jour
+            updated_by: ID de l'utilisateur qui effectue la mise Ã  jour
             
         Returns:
-            InterviewSlotResponse: Créneau d'entretien mis à jour
+            InterviewSlotResponse: CrÃ©neau d'entretien mis Ã  jour
         """
         try:
-            # Récupérer le créneau actuel
+            # RÃ©cupÃ©rer le crÃ©neau actuel
             result = await self.db.execute(
                 select(InterviewSlot).where(InterviewSlot.id == slot_id)
             )
             current_slot = result.scalar_one_or_none()
             
             if not current_slot:
-                raise NotFoundError(f"Créneau d'entretien avec l'ID {slot_id} non trouvé")
+                raise NotFoundError(f"CrÃ©neau d'entretien avec l'ID {slot_id} non trouvÃ©")
             
             update_data = slot_data.model_dump(exclude_unset=True)
             
             if not update_data:
                 return InterviewSlotResponse.model_validate(current_slot)
             
-            # Vérifier si la date ou l'heure changent
+            # VÃ©rifier si la date ou l'heure changent
             date_changed = 'date' in update_data and update_data['date'] != current_slot.date
             time_changed = 'time' in update_data and update_data['time'] != current_slot.time
             
@@ -277,13 +277,13 @@ class InterviewService:
                 new_date = update_data.get('date', current_slot.date)
                 new_time = update_data.get('time', current_slot.time)
                 
-                # 1. Libérer l'ancien créneau
+                # 1. LibÃ©rer l'ancien crÃ©neau
                 current_slot.is_available = True
                 current_slot.application_id = None
                 current_slot.candidate_name = None
                 current_slot.job_title = None
                 current_slot.status = 'cancelled'
-                current_slot.notes = 'Créneau libéré lors de la modification'
+                current_slot.notes = 'CrÃ©neau libÃ©rÃ© lors de la modification'
                 current_slot.updated_at = datetime.now(timezone.utc)
                 
                 logger.info(
@@ -293,7 +293,7 @@ class InterviewService:
                     old_time=current_slot.time
                 )
                 
-                # 2. Vérifier si le nouveau créneau existe
+                # 2. VÃ©rifier si le nouveau crÃ©neau existe
                 new_slot_result = await self.db.execute(
                     select(InterviewSlot).where(
                         and_(
@@ -305,25 +305,25 @@ class InterviewService:
                 existing_new_slot = new_slot_result.scalar_one_or_none()
                 
                 if existing_new_slot:
-                    # Le nouveau créneau existe
+                    # Le nouveau crÃ©neau existe
                     if not existing_new_slot.is_available and existing_new_slot.application_id:
-                        # Occupé par une autre application
-                        await self.db.rollback()
+                        # OccupÃ© par une autre application
+                        #  PAS de rollback ici - géré par get_db()
                         raise BusinessLogicError(
-                            f"Le créneau {new_date} à {new_time} est déjà occupé par une autre candidature"
+                            f"Le crÃ©neau {new_date} Ã  {new_time} est dÃ©jÃ  occupÃ© par une autre candidature"
                         )
                     
-                    # Le créneau existe et est disponible, l'occuper
+                    # Le crÃ©neau existe et est disponible, l'occuper
                     existing_new_slot.application_id = current_slot.application_id or update_data.get('application_id')
                     existing_new_slot.candidate_name = update_data.get('candidate_name', current_slot.candidate_name)
                     existing_new_slot.job_title = update_data.get('job_title', current_slot.job_title)
                     existing_new_slot.status = update_data.get('status', 'scheduled')
                     existing_new_slot.is_available = False
                     existing_new_slot.location = update_data.get('location', current_slot.location)
-                    existing_new_slot.notes = update_data.get('notes', 'Entretien programmé')
+                    existing_new_slot.notes = update_data.get('notes', 'Entretien programmÃ©')
                     existing_new_slot.updated_at = datetime.now(timezone.utc)
                     
-                    await self.db.commit()
+                    #  PAS de commit ici
                     await self.db.refresh(existing_new_slot)
                     
                     logger.info(
@@ -335,7 +335,7 @@ class InterviewService:
                     
                     return InterviewSlotResponse.model_validate(existing_new_slot)
                 else:
-                    # Le nouveau créneau n'existe pas, créer
+                    # Le nouveau crÃ©neau n'existe pas, crÃ©er
                     new_slot = InterviewSlot(
                         date=new_date,
                         time=new_time,
@@ -345,11 +345,11 @@ class InterviewService:
                         status=update_data.get('status', 'scheduled'),
                         is_available=False,
                         location=update_data.get('location', current_slot.location),
-                        notes=update_data.get('notes', 'Entretien programmé')
+                        notes=update_data.get('notes', 'Entretien programmÃ©')
                     )
                     
                     self.db.add(new_slot)
-                    await self.db.commit()
+                    #  PAS de commit ici
                     await self.db.refresh(new_slot)
                     
                     logger.info(
@@ -361,13 +361,13 @@ class InterviewService:
                     
                     return InterviewSlotResponse.model_validate(new_slot)
             else:
-                # Mise à jour simple sans changement de date/heure
+                # Mise Ã  jour simple sans changement de date/heure
                 for key, value in update_data.items():
                     setattr(current_slot, key, value)
                 
                 current_slot.updated_at = datetime.now(timezone.utc)
                 
-                await self.db.commit()
+                #  PAS de commit ici
                 await self.db.refresh(current_slot)
                 
                 logger.info(
@@ -379,10 +379,10 @@ class InterviewService:
                 return InterviewSlotResponse.model_validate(current_slot)
             
         except (NotFoundError, BusinessLogicError):
-            await self.db.rollback()
+            #  PAS de rollback ici - géré par get_db()
             raise
         except Exception as e:
-            await self.db.rollback()
+            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to update interview slot",
                 slot_id=slot_id,
@@ -392,16 +392,16 @@ class InterviewService:
     
     async def delete_interview_slot(self, slot_id: str, deleted_by: str) -> bool:
         """
-        Supprimer/Annuler un créneau d'entretien (soft delete)
+        Supprimer/Annuler un crÃ©neau d'entretien (soft delete)
         
-        Marque le créneau comme annulé et disponible au lieu de le supprimer physiquement.
+        Marque le crÃ©neau comme annulÃ© et disponible au lieu de le supprimer physiquement.
         
         Args:
-            slot_id: ID du créneau d'entretien
+            slot_id: ID du crÃ©neau d'entretien
             deleted_by: ID de l'utilisateur qui effectue la suppression
             
         Returns:
-            bool: True si la suppression a réussi
+            bool: True si la suppression a rÃ©ussi
         """
         try:
             result = await self.db.execute(
@@ -410,18 +410,18 @@ class InterviewService:
             interview_slot = result.scalar_one_or_none()
             
             if not interview_slot:
-                raise NotFoundError(f"Créneau d'entretien avec l'ID {slot_id} non trouvé")
+                raise NotFoundError(f"CrÃ©neau d'entretien avec l'ID {slot_id} non trouvÃ©")
             
-            # Soft delete: Marquer comme annulé et disponible
+            # Soft delete: Marquer comme annulÃ© et disponible
             interview_slot.status = 'cancelled'
             interview_slot.is_available = True
             interview_slot.application_id = None
             interview_slot.candidate_name = None
             interview_slot.job_title = None
-            interview_slot.notes = 'Entretien annulé'
+            interview_slot.notes = 'Entretien annulÃ©'
             interview_slot.updated_at = datetime.now(timezone.utc)
             
-            await self.db.commit()
+            #  PAS de commit ici
             
             logger.info(
                 "Interview slot cancelled (soft delete)",
@@ -432,10 +432,10 @@ class InterviewService:
             return True
             
         except NotFoundError:
-            await self.db.rollback()
+            #  PAS de rollback ici - géré par get_db()
             raise
         except Exception as e:
-            await self.db.rollback()
+            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to delete interview slot",
                 slot_id=slot_id,
@@ -445,7 +445,7 @@ class InterviewService:
     
     async def get_interview_statistics(self) -> InterviewStatsResponse:
         """
-        Récupérer les statistiques des entretiens
+        RÃ©cupÃ©rer les statistiques des entretiens
         
         Returns:
             InterviewStatsResponse: Statistiques des entretiens

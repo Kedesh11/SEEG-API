@@ -79,6 +79,14 @@ az webapp config container set `
     --docker-registry-server-user $ACR_USERNAME `
     --docker-registry-server-password $ACR_PASSWORD
 
+# Configurer le Health Check
+Write-Host "Configuration du Health Check..." -ForegroundColor Yellow
+az webapp config set `
+    --name $APP_SERVICE_NAME `
+    --resource-group $RESOURCE_GROUP `
+    --health-check-path "/monitoring/health"
+Write-Host "Health Check configure sur /monitoring/health" -ForegroundColor Green
+
 # Recuperation de la connection string Application Insights
 Write-Host "Recuperation de la connection string Application Insights..." -ForegroundColor Yellow
 $APP_INSIGHTS_NAME = "seeg-api-insights"
