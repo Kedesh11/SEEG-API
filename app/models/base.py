@@ -9,8 +9,7 @@ from typing import Any, Dict, Optional
 
 from sqlalchemy import Column, DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.ext.declarative import as_declarative, declared_attr
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import as_declarative, declared_attr, Mapped, mapped_column
 
 
 @as_declarative()
@@ -21,7 +20,7 @@ class Base:
     __name__: str
     
     # Générer automatiquement le nom de la table
-    @declared_attr
+    @declared_attr.directive
     def __tablename__(cls) -> str:
         return cls.__name__.lower()
 

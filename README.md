@@ -15,9 +15,10 @@
 
 | Métrique | Valeur |
 |----------|--------|
-| **Endpoints API** | 80+ routes |
-| **Lignes de code** | ~15,000 lignes |
+| **Endpoints API** | 85+ routes |
+| **Lignes de code** | ~16,500 lignes |
 | **Dépendances** | 51 packages Python |
+| **Tables DB** | 12+ tables |
 | **Uptime cible** | 99.9% |
 | **Temps réponse (P95)** | < 500ms |
 | **Disponibilité** | 24/7 |
@@ -121,12 +122,47 @@ docker push seegbackend.azurecr.io/seeg-backend-api:latest
 ## ✨ Fonctionnalités
 
 ### 🔐 Authentification & Autorisation
-- Inscription candidats (internes avec matricule / externes sans matricule)
+
+**Système d'authentification multi-niveaux avec gestion des demandes d'accès**
+
+#### Types de candidats
+- **Candidats EXTERNES** : Accès immédiat après inscription
+  - `candidate_status = 'externe'`
+  - Aucun matricule requis
+  - `statut = 'actif'` dès l'inscription
+  
+- **Candidats INTERNES avec email @seeg-gabon.com** : Accès immédiat
+  - `candidate_status = 'interne'`
+  - Matricule SEEG obligatoire et vérifié
+  - Email professionnel @seeg-gabon.com requis
+  - `statut = 'actif'` dès l'inscription
+  
+- **Candidats INTERNES sans email @seeg-gabon.com** : Validation requise
+  - `candidate_status = 'interne'`
+  - Matricule SEEG obligatoire et vérifié
+  - Email personnel (gmail, yahoo, etc.)
+  - `statut = 'en_attente'` → demande d'accès créée automatiquement
+  - Validation par un recruteur nécessaire avant connexion
+
+#### Statuts utilisateur
+| Statut | Description | Connexion autorisée |
+|--------|-------------|---------------------|
+| `actif` | Compte actif et validé | ✅ OUI |
+| `en_attente` | En attente de validation recruteur | ❌ NON |
+| `inactif` | Compte désactivé temporairement | ❌ NON |
+| `bloqué` | Compte bloqué (demande refusée) | ❌ NON |
+| `archivé` | Compte archivé | ❌ NON |
+
+#### Fonctionnalités
+- Inscription avec validation métier complète
 - Connexion multi-format (JSON, form-urlencoded)
 - JWT avec access & refresh tokens (durées configurables)
 - Gestion des rôles (candidate, recruiter, admin, observer)
 - Réinitialisation de mot de passe par email
-- Vérification de matricule SEEG
+- Vérification de matricule SEEG en temps réel
+- **Système de demandes d'accès** pour candidats internes sans email SEEG
+- Messages d'erreur personnalisés selon le statut du compte
+- Emails automatiques (bienvenue, validation, approbation, refus)
 
 ### 👥 Gestion des candidats
 - **Candidats INTERNES** : Employés SEEG avec matricule
@@ -832,18 +868,40 @@ Utilisez ce JSON pour :
 
 #### 🔐 Authentification (`/api/v1/auth`)
 
-| Méthode | Endpoint | Description | Auth |
-|---------|----------|-------------|------|
-| POST | `/login` | Connexion | Non |
-| POST | `/signup` | Inscription candidat | Non |
-| POST | `/create-user` | Créer utilisateur | Admin |
-| GET | `/me` | Profil utilisateur | Oui |
-| POST | `/refresh` | Rafraîchir token | Non |
-| POST | `/logout` | Déconnexion | Oui |
-| POST | `/forgot-password` | Mot de passe oublié | Non |
-| POST | `/reset-password` | Réinitialiser MdP | Non |
-| POST | `/change-password` | Changer MdP | Oui |
-| GET | `/verify-matricule` | Vérifier matricule | Candidat |
+| Méthode | Endpoint | Description | Auth | Détails |
+|---------|----------|-------------|------|---------|
+| POST | `/login` | Connexion utilisateur | Non | Vérifie le statut du compte. Refuse si `statut != 'actif'` |
+| POST | `/signup` | Inscription candidat (interne/externe) | Non | Crée automatiquement une demande d'accès si interne sans email SEEG |
+| POST | `/verify-matricule` | Vérifier un matricule SEEG | Non | Endpoint public pour validation en temps réel lors de l'inscription |
+| POST | `/create-user` | Créer utilisateur (admin/recruteur) | Admin | Réservé aux administrateurs |
+| GET | `/me` | Profil utilisateur connecté | Oui | Informations complètes du compte |
+| POST | `/refresh` | Rafraîchir le token JWT | Non | Avec refresh_token |
+| POST | `/logout` | Déconnexion | Oui | Invalide le token |
+| POST | `/forgot-password` | Demander réinitialisation MdP | Non | Envoie un email avec lien |
+| POST | `/reset-password` | Confirmer réinitialisation MdP | Non | Avec token reçu par email |
+| POST | `/change-password` | Changer le mot de passe | Oui | Nécessite l'ancien MdP |
+| GET | `/verify-user-matricule` | Vérifier matricule de l'utilisateur connecté | Candidat | Vérifie contre `seeg_agents` |
+
+#### 👥 Gestion des Demandes d'Accès (`/api/v1/access-requests`)
+
+**Nouveaux endpoints pour gérer les demandes d'accès des candidats internes sans email @seeg-gabon.com**
+
+| Méthode | Endpoint | Description | Auth | Permissions |
+|---------|----------|-------------|------|-------------|
+| GET | `/` | Lister toutes les demandes d'accès | Oui | Recruteur, Admin, Observateur |
+| POST | `/approve` | Approuver une demande | Oui | Recruteur, Admin |
+| POST | `/reject` | Refuser une demande (avec motif) | Oui | Recruteur, Admin |
+| POST | `/mark-all-viewed` | Marquer toutes comme vues | Oui | Recruteur, Admin, Observateur |
+| GET | `/unviewed-count` | Nombre de demandes non vues | Oui | Recruteur, Admin, Observateur |
+
+**Workflow des demandes d'accès :**
+1. Candidat interne s'inscrit sans email @seeg-gabon.com
+2. Compte créé avec `statut='en_attente'`
+3. Demande d'accès créée automatiquement avec `status='pending'`
+4. Emails envoyés (candidat + support@seeg-talentsource.com)
+5. Recruteur voit la demande dans son dashboard avec badge de notification
+6. Recruteur approuve → `statut='actif'`, email de confirmation
+7. OU Recruteur refuse (motif ≥ 20 caractères) → `statut='bloqué'`, email avec motif
 
 #### 👥 Utilisateurs (`/api/v1/users`)
 - GET `/` - Liste des utilisateurs
@@ -870,45 +928,128 @@ Utilisez ce JSON pour :
 
 ### Exemples d'utilisation
 
-#### Inscription candidat INTERNE (employé SEEG)
+#### 📋 SCÉNARIO 1 : Inscription candidat EXTERNE
 
-```bash
+**Caractéristiques** : Accès immédiat, aucun matricule requis
+
+```json
 POST /api/v1/auth/signup
 Content-Type: application/json
 
 {
-  "email": "employe@seeg.ga",
-  "password": "SecurePass123!@#",
-  "first_name": "Marie",
-  "last_name": "Obame",
-  "matricule": 145678,        # ← Avec matricule = INTERNE
-  "phone": "+241066123456",
-  "date_of_birth": "1988-03-15",
-  "sexe": "F"
-}
-
-# Réponse: is_internal_candidate = true
-```
-
-#### Inscription candidat EXTERNE
-
-```bash
-POST /api/v1/auth/signup
-Content-Type: application/json
-
-{
-  "email": "candidat@gmail.com",
-  "password": "SecurePass123!@#",
+  "email": "jean.externe@gmail.com",
+  "password": "SecurePass#2025!Strong",
   "first_name": "Jean",
   "last_name": "Dupont",
-  "matricule": null,          # ← Sans matricule = EXTERNE
-  "phone": "+241077999888",
-  "date_of_birth": "1995-07-20",
-  "sexe": "M"
+  "phone": "+24106223344",
+  "date_of_birth": "1990-05-15",
+  "sexe": "M",
+  "candidate_status": "externe",
+  "matricule": null,
+  "no_seeg_email": false,
+  "adresse": "123 Rue de la Liberté, Libreville",
+  "poste_actuel": null,
+  "annees_experience": 5
 }
-
-# Réponse: is_internal_candidate = false
 ```
+
+**Résultat** :
+- ✅ Compte créé avec `statut='actif'`
+- ✅ Connexion immédiate possible
+- ✅ Email de bienvenue envoyé
+- ❌ Aucune demande d'accès créée
+
+---
+
+#### 📋 SCÉNARIO 2 : Inscription candidat INTERNE avec email @seeg-gabon.com
+
+**Caractéristiques** : Accès immédiat, matricule vérifié, email professionnel
+
+```json
+POST /api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "email": "jean.dupont@seeg-gabon.com",
+  "password": "SecurePass#2025!Strong",
+  "first_name": "Jean",
+  "last_name": "Dupont",
+  "phone": "+24106223344",
+  "date_of_birth": "1990-05-15",
+  "sexe": "M",
+  "candidate_status": "interne",
+  "matricule": 123456,
+  "no_seeg_email": false,
+  "adresse": "456 Avenue Omar Bongo, Libreville",
+  "poste_actuel": "Technicien Réseau Eau",
+  "annees_experience": 8
+}
+```
+
+**Résultat** :
+- ✅ Matricule vérifié dans `seeg_agents`
+- ✅ Email @seeg-gabon.com validé
+- ✅ Compte créé avec `statut='actif'`
+- ✅ Connexion immédiate possible
+- ✅ Email de bienvenue envoyé
+- ❌ Aucune demande d'accès créée
+
+---
+
+#### 📋 SCÉNARIO 3 : Inscription candidat INTERNE sans email @seeg-gabon.com
+
+**Caractéristiques** : Validation recruteur requise, matricule vérifié, email personnel
+
+```json
+POST /api/v1/auth/signup
+Content-Type: application/json
+
+{
+  "email": "jean.perso@gmail.com",
+  "password": "SecurePass#2025!Strong",
+  "first_name": "Jean",
+  "last_name": "Dupont",
+  "phone": "+24106223344",
+  "date_of_birth": "1990-05-15",
+  "sexe": "M",
+  "candidate_status": "interne",
+  "matricule": 123456,
+  "no_seeg_email": true,
+  "adresse": "789 Quartier Montagne, Libreville",
+  "poste_actuel": "Agent Commercial",
+  "annees_experience": 3
+}
+```
+
+**Résultat** :
+- ✅ Matricule vérifié dans `seeg_agents`
+- ✅ Compte créé avec `statut='en_attente'`
+- ✅ Demande d'accès créée automatiquement (`status='pending'`)
+- ✅ Email "Demande en attente" envoyé au candidat
+- ✅ Email notification envoyé à support@seeg-talentsource.com
+- ❌ Connexion IMPOSSIBLE tant que non approuvé
+- ⏳ Recruteur doit approuver/refuser
+
+**Approbation par recruteur :**
+```json
+POST /api/v1/access-requests/approve
+
+{
+  "request_id": "uuid-de-la-demande"
+}
+```
+→ `users.statut = 'actif'`, `access_requests.status = 'approved'`, email envoyé
+
+**Refus par recruteur :**
+```json
+POST /api/v1/access-requests/reject
+
+{
+  "request_id": "uuid-de-la-demande",
+  "rejection_reason": "Matricule invalide ou informations non vérifiables. Veuillez contacter le service RH."
+}
+```
+→ `users.statut = 'bloqué'`, `access_requests.status = 'rejected'`, email avec motif envoyé
 
 #### Créer une offre réservée aux internes
 
@@ -936,6 +1077,75 @@ Authorization: Bearer <candidat_externe_token>
 # Réponse: Uniquement les offres avec is_internal_only = false
 # Les offres internes ne sont PAS visibles pour ce candidat externe
 ```
+
+---
+
+### 🔐 Règles métier du système d'authentification
+
+#### Validation lors de l'inscription
+
+**1. Candidat EXTERNE (`candidate_status = 'externe'`)**
+- ✅ Matricule = NULL (non requis)
+- ✅ Email quelconque accepté
+- ✅ Résultat : `statut = 'actif'` → Connexion immédiate
+
+**2. Candidat INTERNE avec email SEEG (`candidate_status = 'interne'`, `no_seeg_email = false`)**
+- ✅ Matricule OBLIGATOIRE et vérifié dans `seeg_agents`
+- ✅ Email DOIT se terminer par `@seeg-gabon.com`
+- ✅ Résultat : `statut = 'actif'` → Connexion immédiate
+
+**3. Candidat INTERNE sans email SEEG (`candidate_status = 'interne'`, `no_seeg_email = true`)**
+- ✅ Matricule OBLIGATOIRE et vérifié dans `seeg_agents`
+- ✅ Email quelconque accepté (gmail, yahoo, etc.)
+- ⏳ Résultat : `statut = 'en_attente'` → **Validation recruteur requise**
+- 📧 Emails envoyés :
+  - Candidat : "Demande en attente de validation"
+  - Support : "Nouvelle demande d'accès"
+
+#### Validation lors de la connexion
+
+**Messages d'erreur personnalisés selon le statut :**
+
+| Statut | Message | Code HTTP |
+|--------|---------|-----------|
+| `en_attente` | "Votre compte est en attente de validation par notre équipe. Vous recevrez un email de confirmation une fois votre accès validé." | 403 |
+| `bloqué` | "Votre compte a été bloqué. Veuillez contacter l'administrateur à support@seeg-talentsource.com" | 403 |
+| `inactif` | "Votre compte a été désactivé. Veuillez contacter l'administrateur à support@seeg-talentsource.com" | 403 |
+| `archivé` | "Votre compte a été archivé. Veuillez contacter l'administrateur à support@seeg-talentsource.com" | 403 |
+| `actif` | ✅ Connexion autorisée | 200 |
+
+#### Workflow d'approbation/refus
+
+**Approbation par recruteur** :
+1. Vérifier permissions (recruteur ou admin)
+2. Mettre à jour `users.statut = 'actif'`
+3. Mettre à jour `access_requests.status = 'approved'`
+4. Enregistrer `reviewed_at` et `reviewed_by`
+5. Envoyer email de confirmation au candidat
+
+**Refus par recruteur** :
+1. Vérifier permissions (recruteur ou admin)
+2. Valider le motif (≥ 20 caractères)
+3. Mettre à jour `users.statut = 'bloqué'`
+4. Mettre à jour `access_requests.status = 'rejected'`
+5. Enregistrer `rejection_reason`, `reviewed_at` et `reviewed_by`
+6. Envoyer email avec motif au candidat
+
+#### Badge de notification (pour recruteurs)
+
+**Comptage des demandes non vues** :
+```sql
+SELECT COUNT(*) FROM access_requests 
+WHERE status = 'pending' AND viewed = false;
+```
+
+**Marquage automatique comme vues** :
+- Appelé automatiquement quand un recruteur visite `/api/v1/access-requests`
+- `UPDATE access_requests SET viewed = true WHERE status = 'pending' AND viewed = false`
+- Badge passe à (0)
+- Nouvelles demandes futures réafficheront le badge
+
+---
 
 #### Connexion
 
@@ -1579,32 +1789,112 @@ Depends(get_current_admin_user)
 
 ### Modèle principal
 
-#### Table `users`
+#### Table `users` - Système d'authentification enrichi
+
+**Nouveaux champs ajoutés (version 2.0)** :
+- `adresse` : Adresse complète du candidat
+- `candidate_status` : Type de candidat ('interne' ou 'externe')
+- `statut` : Statut du compte (actif, en_attente, inactif, bloqué, archivé)
+- `poste_actuel` : Poste actuel (optionnel)
+- `annees_experience` : Années d'expérience (optionnel)
+- `no_seeg_email` : Candidat interne sans email @seeg-gabon.com
 
 ```sql
 CREATE TABLE users (
-    id UUID PRIMARY KEY,
+    -- Identifiant et authentification
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email VARCHAR UNIQUE NOT NULL,
+    hashed_password VARCHAR NOT NULL,
+    
+    -- Informations personnelles
     first_name VARCHAR NOT NULL,
     last_name VARCHAR NOT NULL,
-    role VARCHAR NOT NULL,  -- candidate, recruiter, admin, observer
     phone VARCHAR,
-    date_of_birth TIMESTAMP,
-    sexe VARCHAR,
-    matricule INTEGER UNIQUE,  -- NULL pour candidats externes
-    hashed_password VARCHAR NOT NULL,
+    date_of_birth DATE,  -- Modifié: DATE au lieu de TIMESTAMP
+    sexe VARCHAR(1) CHECK (sexe IS NULL OR sexe IN ('M', 'F')),
+    adresse TEXT,  -- NOUVEAU
+    
+    -- Profil professionnel
+    matricule INTEGER UNIQUE,  -- NULL pour candidats externes (modifié: nullable)
+    poste_actuel TEXT,  -- NOUVEAU
+    annees_experience INTEGER,  -- NOUVEAU
+    
+    -- Type et statut
+    role VARCHAR NOT NULL,  -- candidate, recruiter, admin, observer
+    candidate_status VARCHAR(10) CHECK (candidate_status IS NULL OR candidate_status IN ('interne', 'externe')),  -- NOUVEAU
+    statut VARCHAR(20) NOT NULL DEFAULT 'actif' CHECK (statut IN ('actif', 'en_attente', 'inactif', 'bloqué', 'archivé')),  -- NOUVEAU
+    no_seeg_email BOOLEAN NOT NULL DEFAULT false,  -- NOUVEAU
+    
+    -- Champs legacy
     email_verified BOOLEAN DEFAULT false,
-    last_login TIMESTAMP,
+    last_login TIMESTAMP WITH TIME ZONE,
     is_active BOOLEAN DEFAULT true,
-    is_internal_candidate BOOLEAN DEFAULT false,  -- NEW: Detection auto interne/externe
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
+    is_internal_candidate BOOLEAN DEFAULT false,
+    
+    -- Métadonnées
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Index existants
 CREATE INDEX ix_users_email ON users(email);
 CREATE INDEX ix_users_matricule ON users(matricule);
 CREATE INDEX ix_users_is_internal_candidate ON users(is_internal_candidate, role);
+
+-- Nouveaux index pour performance
+CREATE INDEX idx_users_statut ON users(statut);
+CREATE INDEX idx_users_candidate_status ON users(candidate_status);
+CREATE INDEX idx_users_matricule_not_null ON users(matricule) WHERE matricule IS NOT NULL;
 ```
+
+#### Table `access_requests` - Gestion des demandes d'accès (NOUVEAU)
+
+**Table pour gérer les demandes d'accès des candidats internes sans email @seeg-gabon.com**
+
+```sql
+CREATE TABLE access_requests (
+    -- Identifiant
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    
+    -- Référence utilisateur
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    
+    -- Informations du demandeur (copiées de users pour faciliter l'affichage)
+    email VARCHAR NOT NULL,
+    first_name VARCHAR,
+    last_name VARCHAR,
+    phone VARCHAR,
+    matricule VARCHAR,
+    
+    -- Type et statut de la demande
+    request_type VARCHAR NOT NULL DEFAULT 'internal_no_seeg_email',
+    status VARCHAR NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+    rejection_reason TEXT,
+    
+    -- Système de notification (badge)
+    viewed BOOLEAN NOT NULL DEFAULT false,
+    
+    -- Dates et traçabilité
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    reviewed_at TIMESTAMP WITH TIME ZONE,
+    reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL
+);
+
+-- Index pour performance
+CREATE INDEX idx_access_requests_status ON access_requests(status);
+CREATE INDEX idx_access_requests_user_id ON access_requests(user_id);
+CREATE INDEX idx_access_requests_viewed ON access_requests(viewed);
+CREATE INDEX idx_access_requests_status_viewed ON access_requests(status, viewed);
+CREATE INDEX idx_access_requests_created_at ON access_requests(created_at DESC);
+```
+
+**Workflow** :
+1. Candidat interne s'inscrit sans email @seeg-gabon.com
+2. `users.statut = 'en_attente'`
+3. `access_requests` créée avec `status='pending'`, `viewed=false`
+4. Recruteur voit la demande (badge de notification)
+5. Recruteur approuve → `users.statut='actif'`, `access_requests.status='approved'`
+6. OU Recruteur refuse → `users.statut='bloqué'`, `access_requests.status='rejected'`
 
 #### Table `job_offers`
 
@@ -1730,6 +2020,67 @@ Création des utilisateurs initiaux (recruteurs, admin, observateur)
 
 ## 📝 Changelog
 
+### Version 2.0.0 (2025-10-10)
+
+**🎉 Système d'Authentification Multi-Niveaux**
+
+**Nouvelles fonctionnalités** :
+- ✅ **Gestion des demandes d'accès** pour candidats internes sans email @seeg-gabon.com
+- ✅ **3 types d'inscription** : Externe, Interne avec email SEEG, Interne sans email SEEG
+- ✅ **Système de statuts** : actif, en_attente, inactif, bloqué, archivé
+- ✅ **Validation matricule en temps réel** lors de l'inscription
+- ✅ **Workflow d'approbation/refus** avec emails automatiques
+- ✅ **Badge de notification** pour les demandes non vues
+- ✅ **Messages d'erreur personnalisés** selon le statut du compte
+
+**Nouvelles tables** :
+- ✅ `access_requests` : Gestion des demandes d'accès avec traçabilité complète
+
+**Nouveaux champs `users`** :
+- ✅ `adresse` : Adresse complète
+- ✅ `candidate_status` : Type de candidat ('interne' ou 'externe')
+- ✅ `statut` : Statut du compte (actif, en_attente, etc.)
+- ✅ `poste_actuel` : Poste actuel (optionnel)
+- ✅ `annees_experience` : Années d'expérience (optionnel)
+- ✅ `no_seeg_email` : Indicateur email non-SEEG
+- ✅ `date_of_birth` : Modifié de TIMESTAMP vers DATE
+- ✅ `matricule` : Modifié pour être nullable (candidats externes)
+
+**Nouveaux endpoints** :
+- ✅ `POST /api/v1/auth/verify-matricule` : Vérification matricule publique
+- ✅ `GET /api/v1/access-requests/` : Lister les demandes
+- ✅ `POST /api/v1/access-requests/approve` : Approuver une demande
+- ✅ `POST /api/v1/access-requests/reject` : Refuser une demande (avec motif ≥ 20 caractères)
+- ✅ `POST /api/v1/access-requests/mark-all-viewed` : Marquer comme vues
+- ✅ `GET /api/v1/access-requests/unviewed-count` : Badge de notification
+
+**Améliorations** :
+- ✅ Validation métier complète dans `AuthService`
+- ✅ Création automatique de `AccessRequest` si `statut='en_attente'`
+- ✅ Messages d'erreur détaillés selon le statut lors du login
+- ✅ Permissions granulaires (recruteur, admin, observateur)
+- ✅ Traçabilité complète (reviewed_by, reviewed_at)
+
+**Migrations** :
+- ✅ `20251010_add_user_auth_fields.py` : Nouveaux champs users
+- ✅ `20251010_create_access_requests.py` : Table access_requests avec index
+
+**Services** :
+- ✅ `AccessRequestService` : Gestion complète des demandes d'accès
+- ✅ `AuthService` : Enrichi avec `determine_user_status()` et `verify_matricule_exists()`
+
+**Schémas** :
+- ✅ `CandidateSignupRequest` : Enrichi avec tous les nouveaux champs
+- ✅ `AccessRequestCreate`, `AccessRequestUpdate`, `AccessRequestApprove`, `AccessRequestReject`
+- ✅ `AccessRequestListResponse` avec `pending_count` et `unviewed_count`
+
+**🔧 Corrections** :
+- ✅ Toutes les erreurs de typage Pyright corrigées
+- ✅ Encodage UTF-8 vérifié sur tous les fichiers
+- ✅ Respect des meilleures pratiques du Génie Logiciel
+
+---
+
 ### Version 1.0.0 (2025-10-08)
 
 **🎉 Features**
@@ -1832,7 +2183,7 @@ echo=True  # Dans database.py
 
 ## 📄 Licence
 
-Propriété de la SEEG (Société d'Énergie et d'Eau du Gabon)
+Propriété de CNX 4.0
 
 ---
 

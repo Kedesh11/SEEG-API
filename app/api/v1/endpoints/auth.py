@@ -4,6 +4,7 @@ Endpoints d'authentification - Système unique et robuste
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select, and_
 from typing import Dict, Any
 import structlog
 from pydantic import ValidationError as PydanticValidationError
@@ -64,7 +65,45 @@ async def _login_core(email: str, password: str, db: AsyncSession) -> TokenRespo
             raise
         
         if not user:
-            safe_log("warning", "Tentative de connexion avec des identifiants incorrects", email=email)
+            safe_log("warning", "Tentative de connexion échouée", email=email)
+            
+            # Vérifier si l'utilisateur existe mais a un statut non actif
+            try:
+                user_check_result = await db.execute(
+                    select(User).where(User.email == email)
+                )
+                user_check = user_check_result.scalar_one_or_none()
+                
+                if user_check and hasattr(user_check, 'statut'):
+                    statut = str(user_check.statut) if user_check.statut is not None else None
+                    
+                    # Messages personnalisés selon le statut
+                    if statut == 'en_attente':
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Votre compte est en attente de validation par notre équipe. Vous recevrez un email de confirmation une fois votre accès validé."
+                        )
+                    elif statut == 'bloqué':
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Votre compte a été bloqué. Veuillez contacter l'administrateur à support@seeg-talentsource.com"
+                        )
+                    elif statut == 'inactif':
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Votre compte a été désactivé. Veuillez contacter l'administrateur à support@seeg-talentsource.com"
+                        )
+                    elif statut == 'archivé':
+                        raise HTTPException(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            detail="Votre compte a été archivé. Veuillez contacter l'administrateur à support@seeg-talentsource.com"
+                        )
+            except HTTPException:
+                raise
+            except Exception as e:
+                safe_log("debug", "Erreur vérification statut", error=str(e))
+            
+            # Message générique si aucun statut spécifique
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Email ou mot de passe incorrect",
@@ -187,8 +226,8 @@ async def login(
 
         if content_type.startswith("application/x-www-form-urlencoded") or content_type.startswith("multipart/form-data"):
             form = await request.form()
-            email = (form.get("username") or form.get("email") or "").strip()
-            password = (form.get("password") or "").strip()
+            email = str(form.get("username") or form.get("email") or "").strip()
+            password = str(form.get("password") or "").strip()
         else:
             body = await request.json()
             email = (body.get("email") or body.get("username") or "").strip()
@@ -211,17 +250,23 @@ async def login(
 
 @router.post("/signup", response_model=UserResponse, summary="Inscription candidat", openapi_extra={
     "requestBody": {"content": {"application/json": {"example": {
-        "email": "new.candidate@seeg.ga",
-        "password": "Password#2025",
-        "first_name": "Aïcha",
-        "last_name": "Mouketou",
-        "matricule": 123456,
+        "email": "jean.dupont@seeg-gabon.com",
+        "password": "Password#2025!Secure",
+        "first_name": "Jean",
+        "last_name": "Dupont",
         "phone": "+24106223344",
-        "date_of_birth": "1994-06-12",
-        "sexe": "F"
+        "date_of_birth": "1990-05-15",
+        "sexe": "M",
+        "candidate_status": "interne",
+        "matricule": 123456,
+        "no_seeg_email": False,
+        "adresse": "123 Rue de la Liberté, Libreville",
+        "poste_actuel": "Technicien Réseau",
+        "annees_experience": 5
     }}}},
     "responses": {
-        "200": {"description": "Utilisateur créé", "content": {"application/json": {"example": {"id": "uuid", "email": "new.candidate@seeg.ga", "role": "candidate"}}}},
+        "200": {"description": "Utilisateur créé", "content": {"application/json": {"example": {"id": "uuid", "email": "jean.dupont@seeg-gabon.com", "role": "candidate", "statut": "actif"}}}},
+        "400": {"description": "Données invalides"},
         "429": {"description": "Trop de tentatives d'inscription"}
     }
 })
@@ -286,7 +331,86 @@ async def signup_candidate(
             safe_log("error", "❌ Erreur lors du refresh", error=str(e), error_type=type(e).__name__)
             raise
         
-        # Étape 5: Créer la réponse
+        # Étape 5: Créer une demande d'accès si statut='en_attente'
+        if hasattr(user, 'statut') and str(getattr(user, 'statut', '')) == 'en_attente':
+            try:
+                from app.services.access_request import AccessRequestService
+                from app.services.email import EmailService
+                
+                access_service = AccessRequestService(db)
+                email_service = EmailService(db)
+                
+                safe_log("debug", "🔄 Création AccessRequest (statut=en_attente)...")
+                await access_service.create_access_request(
+                    user_id=user.id,
+                    email=str(user.email),
+                    first_name=str(user.first_name),
+                    last_name=str(user.last_name),
+                    phone=str(user.phone) if user.phone is not None else None,
+                    matricule=str(user.matricule) if user.matricule is not None else None
+                )
+                
+                # Commit de la demande d'accès
+                await db.commit()
+                safe_log("debug", "✅ AccessRequest créée", user_id=str(user.id))
+                
+                # Email 2 : Demande en Attente au candidat
+                try:
+                    await email_service.send_access_request_pending_email(
+                        to_email=str(user.email),
+                        first_name=str(user.first_name),
+                        last_name=str(user.last_name),
+                        sexe=str(user.sexe) if user.sexe is not None else None
+                    )
+                    safe_log("info", "Email demande en attente envoyé", user_id=str(user.id))
+                except Exception as e:
+                    safe_log("warning", "Erreur envoi email demande en attente", error=str(e))
+                
+                # Email 3 : Notification Admin à support@seeg-talentsource.com
+                try:
+                    date_birth_str = str(user.date_of_birth) if user.date_of_birth is not None else None
+                    await email_service.send_access_request_notification_to_admin(
+                        first_name=str(user.first_name),
+                        last_name=str(user.last_name),
+                        email=str(user.email),
+                        phone=str(user.phone) if user.phone is not None else None,
+                        matricule=str(user.matricule) if user.matricule is not None else None,
+                        date_of_birth=date_birth_str,
+                        sexe=str(user.sexe) if user.sexe is not None else None,
+                        adresse=str(getattr(user, 'adresse', None)) if getattr(user, 'adresse', None) is not None else None
+                    )
+                    safe_log("info", "Email notification admin envoyé", user_id=str(user.id))
+                except Exception as e:
+                    safe_log("warning", "Erreur envoi notification admin", error=str(e))
+                
+                safe_log("info", "Candidat en attente de validation créé", user_id=str(user.id))
+                
+            except Exception as e:
+                safe_log("error", "❌ Erreur création AccessRequest", error=str(e))
+                await db.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Erreur lors de la création de la demande d'accès"
+                )
+        else:
+            # Email 1 : Bienvenue (statut=actif)
+            try:
+                from app.services.email import EmailService
+                email_service = EmailService(db)
+                
+                await email_service.send_welcome_email(
+                    to_email=str(user.email),
+                    first_name=str(user.first_name),
+                    last_name=str(user.last_name),
+                    sexe=str(user.sexe) if user.sexe is not None else None
+                )
+                safe_log("info", "Email de bienvenue envoyé", user_id=str(user.id))
+            except Exception as e:
+                safe_log("warning", "Erreur envoi email bienvenue", error=str(e))
+            
+            safe_log("info", "Candidat actif créé (accès immédiat)", user_id=str(user.id))
+        
+        # Étape 6: Créer la réponse
         try:
             safe_log("debug", "🔄 Création UserResponse...")
             response = UserResponse.from_orm(user)
@@ -295,7 +419,10 @@ async def signup_candidate(
             safe_log("error", "❌ Erreur création UserResponse", error=str(e), error_type=type(e).__name__)
             raise
         
-        safe_log("info", "✅ Inscription candidat réussie", user_id=str(user.id), email=user.email)
+        safe_log("info", "✅ Inscription candidat réussie", 
+                user_id=str(user.id), 
+                email=user.email,
+                statut=getattr(user, 'statut', 'actif'))
         return response
         
     except HTTPException:
@@ -306,6 +433,87 @@ async def signup_candidate(
         import traceback
         safe_log("error", "Traceback complet", traceback=traceback.format_exc())
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Erreur interne du serveur: {str(e)}")
+
+
+@router.post("/verify-matricule", summary="Vérifier un matricule SEEG", openapi_extra={
+    "requestBody": {"content": {"application/json": {"example": {"matricule": 123456}}}},
+    "responses": {
+        "200": {"description": "Matricule valide", "content": {"application/json": {"example": {
+            "valid": True,
+            "message": "Matricule valide",
+            "agent_info": {"matricule": "123456", "first_name": "Jean", "last_name": "Dupont", "email": "jean.dupont@seeg-gabon.com"}
+        }}}},
+        "200 (invalide)": {"description": "Matricule invalide", "content": {"application/json": {"example": {
+            "valid": False,
+            "message": "Matricule invalide ou inactif",
+            "agent_info": None
+        }}}}
+    }
+})
+async def verify_matricule_endpoint(
+    request: Request,
+    matricule_data: dict,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Vérifier qu'un matricule SEEG existe et est actif.
+    
+    **Endpoint public** : Utilisé lors de l'inscription des candidats internes
+    pour valider leur matricule en temps réel.
+    
+    **Retourne** :
+    - `valid` : True si le matricule existe et est actif
+    - `message` : Message explicatif
+    - `agent_info` : Informations de l'agent si trouvé (matricule, nom, prénom, email)
+    
+    **Exemple de requête** :
+    ```json
+    {
+        "matricule": 123456
+    }
+    ```
+    """
+    matricule = None  # Initialiser pour éviter unbound
+    try:
+        matricule = matricule_data.get("matricule")
+        
+        if not matricule:
+            return {
+                "valid": False,
+                "message": "Matricule requis",
+                "agent_info": None
+            }
+        
+        # Vérifier dans la table seeg_agents
+        result = await db.execute(
+            select(SeegAgent).where(SeegAgent.matricule == int(matricule))
+        )
+        agent = result.scalar_one_or_none()
+        
+        if agent:
+            return {
+                "valid": True,
+                "message": "Matricule valide",
+                "agent_info": {
+                    "matricule": str(agent.matricule),
+                    "first_name": str(agent.prenom) if agent.prenom is not None else "",
+                    "last_name": str(agent.nom) if agent.nom is not None else ""
+                }
+            }
+        else:
+            return {
+                "valid": False,
+                "message": "Matricule non trouvé dans la base SEEG. Veuillez vérifier votre matricule ou contacter le service RH.",
+                "agent_info": None
+            }
+        
+    except Exception as e:
+        safe_log("error", "Erreur vérification matricule", matricule=str(matricule) if matricule else "unknown", error=str(e))
+        return {
+            "valid": False,
+            "message": f"Erreur lors de la vérification: {str(e)}",
+            "agent_info": None
+        }
 
 
 @router.post("/create-user", response_model=UserResponse, summary="Créer un utilisateur (admin/recruteur)")
@@ -364,11 +572,11 @@ async def create_first_admin(
         auth_service = AuthService(db)
         hashed_password = auth_service.password_manager.hash_password("Sevan@Seeg")
         admin = User(
-            email="sevankedesh11@gmail.com",
-            first_name="Sevan Kedesh",
-            last_name="IKISSA PENDY",
-            role="admin",
-            hashed_password=hashed_password,
+            email="sevankedesh11@gmail.com",  # type: ignore
+            first_name="Sevan Kedesh",  # type: ignore
+            last_name="IKISSA PENDY",  # type: ignore
+            role="admin",  # type: ignore
+            hashed_password=hashed_password,  # type: ignore
         )
         db.add(admin)
         
@@ -473,7 +681,7 @@ async def refresh_token(
             )
         
         # Vérifier que le compte est actif
-        if not user.is_active:
+        if not bool(user.is_active):
             safe_log("warning", "Tentative de refresh pour compte désactivé", user_id=user_id)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -523,34 +731,36 @@ async def logout(current_user: User = Depends(get_current_user)):
         }
     }
 })
-async def verify_matricule(
+async def verify_user_matricule(
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Vérifie que le matricule fourni lors de l'inscription correspond à un agent actif dans la table seeg_agents.
+    Vérifie que le matricule de l'utilisateur connecté correspond à un agent actif dans la table seeg_agents.
     Autorise uniquement les rôles candidats.
     """
-    if current_user.role != "candidate":
+    if str(current_user.role) != "candidate":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Accessible uniquement aux candidats")
 
-    if not current_user.matricule:
-        return MatriculeVerificationResponse(valid=False, reason="Aucun matricule enregistré pour cet utilisateur")
+    if current_user.matricule is None:
+        return MatriculeVerificationResponse(valid=False, reason="Aucun matricule enregistré pour cet utilisateur")  # type: ignore
 
     try:
         # Cast matricule to integer to match seeg_agents.matricule type
         try:
-            matricule_int = int(str(current_user.matricule).strip())
+            matricule_str = str(current_user.matricule).strip() if current_user.matricule is not None else ""
+            matricule_int = int(matricule_str)
         except ValueError:
-            return MatriculeVerificationResponse(valid=False, reason="Matricule invalide (doit être numérique)")
+            return MatriculeVerificationResponse(valid=False, reason="Matricule invalide (doit être numérique)")  # type: ignore
 
         result = await db.execute(select(SeegAgent).where(SeegAgent.matricule == matricule_int))
         agent = result.scalar_one_or_none()
         if agent:
-            return MatriculeVerificationResponse(valid=True, agent_matricule=str(agent.matricule))
-        return MatriculeVerificationResponse(valid=False, reason="Matricule non trouvé dans seeg_agents")
+            return MatriculeVerificationResponse(valid=True, agent_matricule=str(getattr(agent, 'matricule', '')))  # type: ignore
+        return MatriculeVerificationResponse(valid=False, reason="Matricule non trouvé dans seeg_agents")  # type: ignore
     except Exception as e:
-        safe_log("error", "Erreur de vérification de matricule", error=str(e), matricule=str(current_user.matricule))
+        matricule_log = str(current_user.matricule) if current_user.matricule is not None else "None"
+        safe_log("error", "Erreur de vérification de matricule", error=str(e), matricule=matricule_log)
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 

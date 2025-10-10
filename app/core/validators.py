@@ -6,6 +6,7 @@ et implémente des règles de validation robustes.
 """
 import re
 import base64
+import binascii
 import os
 from typing import Any, Optional
 from datetime import datetime, date
@@ -13,9 +14,11 @@ from pydantic import validator, field_validator, BaseModel, EmailStr, Field
 from email_validator import validate_email, EmailNotValidError
 
 # Import optionnel de magic pour Windows
+magic: Any | None = None
 try:
-    import magic
+    import magic as _magic
     MAGIC_AVAILABLE = True
+    magic = _magic  # assure une référence typée même si l'import échoue
 except (ImportError, OSError) as e:
     MAGIC_AVAILABLE = False
     print(f"Warning: python-magic non disponible - Validation MIME désactivée ({e})")
@@ -40,19 +43,19 @@ class Validators:
         - Au moins un caractère spécial
         """
         if len(password) < min_length:
-            raise ValidationError(f"Le mot de passe doit contenir au moins {min_length} caractères")
+            raise ValueError(f"Le mot de passe doit contenir au moins {min_length} caractères")
         
         if not re.search(r'[A-Z]', password):
-            raise ValidationError("Le mot de passe doit contenir au moins une majuscule")
+            raise ValueError("Le mot de passe doit contenir au moins une majuscule")
         
         if not re.search(r'[a-z]', password):
-            raise ValidationError("Le mot de passe doit contenir au moins une minuscule")
+            raise ValueError("Le mot de passe doit contenir au moins une minuscule")
         
         if not re.search(r'\d', password):
-            raise ValidationError("Le mot de passe doit contenir au moins un chiffre")
+            raise ValueError("Le mot de passe doit contenir au moins un chiffre")
         
         if not re.search(r'[!@#$%^&*(),.?":{}|<>_\-+=\[\]\\;\'`~]', password):
-            raise ValidationError("Le mot de passe doit contenir au moins un caractère spécial")
+            raise ValueError("Le mot de passe doit contenir au moins un caractère spécial")
         
         return password
 
@@ -65,10 +68,12 @@ class Validators:
         """
         try:
             # Valide et normalise l'email
-            valid = validate_email(email)
+            # Désactiver la vérification de délivrabilité pour accepter les domaines de test (e.g. example.com)
+            valid = validate_email(email, check_deliverability=False)
             return valid.email
         except EmailNotValidError as e:
-            raise ValidationError(str(e))
+            # Lever ValueError pour que Pydantic retourne 422 au lieu d'un 500
+            raise ValueError(str(e))
 
     @staticmethod
     def validate_pdf(file_data: str, max_size_mb: int = 10) -> str:
@@ -87,28 +92,28 @@ class Validators:
             
             # Vérifier la taille
             if len(decoded) > max_size_mb * 1024 * 1024:
-                raise ValidationError(f"Le fichier PDF ne doit pas dépasser {max_size_mb} Mo")
+                raise ValueError(f"Le fichier PDF ne doit pas dépasser {max_size_mb} Mo")
             
             # Vérifier le magic number PDF
             if not decoded.startswith(b'%PDF'):
-                raise ValidationError("Le fichier n'est pas un PDF valide")
+                raise ValueError("Le fichier n'est pas un PDF valide")
             
             # Vérifier le type MIME avec python-magic (si disponible)
-            if MAGIC_AVAILABLE:
+            if MAGIC_AVAILABLE and magic is not None:
                 try:
                     mime = magic.from_buffer(decoded, mime=True)
                     if mime != 'application/pdf':
-                        raise ValidationError("Le type MIME n'est pas un PDF")
+                        raise ValueError("Le type MIME n'est pas un PDF")
                 except Exception as e:
                     # Si magic échoue, on continue avec la vérification du magic number uniquement
                     print(f"Warning: Validation MIME échouée, on utilise uniquement le magic number - {e}")
             
             return file_data
         
-        except base64.binascii.Error:
-            raise ValidationError("Données base64 invalides")
+        except binascii.Error:
+            raise ValueError("Données base64 invalides")
         except Exception as e:
-            raise ValidationError(f"Erreur de validation PDF: {str(e)}")
+            raise ValueError(f"Erreur de validation PDF: {str(e)}")
 
     @staticmethod
     def validate_date_of_birth(birth_date: date, min_age: int = 18, max_age: int = 100) -> date:
@@ -123,10 +128,10 @@ class Validators:
         age = (today - birth_date).days / 365.25
         
         if age < min_age:
-            raise ValidationError(f"Vous devez avoir au moins {min_age} ans")
+            raise ValueError(f"Vous devez avoir au moins {min_age} ans")
         
         if age > max_age:
-            raise ValidationError(f"Date de naissance invalide (âge max: {max_age} ans)")
+            raise ValueError(f"Date de naissance invalide (âge max: {max_age} ans)")
         
         return birth_date
 

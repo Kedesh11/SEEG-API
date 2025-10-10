@@ -5,7 +5,7 @@ import structlog
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, and_
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest, CandidateSignupRequest, CreateUserRequest, 
@@ -29,10 +29,77 @@ def safe_log(level: str, message: str, **kwargs):
 class AuthService:
     """Service d'authentification"""
     
+    SEEG_EMAIL_DOMAIN = "@seeg-gabon.com"  # Domaine email professionnel SEEG
+    
     def __init__(self, db: AsyncSession):
         self.db = db
         self.password_manager = PasswordManager()
         self.token_manager = TokenManager()
+    
+    def determine_user_status(
+        self,
+        candidate_status: str,
+        email: str,
+        no_seeg_email: bool
+    ) -> str:
+        """
+        Déterminer le statut de l'utilisateur selon les règles métier.
+        
+        Règles:
+        1. Candidat EXTERNE → 'actif' (accès immédiat)
+        2. Candidat INTERNE avec email @seeg-gabon.com → 'actif' (accès immédiat)
+        3. Candidat INTERNE sans email @seeg-gabon.com → 'en_attente' (validation requise)
+        
+        Args:
+            candidate_status: 'interne' ou 'externe'
+            email: Adresse email du candidat
+            no_seeg_email: True si candidat interne sans email SEEG
+            
+        Returns:
+            str: 'actif' ou 'en_attente'
+        """
+        # Cas 1: Candidat externe → toujours actif
+        if candidate_status == 'externe':
+            return 'actif'
+        
+        # Cas 2: Candidat interne
+        if candidate_status == 'interne':
+            # Sous-cas 2.1: A un email @seeg-gabon.com → actif
+            if not no_seeg_email and email.lower().endswith(self.SEEG_EMAIL_DOMAIN):
+                return 'actif'
+            
+            # Sous-cas 2.2: N'a pas d'email SEEG → en_attente (validation requise)
+            if no_seeg_email:
+                return 'en_attente'
+            
+            # Sous-cas 2.3: Devrait avoir email SEEG mais ne l'a pas → en_attente
+            return 'en_attente'
+        
+        # Défaut: actif
+        return 'actif'
+    
+    async def verify_matricule_exists(self, matricule: int) -> bool:
+        """
+        Vérifier qu'un matricule existe dans la table seeg_agents.
+        
+        Args:
+            matricule: Matricule à vérifier
+            
+        Returns:
+            bool: True si le matricule existe dans la table seeg_agents
+        """
+        try:
+            from app.models.seeg_agent import SeegAgent
+            
+            result = await self.db.execute(
+                select(SeegAgent).where(SeegAgent.matricule == matricule)
+            )
+            agent = result.scalar_one_or_none()
+            return agent is not None
+            
+        except Exception as e:
+            safe_log("error", "Erreur vérification matricule", matricule=matricule, error=str(e))
+            return False
     
     async def authenticate_user(self, email: str, password: str) -> Optional[User]:
         """
@@ -61,13 +128,24 @@ class AuthService:
                 safe_log("warning", "Tentative de connexion avec email inexistant", email=email)
                 return None
             
-            # Vérifier que le compte est actif
-            if not user.is_active:
-                safe_log("warning", "Tentative de connexion sur compte désactivé", email=email, user_id=str(user.id))
+            # Vérifier le statut du compte (nouvelle logique)
+            if hasattr(user, 'statut') and user.statut is not None:
+                statut_str = str(user.statut)
+                if statut_str != 'actif':
+                    safe_log("warning", "Tentative de connexion avec compte non actif",
+                            email=email, user_id=str(user.id), statut=statut_str)
+                    # Retourner None et laisser l'endpoint gérer le message d'erreur selon le statut
+                    return None
+            
+            # Vérifier que le compte est actif (legacy is_active field)
+            if not bool(user.is_active):
+                safe_log("warning", "Tentative de connexion sur compte désactivé (is_active=False)",
+                        email=email, user_id=str(user.id))
                 return None
             
             # Vérifier le mot de passe
-            if not self.password_manager.verify_password(password, user.hashed_password):
+            hashed_pwd = str(user.hashed_password) if user.hashed_password is not None else ""
+            if not self.password_manager.verify_password(password, hashed_pwd):
                 safe_log("warning", "Mot de passe incorrect", email=email, user_id=str(user.id))
                 return None
             
@@ -94,6 +172,11 @@ class AuthService:
         
         NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
         
+        Règles métier:
+        1. Candidat EXTERNE (matricule=None) → statut='actif'
+        2. Candidat INTERNE avec email @seeg-gabon.com → statut='actif'
+        3. Candidat INTERNE sans email @seeg-gabon.com → statut='en_attente'
+        
         Args:
             user_data: Données d'inscription du candidat
             
@@ -113,25 +196,68 @@ class AuthService:
             if existing:
                 raise ValidationError("Un utilisateur avec cet email existe déjà")
             
+            # Validation métier: Candidat interne DOIT avoir un matricule
+            if user_data.candidate_status == 'interne' and not user_data.matricule:
+                raise ValidationError("Le matricule est obligatoire pour les candidats internes")
+            
+            # Validation métier: Vérifier que le matricule existe (si fourni)
+            if user_data.matricule:
+                is_valid = await self.verify_matricule_exists(user_data.matricule)
+                if not is_valid:
+                    raise ValidationError("Matricule SEEG non trouvé dans la base. Veuillez vérifier votre matricule.")
+
+            # Validation métier: Empêcher la duplication de matricule côté users (renvoyer 400 plutôt que 500 DB)
+            if user_data.matricule is not None:
+                existing_mat_result = await self.db.execute(
+                    select(User).where(User.matricule == user_data.matricule)
+                )
+                existing_with_same_matricule = existing_mat_result.scalar_one_or_none()
+                if existing_with_same_matricule is not None:
+                    raise ValidationError("Un utilisateur avec ce matricule existe déjà")
+            
+            # Validation métier: Si candidat interne sans no_seeg_email, l'email DOIT être @seeg-gabon.com
+            if (user_data.candidate_status == 'interne' 
+                and not user_data.no_seeg_email 
+                and not user_data.email.lower().endswith(self.SEEG_EMAIL_DOMAIN)):
+                raise ValidationError(
+                    f"Les candidats internes doivent utiliser un email professionnel {self.SEEG_EMAIL_DOMAIN}. "
+                    "Si vous n'avez pas d'email professionnel SEEG, veuillez cocher la case correspondante."
+                )
+            
             # Hasher le mot de passe
             hashed = self.password_manager.hash_password(user_data.password)
             
-            # Déterminer si c'est un candidat interne ou externe
-            # Interne = a un matricule, Externe = pas de matricule
-            is_internal = user_data.matricule is not None
-            
-            # Créer l'utilisateur
-            user = User(
+            # Déterminer le statut selon les règles métier
+            statut = self.determine_user_status(
+                candidate_status=user_data.candidate_status,
                 email=user_data.email,
-                hashed_password=hashed,
-                first_name=user_data.first_name,
-                last_name=user_data.last_name,
-                phone=user_data.phone,
-                role="candidate",
-                matricule=user_data.matricule,
-                date_of_birth=user_data.date_of_birth,
-                sexe=user_data.sexe,
-                is_internal_candidate=is_internal,  # ✅ Déterminé automatiquement
+                no_seeg_email=user_data.no_seeg_email
+            )
+            
+            # Déterminer si c'est un candidat interne
+            is_internal = user_data.candidate_status == 'interne'
+            
+            # Créer l'utilisateur avec TOUS les nouveaux champs
+            user = User(
+                email=user_data.email,  # type: ignore
+                hashed_password=hashed,  # type: ignore
+                first_name=user_data.first_name,  # type: ignore
+                last_name=user_data.last_name,  # type: ignore
+                phone=user_data.phone,  # type: ignore
+                role="candidate",  # type: ignore
+                matricule=user_data.matricule,  # type: ignore
+                date_of_birth=user_data.date_of_birth,  # type: ignore
+                sexe=user_data.sexe,  # type: ignore
+                is_internal_candidate=is_internal,  # type: ignore
+                # Nouveaux champs
+                adresse=user_data.adresse,  # type: ignore
+                candidate_status=user_data.candidate_status,  # type: ignore
+                statut=statut,  # type: ignore[assignment]
+                poste_actuel=user_data.poste_actuel,  # type: ignore
+                annees_experience=user_data.annees_experience,  # type: ignore
+                no_seeg_email=user_data.no_seeg_email,  # type: ignore
+                is_active=True,  # Legacy field  # type: ignore
+                email_verified=False  # type: ignore
             )
             self.db.add(user)
             
@@ -140,8 +266,10 @@ class AuthService:
             
             safe_log("info", "Candidat préparé pour création", 
                     email=user.email, 
-                    is_internal=is_internal,
-                    has_matricule=user_data.matricule is not None)
+                    candidate_status=user_data.candidate_status,
+                    statut=statut,
+                    has_matricule=user_data.matricule is not None,
+                    no_seeg_email=user_data.no_seeg_email)
             return user
             
         except ValidationError:
@@ -182,12 +310,12 @@ class AuthService:
             
             # Créer l'utilisateur
             user = User(
-                email=user_data.email,
-                hashed_password=hashed,
-                first_name=user_data.first_name,
-                last_name=user_data.last_name,
-                phone=user_data.phone,
-                role=user_data.role,
+                email=user_data.email,  # type: ignore
+                hashed_password=hashed,  # type: ignore
+                first_name=user_data.first_name,  # type: ignore
+                last_name=user_data.last_name,  # type: ignore
+                phone=user_data.phone,  # type: ignore
+                role=user_data.role,  # type: ignore
             )
             self.db.add(user)
             
@@ -231,7 +359,7 @@ class AuthService:
             body = f"Utilisez ce lien pour réinitialiser votre mot de passe: {reset_link}"
             html = f"<p>Vous avez demandé une réinitialisation de mot de passe.</p><p>Cliquez sur ce lien: <a href=\"{reset_link}\">Réinitialiser</a></p>"
             try:
-                await email_service.send_email(to=user.email, subject=subject, body=body, html_body=html)
+                await email_service.send_email(to=str(user.email), subject=subject, body=body, html_body=html)
             except Exception as e:
                 # Log et continuer (la génération du token côté client peut suffire si l'email tombe en échec)
                 safe_log("error", "Echec envoi email reset", error=str(e))
@@ -269,7 +397,7 @@ class AuthService:
                 raise ValidationError("Utilisateur introuvable pour ce token")
             
             # Modifier le mot de passe (sera committé par l'endpoint)
-            user.hashed_password = self.password_manager.hash_password(new_password)
+            user.hashed_password = self.password_manager.hash_password(new_password)  # type: ignore
             
             # ✅ PAS de commit ici - c'est l'endpoint qui décide
             
@@ -308,11 +436,12 @@ class AuthService:
                 raise ValidationError("Utilisateur introuvable")
             
             # Vérifier le mot de passe actuel
-            if not self.password_manager.verify_password(current_password, user.hashed_password):
+            hashed_pwd = str(user.hashed_password) if user.hashed_password is not None else ""
+            if not self.password_manager.verify_password(current_password, hashed_pwd):
                 raise UnauthorizedError("Mot de passe actuel incorrect")
             
             # Modifier le mot de passe (sera committé par l'endpoint)
-            user.hashed_password = self.password_manager.hash_password(new_password)
+            user.hashed_password = self.password_manager.hash_password(new_password)  # type: ignore
             
             # ✅ PAS de commit ici - c'est l'endpoint qui décide
             
