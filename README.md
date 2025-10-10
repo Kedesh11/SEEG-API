@@ -1,28 +1,101 @@
 # 🏢 One HCM SEEG Backend API
 
-API de gestion des ressources humaines pour la SEEG (Société d'Énergie et d'Eau du Gabon)
+> **API de gestion des ressources humaines pour la SEEG**  
+> *Société d'Énergie et d'Eau du Gabon*
 
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-00C7B7?logo=fastapi)](https://fastapi.tiangolo.com/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.104.1-00C7B7?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16+-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Azure](https://img.shields.io/badge/Azure-Ready-0078D4?logo=microsoft-azure)](https://azure.microsoft.com/)
+[![Azure](https://img.shields.io/badge/Azure-Deployed-0078D4?logo=microsoft-azure&logoColor=white)](https://azure.microsoft.com/)
 [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)](https://www.docker.com/)
+[![CI/CD](https://img.shields.io/badge/CI%2FCD-Automated-success?logo=github-actions&logoColor=white)](#cicd)
+[![Monitoring](https://img.shields.io/badge/Monitoring-App%20Insights-0078D4?logo=microsoft-azure&logoColor=white)](#monitoring--performance)
+
+### 📊 Métriques clés
+
+| Métrique | Valeur |
+|----------|--------|
+| **Endpoints API** | 80+ routes |
+| **Lignes de code** | ~15,000 lignes |
+| **Dépendances** | 51 packages Python |
+| **Uptime cible** | 99.9% |
+| **Temps réponse (P95)** | < 500ms |
+| **Disponibilité** | 24/7 |
+
+### 🔗 Liens rapides
+
+| Service | URL | Status |
+|---------|-----|--------|
+| **API Production** | [seeg-backend-api.azurewebsites.net](https://seeg-backend-api.azurewebsites.net) | 🟢 |
+| **Documentation** | [/docs](https://seeg-backend-api.azurewebsites.net/docs) | 📖 |
+| **Frontend Production** | [seeg-talentsource.com](https://www.seeg-talentsource.com) | 🌐 |
+| **Frontend Staging** | [seeg-hcm.vercel.app](https://seeg-hcm.vercel.app) | 🧪 |
 
 ---
 
 ## 📋 Table des matières
 
-- [Aperçu](#apercu)
-- [Fonctionnalités](#fonctionnalites)
-- [Architecture](#architecture)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Déploiement](#deploiement)
-- [API Documentation](#api-documentation)
-- [Développement](#developpement)
-- [Tests](#tests)
-- [Monitoring](#monitoring)
-- [Sécurité](#securite)
+- [Aperçu](#-aperçu)
+- [Fonctionnalités](#-fonctionnalités)
+- [Architecture](#️-architecture)
+- [Installation](#-installation)
+  - [Dépendances Python (51 packages)](#-dépendances-python-51-packages)
+- [Configuration](#️-configuration)
+- [Déploiement](#-déploiement)
+- [CI/CD - Déploiement Continu](#-cicd---déploiement-continu-automatique)
+- [Monitoring & Performance](#-monitoring--performance)
+  - [Application Insights](#-application-insights-production)
+  - [Alertes automatiques](#-alertes-automatiques)
+  - [Logs Analytics](#-log-analytics-workspace)
+- [API Documentation](#-api-documentation)
+- [Développement](#-développement)
+- [Tests](#-tests)
+- [Sécurité](#-sécurité)
+- [Support](#-support)
+
+---
+
+## 🚀 Démarrage rapide (Quick Start)
+
+### Pour les développeurs
+
+```bash
+# 1. Cloner et installer
+git clone <repo>
+cd SEEG-API
+python -m venv env
+.\env\Scripts\Activate.ps1  # Windows
+pip install -r requirements.txt
+
+# 2. Configurer
+copy env.example .env
+# Éditer .env avec vos paramètres DB
+
+# 3. Migrations
+alembic upgrade head
+
+# 4. Lancer
+uvicorn app.main:app --reload
+```
+
+➡️ API disponible sur `http://localhost:8000/docs`
+
+### Pour le déploiement Azure (DevOps)
+
+```powershell
+# 1. Déploiement complet (première fois)
+.\scripts\deploy-api-v2.ps1
+
+# 2. Tester
+.\scripts\test-deployment.ps1
+
+# 3. Déploiements suivants (automatiques via CI/CD)
+docker build -t seegbackend.azurecr.io/seeg-backend-api:latest .
+docker push seegbackend.azurecr.io/seeg-backend-api:latest
+# → Azure redéploie automatiquement ! 🎉
+```
+
+➡️ API disponible sur `https://seeg-backend-api.azurewebsites.net`
 
 ---
 
@@ -157,10 +230,52 @@ API de gestion des ressources humaines pour la SEEG (Société d'Énergie et d'E
 
 ### Prérequis
 
-- Python 3.12+
-- PostgreSQL 16+
-- Redis (optionnel, pour cache)
-- Git
+- **Python 3.12+**
+- **PostgreSQL 16+**
+- **Redis 7+** (optionnel, pour cache)
+- **Docker** (optionnel, pour déploiement)
+- **Azure CLI** (pour déploiement Azure)
+- **Git**
+
+### 📦 Dépendances Python (51 packages)
+
+Organisées par catégorie dans `requirements.txt` :
+
+#### 🎯 Core Framework
+- `fastapi==0.104.1` - Framework web moderne
+- `uvicorn[standard]==0.24.0.post1` - Serveur ASGI
+- `pydantic==2.5.2` / `pydantic-settings==2.1.0` - Validation
+
+#### 💾 Base de données
+- `SQLAlchemy==2.0.23` - ORM async/sync
+- `alembic==1.12.1` - Migrations
+- `asyncpg==0.29.0` + `psycopg2-binary==2.9.9` - Drivers PostgreSQL
+
+#### 🔐 Sécurité
+- `python-jose[cryptography]==3.3.0` - JWT
+- `passlib[bcrypt]==1.7.4` + `bcrypt==4.1.1` - Hachage
+
+#### 📧 Email
+- `fastapi-mail==1.4.1` + `aiosmtplib==2.0.2` - Service email
+
+#### 📄 Fichiers & PDF
+- `aiofiles==23.2.1` - Fichiers async
+- `reportlab==4.0.7` - **Génération PDF** 🔥
+- `python-magic==0.4.27` - Détection MIME
+
+#### 📊 Monitoring
+- `structlog==24.1.0` - Logs structurés
+- `prometheus-client==0.19.0` - Métriques
+- `opencensus-ext-azure==1.1.13` - App Insights
+- `opentelemetry-*` (8 packages) - Tracing distribué
+
+#### ⚡ Performance
+- `redis==5.0.1` - Cache
+- `slowapi==0.1.9` - Rate limiting
+- `httpx==0.25.1` - HTTP async
+
+> ⚠️ **Packages critiques** : `reportlab`, `fastapi-mail`, `slowapi`  
+> Sans ces packages, l'API ne démarrera pas correctement.
 
 ### Installation locale
 
@@ -287,62 +402,427 @@ docker-compose down
 
 ### Azure App Service (Production)
 
+#### Architecture de déploiement séparé
+
+Le système utilise une architecture moderne avec **séparation des responsabilités** :
+
+- **`deploy-api.ps1`** : Déploie uniquement l'application (sans migrations)
+- **`run-migrations.ps1`** : Exécute les migrations de base de données séparément
+
+**Avantages** :
+- ✅ L'API ne peut plus être bloquée par des erreurs de migration
+- ✅ Meilleur contrôle sur chaque étape
+- ✅ Logs séparés et plus clairs
+- ✅ Rollback granulaire possible
+
 #### Prérequis Azure
 - Azure CLI installé
+- Connexion Azure active (`az login`)
 - App Service créé
 - Azure PostgreSQL configuré
+- Container Registry configuré
 
 #### Configuration Azure
 
-1. **Variables d'environnement** (App Service → Configuration) :
+**Variables d'environnement** (App Service → Configuration) :
 
 ```bash
+# Environnement
 ENVIRONMENT=production
 DEBUG=false
+SKIP_MIGRATIONS=true  # ← IMPORTANT: Ignorer les migrations au démarrage
+
+# Sécurité
 SECRET_KEY=<generer-une-cle-securisee>
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+REFRESH_TOKEN_EXPIRE_DAYS=7
+
+# Base de données
 DATABASE_URL=postgresql+asyncpg://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres
 DATABASE_URL_SYNC=postgresql://Sevan:Sevan%40Seeg@seeg-postgres-server.postgres.database.azure.com:5432/postgres
+
+# CORS
 ALLOWED_ORIGINS=https://www.seeg-talentsource.com,https://seeg-hcm.vercel.app
+ALLOWED_CREDENTIALS=true
+
+# Monitoring
 APPLICATIONINSIGHTS_CONNECTION_STRING=<votre-connection-string>
 ```
 
-2. **Déploiement avec mise à jour continue** :
+#### Workflow de déploiement complet
 
-```bash
-# Lancer le script de mise à jour
-.\scripts\mise_a_jour.ps1
+**1. Déployer l'application**
 
-# Le script vous demandera si vous voulez executer les migrations
-# Tapez 'y' pour oui
+```powershell
+# Build dans le cloud (recommandé - pas besoin de Docker local)
+.\scripts\deploy-api.ps1
 
-# Si les migrations echouent localement (normal car DB Azure):
-# Tapez 'y' pour continuer le deploiement
+# Ou avec build local si Docker disponible
+.\scripts\deploy-api.ps1 -BuildMode local
 
-# Les migrations seront appliquées AUTOMATIQUEMENT au demarrage
-# du conteneur Docker sur Azure via docker-entrypoint.sh
+# Avec un tag spécifique
+.\scripts\deploy-api.ps1 -ImageTag "v1.2.3"
 ```
 
-**Important** : Les migrations locales peuvent échouer si vous n'avez pas accès à la DB Azure en local. C'est normal ! Les migrations s'exécuteront automatiquement au démarrage du conteneur sur Azure.
+**Ce que fait ce script** :
+- ✅ Vérifie les prérequis (Azure CLI, Docker si build local)
+- ✅ Génère un tag de déploiement basé sur le timestamp
+- ✅ Construit l'image Docker (localement ou dans Azure)
+- ✅ Configure l'App Service avec `SKIP_MIGRATIONS=true`
+- ✅ Déploie l'image sur Azure
+- ✅ Redémarre l'application
+- ✅ Effectue un health check
 
-3. **Vérifier le déploiement** :
+**2. Exécuter les migrations**
+
+```powershell
+# Appliquer toutes les migrations en attente
+.\scripts\run-migrations.ps1
+
+# Voir l'état actuel des migrations
+.\scripts\run-migrations.ps1 -Action current
+
+# Voir l'historique complet
+.\scripts\run-migrations.ps1 -Action history
+
+# Revenir à la version précédente
+.\scripts\run-migrations.ps1 -Action downgrade -Target "-1"
+```
+
+**Ce que fait ce script** :
+- ✅ Vérifie les prérequis (Azure CLI, Python, Alembic)
+- ✅ Récupère la chaîne de connexion depuis Azure
+- ✅ Ajoute automatiquement votre IP au firewall PostgreSQL
+- ✅ Affiche l'état actuel des migrations
+- ✅ Exécute les migrations
+- ✅ Propose de nettoyer la règle de firewall temporaire
+
+**3. Vérifier le déploiement**
 
 ```bash
 # Health check
 curl https://seeg-backend-api.azurewebsites.net/health
 
-# Swagger UI
+# Documentation Swagger
 https://seeg-backend-api.azurewebsites.net/docs
+
+# Logs en temps réel
+az webapp log tail --name seeg-backend-api --resource-group seeg-backend-rg
 ```
 
-4. **Créer les utilisateurs (après déploiement)** :
+#### Commandes avancées
 
-```bash
-# Se connecter à Azure
-az webapp ssh --name seeg-backend-api --resource-group seeg-backend-rg
+**Paramètres du script deploy-api.ps1** :
 
-# Ou localement avec DATABASE_URL pointant vers Azure
-python scripts/create_recruiters_after_migration.py
+| Paramètre | Défaut | Description |
+|-----------|--------|-------------|
+| `BuildMode` | `cloud` | `cloud` (build Azure) ou `local` (build local) |
+| `ResourceGroup` | `seeg-backend-rg` | Groupe de ressources Azure |
+| `AppName` | `seeg-backend-api` | Nom de l'App Service |
+| `ContainerRegistry` | `seegbackend` | Nom du Container Registry |
+| `ImageTag` | `latest` | Tag de l'image Docker |
+
+**Paramètres du script run-migrations.ps1** :
+
+| Paramètre | Défaut | Description |
+|-----------|--------|-------------|
+| `Action` | `upgrade` | `upgrade`, `downgrade`, `current`, `history` |
+| `Target` | `head` | Cible de la migration (ex: `head`, `-1`, ID) |
+| `ResourceGroup` | `seeg-backend-rg` | Groupe de ressources Azure |
+| `AppName` | `seeg-backend-api` | Nom de l'App Service |
+| `PostgresServer` | `seeg-postgres-server` | Nom du serveur PostgreSQL |
+
+**Exemples d'utilisation** :
+
+```powershell
+# Déploiement complet standard
+.\scripts\deploy-api.ps1
+.\scripts\run-migrations.ps1
+
+# Build local avec tag spécifique
+.\scripts\deploy-api.ps1 -BuildMode local -ImageTag "v1.5.0"
+
+# Rollback d'une migration
+.\scripts\run-migrations.ps1 -Action downgrade -Target "-1"
+
+# Voir les migrations sans les appliquer
+.\scripts\run-migrations.ps1 -Action history
 ```
+
+#### Dépannage
+
+**Problème : L'API ne démarre pas**
+
+```powershell
+# Vérifier les logs
+az webapp log tail --name seeg-backend-api --resource-group seeg-backend-rg
+
+# Vérifier l'état
+az webapp show --name seeg-backend-api --resource-group seeg-backend-rg --query state
+
+# Redémarrer
+az webapp restart --name seeg-backend-api --resource-group seeg-backend-rg
+```
+
+**Problème : Les migrations échouent**
+
+```powershell
+# Vérifier l'état de la base
+.\scripts\run-migrations.ps1 -Action current
+
+# Vérifier que votre IP est autorisée
+az postgres flexible-server firewall-rule list `
+  --resource-group seeg-backend-rg `
+  --name seeg-postgres-server
+
+# Ajouter votre IP manuellement
+az postgres flexible-server firewall-rule create `
+  --resource-group seeg-backend-rg `
+  --name seeg-postgres-server `
+  --rule-name "mon-ip" `
+  --start-ip-address <votre-ip> `
+  --end-ip-address <votre-ip>
+```
+
+**Problème : Erreur de réseau Docker (build local)**
+
+Solution : Utiliser le build cloud
+```powershell
+.\scripts\deploy-api.ps1 -BuildMode cloud
+```
+
+#### Bonnes pratiques
+
+**Avant le déploiement** :
+- ✅ Tester localement avec Docker Compose
+- ✅ Vérifier que tous les tests passent
+- ✅ Sauvegarder la base de données si changements critiques
+
+**Pendant le déploiement** :
+- ✅ Utiliser le build cloud pour plus de fiabilité
+- ✅ Surveiller les logs pendant le démarrage
+- ✅ Vérifier le health check après déploiement
+
+**Après le déploiement** :
+- ✅ Tester les endpoints critiques
+- ✅ Vérifier les métriques Azure
+- ✅ Surveiller les erreurs dans Application Insights
+
+**Pour les migrations** :
+- ⚠️ **TOUJOURS** tester sur un environnement de staging d'abord
+- ⚠️ **TOUJOURS** avoir un plan de rollback
+- ⚠️ **JAMAIS** supprimer une colonne sans migration en plusieurs étapes
+- ✅ Faire des backups avant les migrations importantes
+
+---
+
+## 🔄 CI/CD - Déploiement Continu Automatique
+
+### 🎯 Vue d'ensemble
+
+L'API SEEG dispose d'un système de **CI/CD automatique** configuré avec Azure :
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    WORKFLOW CI/CD                            │
+├──────────────────────────────────────────────────────────────┤
+│  1. Build image Docker (local ou cloud)                     │
+│  2. Push vers Azure Container Registry                      │
+│  3. Webhook ACR déclenché automatiquement                   │
+│  4. App Service détecte la nouvelle image                   │
+│  5. Redéploiement automatique sans intervention             │
+│  6. Health check vérifie que tout fonctionne                │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### 🚀 Déploiement initial (première fois)
+
+#### Étape 1 : Déploiement complet avec monitoring
+
+```powershell
+# Déploiement complet avec logs détaillés
+.\scripts\deploy-api-v2.ps1
+
+# Avec logs de debug
+.\scripts\deploy-api-v2.ps1 -LogLevel DEBUG
+
+# Build dans le cloud (recommandé)
+.\scripts\deploy-api-v2.ps1 -BuildMode cloud
+
+# Simulation (dry-run)
+.\scripts\deploy-api-v2.ps1 -DryRun
+```
+
+**Ce script fait TOUT automatiquement** :
+1. ✅ Valide les prérequis (Azure CLI, Docker)
+2. ✅ Vérifie les ressources Azure
+3. ✅ Build l'image Docker avec tous les packages
+4. ✅ Push vers Azure Container Registry
+5. ✅ Crée/Met à jour l'App Service
+6. ✅ Configure toutes les variables d'environnement
+7. ✅ Redémarre l'application
+8. ✅ **Active le CI/CD automatique** 🔥
+9. ✅ **Configure Application Insights** 🔥
+10. ✅ **Configure toutes les alertes** 🔥
+11. ✅ Vérifie le health check
+12. ✅ Génère un rapport détaillé
+
+#### Étape 2 : Vérifier le déploiement
+
+```powershell
+# Tests automatisés complets
+.\scripts\test-deployment.ps1
+
+# Voir les logs
+az webapp log tail --name seeg-backend-api --resource-group seeg-backend-rg
+```
+
+### 🔄 Déploiements suivants (CI/CD automatique)
+
+Une fois le CI/CD configuré, **chaque push d'image déclenche automatiquement un redéploiement** :
+
+```powershell
+# Méthode 1 : Build + Push (déclenchera automatiquement le redéploiement)
+docker build -t seegbackend.azurecr.io/seeg-backend-api:latest .
+docker push seegbackend.azurecr.io/seeg-backend-api:latest
+# → Azure détecte et redéploie automatiquement ! 🎉
+
+# Méthode 2 : Utiliser le script (build + push + attendre le redéploiement)
+.\scripts\deploy-api-v2.ps1
+# → Build, push, configure CI/CD, surveille le redéploiement
+```
+
+### 📊 Logs détaillés du déploiement
+
+Chaque déploiement génère des logs ultra-détaillés :
+
+```
+logs/
+├── deploy_20251010_153045.log          # Log complet du déploiement
+├── deploy_20251010_153045_errors.log   # Uniquement les erreurs
+└── deploy_20251010_153045_report.json  # Rapport JSON pour automatisation
+```
+
+**Contenu du log** :
+```
+[2025-10-10 15:30:45.123] [INFO] Démarrage de l'étape: Validation des prérequis
+[2025-10-10 15:30:45.234] [INFO] Azure CLI détecté | Version=2.54.0
+[2025-10-10 15:30:45.345] [INFO] Docker détecté | Version=Docker version 24.0.6
+[2025-10-10 15:30:45.456] [INFO] Connecté à Azure | Subscription=Azure subscription 1
+[2025-10-10 15:30:46.567] [INFO] ✅ Étape 'Validation des prérequis' terminée: Success (1.44s)
+```
+
+### 🎯 Surveillance du CI/CD
+
+#### Vérifier les webhooks
+
+```powershell
+# Liste des webhooks ACR
+az acr webhook list --registry seegbackend --output table
+
+# Événements récents du webhook
+az acr webhook list-events `
+    --name seeg-backend-apiWebhook `
+    --registry seegbackend `
+    --output table
+
+# Pinger le webhook manuellement
+az acr webhook ping --name seeg-backend-apiWebhook --registry seegbackend
+```
+
+#### Vérifier l'état du déploiement
+
+```powershell
+# Statut de l'App Service
+az webapp show `
+    --name seeg-backend-api `
+    --resource-group seeg-backend-rg `
+    --query "{State:state,Image:siteConfig.linuxFxVersion}" `
+    --output table
+
+# Historique des déploiements
+az webapp deployment list `
+    --name seeg-backend-api `
+    --resource-group seeg-backend-rg `
+    --output table
+```
+
+### 🛠️ Configuration avancée du CI/CD
+
+#### Modifier le webhook
+
+```powershell
+# Désactiver temporairement le CI/CD
+az webapp deployment container config `
+    --name seeg-backend-api `
+    --resource-group seeg-backend-rg `
+    --enable-cd false
+
+# Réactiver
+az webapp deployment container config `
+    --name seeg-backend-api `
+    --resource-group seeg-backend-rg `
+    --enable-cd true
+```
+
+#### Filtrer les déploiements par tag
+
+Le webhook est configuré pour réagir aux images avec le pattern :
+- `seeg-backend-api:*` → Tous les tags
+- `seeg-backend-api:latest` → Uniquement latest
+- `seeg-backend-api:deploy-*` → Uniquement les tags de déploiement
+
+Pour modifier :
+```powershell
+az acr webhook update `
+    --name seeg-backend-apiWebhook `
+    --registry seegbackend `
+    --scope "seeg-backend-api:latest"  # Réagir uniquement à :latest
+```
+
+### 📈 Métriques de déploiement
+
+Chaque déploiement génère un rapport JSON :
+
+```json
+{
+  "StartTime": "2025-10-10T15:30:45",
+  "EndTime": "2025-10-10T15:35:12",
+  "Duration": 267.45,
+  "Steps": [
+    {
+      "Name": "Validation des prérequis",
+      "Duration": 1.44,
+      "Status": "Success"
+    },
+    {
+      "Name": "Build Docker Image",
+      "Duration": 180.23,
+      "Status": "Success"
+    }
+  ],
+  "Warnings": 2,
+  "Errors": 0,
+  "Success": true
+}
+```
+
+Utilisez ce JSON pour :
+- Tracking des performances de build
+- Détection de régressions (durée qui augmente)
+- Alertes si déploiement > 10 minutes
+- Métriques DevOps
+
+### 🔧 Scripts disponibles
+
+| Script | Description | Usage |
+|--------|-------------|-------|
+| `deploy-api-v2.ps1` | Déploiement complet avec monitoring | Production |
+| `setup-cicd.ps1` | Configuration CI/CD uniquement | Configuration |
+| `setup-monitoring.ps1` | Configuration monitoring seul | Configuration |
+| `test-deployment.ps1` | Tests automatisés du déploiement | Validation |
+| `run-migrations.ps1` | Migrations base de données | Maintenance |
 
 ---
 
@@ -658,47 +1138,298 @@ curl http://localhost:8000/api/v1/auth/me \
 
 ---
 
-## 📊 Monitoring
+## 📊 Monitoring & Performance
 
-### Métriques (Prometheus)
+### 🎯 Vue d'ensemble
 
-Accessible sur : **http://localhost:9090** (Docker Compose)
+L'API SEEG dispose d'un système de monitoring complet à plusieurs niveaux :
 
-Endpoints exposés :
-- `/monitoring/metrics` - Métriques Prometheus
-- `/monitoring/health` - Health check détaillé
-
-### Tracing (Jaeger)
-
-Accessible sur : **http://localhost:16686** (Docker Compose)
-
-- Tracing distribué des requêtes
-- Analyse des performances
-- Détection des goulots d'étranglement
-
-### Logs
-
-- Format : JSON structuré (production) ou console (dev)
-- Niveau : Configurable via `LOG_LEVEL`
-- Stockage : `logs/` directory
-
-```bash
-# Voir les logs en temps réel
-tail -f logs/app.log
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    MONITORING STACK                         │
+├─────────────────────────────────────────────────────────────┤
+│  Application Insights  →  Traces + Métriques + Exceptions  │
+│  Log Analytics         →  Requêtes KQL + Corrélations      │
+│  Azure Monitor         →  Métriques système + Alertes      │
+│  Prometheus            →  Métriques custom applicatives    │
+│  Logs structurés       →  JSON + Console (dev)             │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Azure Application Insights
+### 🔍 Application Insights (Production)
 
-Configuration :
-```bash
-APPLICATIONINSIGHTS_CONNECTION_STRING=<votre-connection-string>
+**Configuration automatique lors du déploiement.**
+
+#### Fonctionnalités activées
+
+| Fonctionnalité | Description | Status |
+|----------------|-------------|--------|
+| **Distributed Tracing** | Traçage end-to-end des requêtes | ✅ Activé |
+| **Dependency Tracking** | Suivi PostgreSQL, Redis, HTTP | ✅ Activé |
+| **Exception Tracking** | Capture automatique des exceptions | ✅ Activé |
+| **Performance Metrics** | CPU, RAM, requêtes/sec, latence | ✅ Activé |
+| **Live Metrics** | Métriques temps réel | ✅ Activé |
+| **Profiler** | Profiling des performances | ✅ Activé |
+| **Snapshot Debugger** | Capture de l'état lors d'exceptions | ✅ Activé |
+| **Custom Events** | Événements métier custom | ✅ Activé |
+
+#### Accès
+
+Portail Azure → Application Insights → `seeg-api-insights`
+
+#### Requêtes KQL utiles
+
+```kql
+// Erreurs des dernières 24h
+exceptions
+| where timestamp > ago(24h)
+| summarize count() by type, outerMessage
+| order by count_ desc
+
+// Top 10 requêtes les plus lentes
+requests
+| where timestamp > ago(1h)
+| top 10 by duration desc
+| project timestamp, name, duration, resultCode
+
+// Taux d'erreur par endpoint
+requests
+| where timestamp > ago(1h)
+| summarize total=count(), errors=countif(success == false) by name
+| extend error_rate = (errors * 100.0) / total
+| order by error_rate desc
+
+// Dépendances PostgreSQL
+dependencies
+| where type == "SQL"
+| where timestamp > ago(1h)
+| summarize avg(duration), count() by name
+| order by avg_duration desc
 ```
 
-Fonctionnalités :
-- Tracing automatique des requêtes
-- Détection d'anomalies
-- Alertes configurables
-- Dashboards intégrés
+### 📊 Azure Monitor - Métriques système
+
+Métriques collectées automatiquement (toutes les 1 minute) :
+
+| Métrique | Description | Seuil d'alerte |
+|----------|-------------|----------------|
+| `CpuPercentage` | Utilisation CPU | > 80% |
+| `MemoryPercentage` | Utilisation RAM | > 80% |
+| `ResponseTime` | Temps de réponse moyen | > 3s |
+| `Http5xx` | Erreurs serveur | > 10 en 5min |
+| `Http4xx` | Erreurs client | > 50 en 5min |
+| `Requests` | Requêtes/seconde | - |
+| `BytesReceived` | Bande passante entrante | - |
+| `BytesSent` | Bande passante sortante | - |
+
+#### Voir les métriques
+
+```powershell
+# Métriques des dernières 24h
+az monitor metrics list `
+    --resource /subscriptions/.../resourceGroups/seeg-backend-rg/providers/Microsoft.Web/sites/seeg-backend-api `
+    --metric-names CpuPercentage MemoryPercentage ResponseTime `
+    --start-time (Get-Date).AddHours(-24) `
+    --interval PT1M
+
+# Export en CSV
+az monitor metrics list ... --output table > metrics.csv
+```
+
+### 🔔 Alertes automatiques
+
+5 alertes sont configurées automatiquement :
+
+#### 1. CPU Élevé (Sévérité: 2 - Warning)
+- **Condition**: CPU > 80% pendant 5 minutes
+- **Action**: Email à `support@cnx4-0.com`
+- **Recommandation**: Scale up le plan
+
+#### 2. Mémoire Élevée (Sévérité: 2 - Warning)
+- **Condition**: RAM > 80% pendant 5 minutes
+- **Action**: Email + investigation
+- **Recommandation**: Vérifier fuites mémoire
+
+#### 3. Erreurs HTTP 5xx (Sévérité: 1 - Error)
+- **Condition**: > 10 erreurs 5xx en 5 minutes
+- **Action**: Email urgent
+- **Recommandation**: Vérifier les logs
+
+#### 4. Temps de réponse lent (Sévérité: 2 - Warning)
+- **Condition**: Temps moyen > 3s pendant 5 minutes
+- **Action**: Email
+- **Recommandation**: Optimiser les requêtes DB
+
+#### 5. Application Down (Sévérité: 0 - Critical)
+- **Condition**: Health check échoué
+- **Action**: Email critique + SMS
+- **Recommandation**: Redémarrage immédiat
+
+#### Gérer les alertes
+
+```powershell
+# Lister toutes les alertes
+az monitor metrics alert list --resource-group seeg-backend-rg
+
+# Activer/Désactiver une alerte
+az monitor metrics alert update --name seeg-api-high-cpu --enabled false
+
+# Voir les alertes déclenchées
+az monitor metrics alert show --name seeg-api-high-cpu --output table
+```
+
+### 📝 Log Analytics Workspace
+
+**Workspace**: `seeg-api-logs`
+
+#### Catégories de logs
+
+| Catégorie | Rétention | Description |
+|-----------|-----------|-------------|
+| `AppServiceHTTPLogs` | 30 jours | Logs HTTP (accès, codes status) |
+| `AppServiceConsoleLogs` | 30 jours | Logs de la console Docker |
+| `AppServiceAppLogs` | 30 jours | Logs de l'application Python |
+| `AppServiceAuditLogs` | 90 jours | Logs d'audit (sécurité) |
+| `AppServicePlatformLogs` | 30 jours | Logs de la plateforme Azure |
+
+#### Requêtes KQL utiles
+
+```kql
+// Logs HTTP des dernières 24h
+AppServiceHTTPLogs
+| where TimeGenerated > ago(24h)
+| project TimeGenerated, CsMethod, CsUriStem, ScStatus, TimeTaken
+| order by TimeGenerated desc
+
+// Erreurs dans les logs console
+AppServiceConsoleLogs
+| where TimeGenerated > ago(1h)
+| where ResultDescription contains "error" or ResultDescription contains "exception"
+| project TimeGenerated, ResultDescription
+
+// Top 10 endpoints les plus appelés
+AppServiceHTTPLogs
+| where TimeGenerated > ago(24h)
+| summarize count() by CsUriStem
+| top 10 by count_
+| order by count_ desc
+
+// Analyse des temps de réponse
+AppServiceHTTPLogs
+| where TimeGenerated > ago(1h)
+| summarize avg(TimeTaken), max(TimeTaken), min(TimeTaken) by bin(TimeGenerated, 5m)
+| render timechart
+```
+
+### ⚡ Performance & Optimisations
+
+#### Optimisations activées
+
+- ✅ **Always On**: Application toujours active (pas de cold start)
+- ✅ **HTTP 2.0**: Multiplexage des requêtes
+- ✅ **Worker 64-bit**: Meilleure utilisation mémoire
+- ✅ **Health Check**: Monitoring continu sur `/docs`
+- ✅ **TLS 1.2+**: Sécurité renforcée
+- ✅ **Compression**: Réduction de la bande passante
+
+#### Métriques de performance attendues
+
+| Métrique | Cible | Limite |
+|----------|-------|--------|
+| Temps de réponse (P50) | < 200ms | < 1s |
+| Temps de réponse (P95) | < 500ms | < 2s |
+| Temps de réponse (P99) | < 1s | < 3s |
+| Disponibilité | > 99.9% | > 99% |
+| Erreurs | < 0.1% | < 1% |
+| CPU moyen | < 40% | < 70% |
+| RAM moyenne | < 60% | < 80% |
+
+### 📈 Dashboards et visualisation
+
+#### Accès rapide
+
+```powershell
+# Ouvrir Application Insights dans le portail
+az webapp show --name seeg-backend-api --resource-group seeg-backend-rg --query "id" -o tsv | % { 
+    Start-Process "https://portal.azure.com/#@/resource$_/appInsights"
+}
+
+# Ouvrir les métriques
+Start-Process "https://portal.azure.com/#blade/Microsoft_Azure_Monitoring/AzureMonitoringBrowseBlade/metrics"
+```
+
+#### Dashboards recommandés
+
+1. **Dashboard Vue d'ensemble**
+   - Requêtes/sec
+   - Taux d'erreur
+   - Temps de réponse (P50, P95, P99)
+   - Disponibilité
+
+2. **Dashboard Performance**
+   - CPU et RAM
+   - Latence base de données
+   - Latence Redis
+   - Temps de réponse par endpoint
+
+3. **Dashboard Erreurs**
+   - Exceptions par type
+   - Erreurs 5xx par endpoint
+   - Taux d'échec des dépendances
+   - Stack traces des erreurs critiques
+
+### 🔧 Commandes de monitoring
+
+```powershell
+# Logs en temps réel
+az webapp log tail --name seeg-backend-api --resource-group seeg-backend-rg
+
+# Télécharger les logs
+az webapp log download --name seeg-backend-api --resource-group seeg-backend-rg --log-file logs.zip
+
+# Métriques en temps réel
+az monitor metrics list-definitions --resource <resource-id>
+
+# Voir les alertes actives
+az monitor metrics alert list --resource-group seeg-backend-rg --output table
+
+# Query Log Analytics
+az monitor log-analytics query `
+    --workspace <workspace-id> `
+    --analytics-query "AppServiceHTTPLogs | where TimeGenerated > ago(1h) | take 100"
+```
+
+### 📊 Métriques Prometheus (Custom)
+
+Endpoints exposés pour scraping :
+
+| Endpoint | Description |
+|----------|-------------|
+| `/monitoring/metrics` | Métriques Prometheus (admin requis) |
+| `/monitoring/health` | Health check détaillé |
+| `/monitoring/stats` | Statistiques applicatives |
+
+#### Métriques custom disponibles
+
+```python
+# Compteurs
+- http_requests_total{method, endpoint, status}
+- applications_created_total
+- documents_uploaded_total
+- auth_attempts_total{result}
+- cache_hits_total
+- cache_misses_total
+- errors_total{type}
+
+# Gauges
+- active_users_count
+- database_connections_active
+- redis_connections_active
+
+# Histogrammes
+- http_request_duration_seconds{endpoint}
+- db_query_duration_seconds{query_type}
+```
 
 ---
 
@@ -986,14 +1717,14 @@ async def create(data: CreateRequest, db: AsyncSession = Depends(get_db)):
 
 ## 🔧 Scripts utilitaires
 
-### `scripts/mise_a_jour.ps1`
-Script de mise à jour continue
+### `scripts/deploy-api.ps1`
+Déploiement de l'API sur Azure (sans migrations)
 
-### `scripts/deploy-azure.ps1`
-Déploiement automatisé sur Azure
+### `scripts/run-migrations.ps1`
+Exécution des migrations de base de données
 
-### `scripts/manual_auth_tests.py`
-Tests manuels des endpoints auth
+### `scripts/create_recruiters_after_migration.py`
+Création des utilisateurs initiaux (recruteurs, admin, observateur)
 
 ---
 

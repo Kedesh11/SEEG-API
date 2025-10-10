@@ -1,0 +1,7 @@
+﻿az : D:\a\_work\1\s\build_scripts\windows\artifacts\cli\Lib\site-packages\cryptography/hazmat/backends/openssl/backend.py:8: UserWarning: You are using cryptography on a 32-bit Python on a 64-bit Windows Operating System. Cryptography will be significantly faster if you switch to using a 64-bit Python.
+Au caractère Ligne:1 : 1
++ az webapp log tail --name seeg-backend-api --resource-group seeg-back ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (D:\a\_work\1\s\... 64-bit Python.:Strin    g) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 

@@ -32,11 +32,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
+# Créer un environnement virtuel dédié aux dépendances
+RUN python -m venv /opt/venv
+ENV VIRTUAL_ENV=/opt/venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
 # Copier requirements et installer dans un répertoire utilisateur
 COPY requirements.txt .
 
-# Installation avec retry et timeout pour fiabilité
-RUN pip install --user --no-warn-script-location \
+# Installation avec retry et timeout pour fiabilité dans le venv
+RUN pip install --no-cache-dir \
     --timeout=100 --retries=3 \
     -r requirements.txt
 
@@ -54,7 +59,8 @@ LABEL maintainer="SEEG IT Team" \
 # Variables d'environnement runtime
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PATH=/home/appuser/.local/bin:$PATH \
+    VIRTUAL_ENV=/opt/venv \
+    PATH="/opt/venv/bin:/home/appuser/.local/bin:$PATH" \
     ENVIRONMENT=production \
     PYTHONIOENCODING=utf-8 \
     LANG=C.UTF-8 \
@@ -77,8 +83,8 @@ RUN groupadd -r appuser -g 1000 && \
 # Définir le répertoire de travail
 WORKDIR /app
 
-# Copier les dépendances Python compilées depuis builder
-COPY --from=builder --chown=appuser:appuser /root/.local /home/appuser/.local
+# Copier l'environnement virtuel construit en phase builder
+COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
 
 # Copier le code applicatif
 COPY --chown=appuser:appuser app/ ./app/
@@ -112,10 +118,11 @@ ENTRYPOINT ["./docker-entrypoint.sh"]
 
 # Commande par défaut: Uvicorn avec workers adapté à Azure
 # Note: Azure App Service peut override via WEBSITES_PORT
+# 2 workers pour plan B1 (1.75GB RAM, 1 core) - évite les problèmes de ressources
 CMD ["uvicorn", "app.main:app", \
     "--host", "0.0.0.0", \
     "--port", "8000", \
-    "--workers", "4", \
+    "--workers", "2", \
     "--access-log", \
     "--log-config", "logging.yaml", \
     "--proxy-headers", \

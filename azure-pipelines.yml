@@ -6,7 +6,7 @@ trigger:
 
 variables:
   azureSubscription: 'SEEG-Azure-Subscription'
-  webAppName: 'one-hcm-seeg-backend'
+  webAppName: 'seeg-backend-api'
 
 stages:
   - stage: Build

@@ -18,6 +18,7 @@ set -o pipefail  # Propagation des erreurs dans les pipes
 
 ENVIRONMENT="${ENVIRONMENT:-production}"
 SKIP_WAIT_FOR_DB="${SKIP_WAIT_FOR_DB:-false}"
+SKIP_MIGRATIONS="${SKIP_MIGRATIONS:-false}"
 CREATE_INITIAL_USERS="${CREATE_INITIAL_USERS:-false}"
 MAX_DB_RETRIES=30
 DB_RETRY_DELAY=2
@@ -239,9 +240,14 @@ main() {
     wait_for_redis  # Non bloquant si Redis absent
     
     # Étape 2: Migrations de base de données
-    if ! run_migrations; then
-        log_error "Migrations échouées, arrêt"
-        exit 1
+    if [[ "$SKIP_MIGRATIONS" == "true" ]]; then
+        log_warn "Migrations ignorées (SKIP_MIGRATIONS=true)"
+        log_info "Les migrations doivent être exécutées séparément avec run-migrations.ps1"
+    else
+        if ! run_migrations; then
+            log_error "Migrations échouées, arrêt"
+            exit 1
+        fi
     fi
     
     # Étape 3: Bootstrap utilisateurs (optionnel)

@@ -1,84 +1,410 @@
-# Script d'execution des migrations Alembic pour SEEG-API
-$ErrorActionPreference = "Stop"
+# ============================================================================
+# Script d'Execution des Migrations de Base de Donnees
+# ============================================================================
+# Ce script execute les migrations Alembic sur la base de donnees Azure
+# Il peut etre execute independamment du deploiement de l'API
+# ============================================================================
 
-Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "  EXECUTION DES MIGRATIONS - SEEG-API" -ForegroundColor Green
-Write-Host "========================================`n" -ForegroundColor Cyan
-
-# Variables
-$RESOURCE_GROUP = "one-hcm-seeg-rg"
-$APP_SERVICE_NAME = "one-hcm-seeg-backend"
-
-# Vérifier la connexion Azure
-Write-Host "Vérification de la connexion Azure..." -ForegroundColor Yellow
-try {
-    az account show 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Non connecté"
-    }
-    Write-Host "✓ Connecté à Azure`n" -ForegroundColor Green
-}
-catch {
-    Write-Host "Erreur : Vous devez être connecté à Azure CLI" -ForegroundColor Red
-    Write-Host "Exécutez : az login" -ForegroundColor Yellow
-    exit 1
-}
-
-# Demander confirmation
-Write-Host "Cette opération va exécuter les migrations Alembic sur la base de données de production." -ForegroundColor Yellow
-Write-Host "Voulez-vous continuer? (y/n)" -ForegroundColor Yellow
-$confirm = Read-Host
-if ($confirm -ne "y" -and $confirm -ne "Y") {
-    Write-Host "Migration annulée" -ForegroundColor Yellow
-    exit 0
-}
-
-Write-Host "`nExécution des migrations Alembic..." -ForegroundColor Cyan
-
-# Option 1 : Exécution locale (recommandé si DATABASE_URL est configuré localement)
-try {
-    # Vérifier si alembic est disponible
-    $alembicPath = Get-Command alembic -ErrorAction SilentlyContinue
+param(
+    [Parameter(Mandatory = $false)]
+    [string]$ResourceGroup = "seeg-backend-rg",
     
-    if ($alembicPath) {
-        Write-Host "Exécution des migrations en local..." -ForegroundColor Cyan
-        alembic upgrade head
+    [Parameter(Mandatory = $false)]
+    [string]$AppName = "seeg-backend-api",
+    
+    [Parameter(Mandatory = $false)]
+    [string]$PostgresServer = "seeg-postgres-server",
+    
+    [Parameter(Mandatory = $false)]
+    [ValidateSet("upgrade", "downgrade", "current", "history")]
+    [string]$Action = "upgrade",
+    
+    [Parameter(Mandatory = $false)]
+    [string]$Target = "head"
+)
+
+# Configuration
+$ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
+
+# ============================================================================
+# FONCTIONS UTILITAIRES
+# ============================================================================
+
+function Write-Section {
+    param([string]$Title)
+    Write-Host ""
+    Write-Host "=" -NoNewline -ForegroundColor Cyan
+    Write-Host ("=" * 78) -ForegroundColor Cyan
+    Write-Host " $Title" -ForegroundColor Cyan
+    Write-Host "=" -NoNewline -ForegroundColor Cyan
+    Write-Host ("=" * 78) -ForegroundColor Cyan
+    Write-Host ""
+}
+
+function Write-Step {
+    param([string]$Message)
+    Write-Host "[ETAPE] " -NoNewline -ForegroundColor Green
+    Write-Host $Message
+}
+
+function Write-Info {
+    param([string]$Message)
+    Write-Host "[INFO] " -NoNewline -ForegroundColor Cyan
+    Write-Host $Message
+}
+
+function Write-Success {
+    param([string]$Message)
+    Write-Host "[OK] " -NoNewline -ForegroundColor Green
+    Write-Host $Message
+}
+
+function Write-Error-Custom {
+    param([string]$Message)
+    Write-Host "[ERREUR] " -NoNewline -ForegroundColor Red
+    Write-Host $Message
+}
+
+function Write-Warning-Custom {
+    param([string]$Message)
+    Write-Host "[ATTENTION] " -NoNewline -ForegroundColor Yellow
+    Write-Host $Message
+}
+
+# ============================================================================
+# VERIFICATION DES PRE-REQUIS
+# ============================================================================
+
+function Test-Prerequisites {
+    Write-Step "Verification des pre-requis..."
+    
+    # Verifier Azure CLI
+    try {
+        $azVersion = az version --output json | ConvertFrom-Json
+        Write-Info "Azure CLI version: $($azVersion.'azure-cli')"
+    }
+    catch {
+        Write-Error-Custom "Azure CLI n'est pas installe ou n'est pas dans le PATH"
+        exit 1
+    }
+    
+    # Verifier la connexion Azure
+    $account = az account show 2>$null | ConvertFrom-Json
+    if (-not $account) {
+        Write-Error-Custom "Vous n'etes pas connecte a Azure. Executez: az login"
+        exit 1
+    }
+    Write-Info "Connecte a Azure: $($account.user.name)"
+    
+    # Verifier Python
+    try {
+        $pythonVersion = python --version
+        Write-Info "Python: $pythonVersion"
+    }
+    catch {
+        Write-Error-Custom "Python n'est pas installe ou n'est pas dans le PATH"
+        exit 1
+    }
+    
+    # Verifier Alembic
+    try {
+        alembic --version | Out-Null
+        Write-Info "Alembic est disponible"
+    }
+    catch {
+        Write-Error-Custom "Alembic n'est pas installe. Executez: pip install alembic"
+        exit 1
+    }
+    
+    # Verifier que le repertoire est bien la racine du projet
+    if (-not (Test-Path "app/main.py")) {
+        Write-Error-Custom "Ce script doit etre execute depuis la racine du projet"
+        exit 1
+    }
+    
+    if (-not (Test-Path "alembic.ini")) {
+        Write-Error-Custom "Le fichier alembic.ini est introuvable"
+        exit 1
+    }
+    
+    Write-Success "Tous les pre-requis sont satisfaits"
+}
+
+# ============================================================================
+# RECUPERATION DE LA CHAINE DE CONNEXION
+# ============================================================================
+
+function Get-DatabaseConnectionString {
+    Write-Step "Recuperation de la chaine de connexion..."
+    
+    # Recuperer la configuration de la base de donnees depuis l'App Service
+    $appSettings = az webapp config appsettings list `
+        --name $AppName `
+        --resource-group $ResourceGroup `
+        --output json | ConvertFrom-Json
+    
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error-Custom "Impossible de recuperer les parametres de l'App Service"
+        exit 1
+    }
+    
+    # Chercher DATABASE_URL
+    $databaseUrl = ($appSettings | Where-Object { $_.name -eq "DATABASE_URL" }).value
+    
+    if (-not $databaseUrl) {
+        Write-Error-Custom "La variable DATABASE_URL n'est pas configuree dans l'App Service"
+        exit 1
+    }
+    
+    Write-Success "Chaine de connexion recuperee"
+    return $databaseUrl
+}
+
+# ============================================================================
+# AUTORISATION FIREWALL
+# ============================================================================
+
+function Add-FirewallRule {
+    Write-Step "Verification de l'acces au serveur PostgreSQL..."
+    
+    # Recuperer l'IP publique
+    try {
+        $myIp = (Invoke-WebRequest -Uri "https://api.ipify.org" -UseBasicParsing).Content
+        Write-Info "Votre IP publique: $myIp"
+    }
+    catch {
+        Write-Warning-Custom "Impossible de recuperer l'IP publique"
+        return
+    }
+    
+    # Verifier si une regle existe deja pour cette IP
+    $ruleName = "migration-script-$($myIp -replace '\.','-')"
+    
+    # Lister toutes les regles et verifier si la notre existe
+    try {
+        $existingRules = az postgres flexible-server firewall-rule list `
+            --resource-group $ResourceGroup `
+            --name $PostgresServer `
+            --output json 2>$null | ConvertFrom-Json
+        
+        $ruleExists = $existingRules | Where-Object { $_.name -eq $ruleName }
+        
+        if ($ruleExists) {
+            Write-Info "Regle de firewall deja existante"
+            return $ruleName
+        }
+    }
+    catch {
+        # Si on ne peut pas lister les regles, on continue pour essayer de creer
+        Write-Info "Impossible de verifier les regles existantes, tentative de creation..."
+    }
+    
+    # Creer une regle temporaire
+    Write-Step "Ajout de votre IP au firewall PostgreSQL..."
+    
+    az postgres flexible-server firewall-rule create `
+        --resource-group $ResourceGroup `
+        --name $PostgresServer `
+        --rule-name $ruleName `
+        --start-ip-address $myIp `
+        --end-ip-address $myIp `
+        --output none
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Regle de firewall ajoutee: $ruleName"
+        return $ruleName
+    }
+    else {
+        Write-Warning-Custom "Impossible d'ajouter la regle de firewall"
+        return $null
+    }
+}
+
+# ============================================================================
+# EXECUTION DES MIGRATIONS
+# ============================================================================
+
+function Invoke-Migration {
+    param(
+        [string]$DatabaseUrl,
+        [string]$Action,
+        [string]$Target
+    )
+    
+    Write-Section "EXECUTION DES MIGRATIONS"
+    
+    Write-Info "Action: $Action"
+    Write-Info "Target: $Target"
+    
+    # Configurer la variable d'environnement
+    $env:DATABASE_URL = $DatabaseUrl
+    
+    try {
+        switch ($Action) {
+            "upgrade" {
+                Write-Step "Application des migrations ($Target)..."
+                alembic upgrade $Target
+            }
+            "downgrade" {
+                Write-Step "Retour en arriere des migrations ($Target)..."
+                alembic downgrade $Target
+            }
+            "current" {
+                Write-Step "Affichage de la version actuelle..."
+                alembic current
+            }
+            "history" {
+                Write-Step "Affichage de l'historique des migrations..."
+                alembic history --verbose
+            }
+        }
         
         if ($LASTEXITCODE -eq 0) {
-            Write-Host "`n✓ Migrations exécutées avec succès !" -ForegroundColor Green
-            exit 0
+            Write-Success "Operation '$Action' executee avec succes"
+            return $true
         }
         else {
-            throw "Erreur lors de l'exécution des migrations"
+            Write-Error-Custom "Echec de l'operation '$Action'"
+            return $false
+        }
+    }
+    catch {
+        Write-Error-Custom "Erreur lors de l'execution: $($_.Exception.Message)"
+        return $false
+    }
+    finally {
+        # Nettoyer la variable d'environnement
+        Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
+    }
+}
+
+# ============================================================================
+# VERIFICATION DE L'ETAT DES MIGRATIONS
+# ============================================================================
+
+function Test-MigrationStatus {
+    param([string]$DatabaseUrl)
+    
+    Write-Section "VERIFICATION DE L'ETAT DES MIGRATIONS"
+    
+    $env:DATABASE_URL = $DatabaseUrl
+    
+    try {
+        Write-Step "Version actuelle de la base de donnees..."
+        alembic current -v
+        
+        Write-Host ""
+        Write-Step "Migrations en attente..."
+        alembic upgrade head --sql > $null 2>&1
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Success "Aucune migration en attente"
+        }
+        else {
+            Write-Warning-Custom "Des migrations sont en attente"
+        }
+    }
+    catch {
+        Write-Warning-Custom "Impossible de verifier l'etat: $($_.Exception.Message)"
+    }
+    finally {
+        Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
+    }
+}
+
+# ============================================================================
+# NETTOYAGE
+# ============================================================================
+
+function Remove-FirewallRule {
+    param([string]$RuleName)
+    
+    if (-not $RuleName) {
+        return
+    }
+    
+    Write-Step "Suppression de la regle de firewall temporaire..."
+    
+    az postgres flexible-server firewall-rule delete `
+        --resource-group $ResourceGroup `
+        --name $PostgresServer `
+        --rule-name $RuleName `
+        --yes `
+        --output none `
+        2>$null
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Success "Regle de firewall supprimee"
+    }
+}
+
+# ============================================================================
+# SCRIPT PRINCIPAL
+# ============================================================================
+
+function Main {
+    Write-Section "EXECUTION DES MIGRATIONS DE BASE DE DONNEES"
+    
+    Write-Info "Resource Group: $ResourceGroup"
+    Write-Info "App Service: $AppName"
+    Write-Info "PostgreSQL Server: $PostgresServer"
+    
+    # 1. Verification des pre-requis
+    Test-Prerequisites
+    
+    # 2. Recuperation de la chaine de connexion
+    $databaseUrl = Get-DatabaseConnectionString
+    
+    # 3. Autorisation firewall
+    $firewallRule = Add-FirewallRule
+    
+    # 4. Verification de l'etat actuel (seulement pour upgrade)
+    if ($Action -eq "upgrade") {
+        Test-MigrationStatus -DatabaseUrl $databaseUrl
+    }
+    
+    # 5. Execution de l'action demandee
+    $success = Invoke-Migration -DatabaseUrl $databaseUrl -Action $Action -Target $Target
+    
+    # 6. Nettoyage
+    if ($firewallRule) {
+        $cleanup = Read-Host "Voulez-vous supprimer la regle de firewall temporaire? (O/n)"
+        if ($cleanup -ne "n" -and $cleanup -ne "N") {
+            Remove-FirewallRule -RuleName $firewallRule
+        }
+        else {
+            Write-Info "Regle de firewall conservee: $firewallRule"
+        }
+    }
+    
+    # Resume final
+    Write-Section "RESUME"
+    
+    if ($success) {
+        Write-Success "MIGRATIONS EXECUTEES AVEC SUCCES"
+        
+        if ($Action -eq "upgrade") {
+            Write-Host ""
+            Write-Info "Les migrations ont ete appliquees a la base de donnees"
+            Write-Info "L'API peut maintenant utiliser le nouveau schema"
+            Write-Host ""
+            Write-Warning-Custom "N'oubliez pas de redemarrer l'API si elle est en cours d'execution:"
+            Write-Host "  az webapp restart --name $AppName --resource-group $ResourceGroup"
         }
     }
     else {
-        Write-Host "Alembic n'est pas installé localement." -ForegroundColor Yellow
-        Write-Host "Tentative d'exécution via Azure Web App SSH..." -ForegroundColor Yellow
-        
-        # Option 2 : Exécution via SSH Azure (si disponible)
-        Write-Host "`nConnexion SSH à l'App Service..." -ForegroundColor Cyan
-        az webapp ssh --name $APP_SERVICE_NAME --resource-group $RESOURCE_GROUP --command "cd /app && alembic upgrade head"
-        
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "`n✓ Migrations exécutées avec succès via SSH !" -ForegroundColor Green
-        }
-        else {
-            Write-Host "`nErreur lors de l'exécution via SSH" -ForegroundColor Red
-            Write-Host "Vous pouvez exécuter manuellement :" -ForegroundColor Yellow
-            Write-Host "  1. Activer l'environnement virtuel : .\env\Scripts\Activate.ps1" -ForegroundColor Cyan
-            Write-Host "  2. Configurer DATABASE_URL dans .env" -ForegroundColor Cyan
-            Write-Host "  3. Exécuter : alembic upgrade head" -ForegroundColor Cyan
-            exit 1
-        }
+        Write-Error-Custom "ECHEC DES MIGRATIONS"
+        Write-Info "Verifiez les logs ci-dessus pour plus de details"
+        exit 1
     }
 }
+
+# Executer le script principal
+try {
+    Main
+}
 catch {
-    Write-Host "`nErreur : $_" -ForegroundColor Red
-    Write-Host "`nVeuillez vérifier :" -ForegroundColor Yellow
-    Write-Host "  - La configuration DATABASE_URL dans .env" -ForegroundColor Cyan
-    Write-Host "  - La connectivité à la base de données" -ForegroundColor Cyan
-    Write-Host "  - Les fichiers de migration dans app/db/migrations/versions/" -ForegroundColor Cyan
+    Write-Error-Custom "Erreur fatale: $($_.Exception.Message)"
     exit 1
 }
-

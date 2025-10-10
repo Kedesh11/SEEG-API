@@ -32,17 +32,17 @@ def detect_environment() -> str:
     website_instance = os.getenv('WEBSITE_INSTANCE_ID', '')
     
     if website_name == 'seeg-backend-api' or website_instance:
-        print(f"✅ Détection: Azure App Service ({website_name})")
+        print(f"[INFO] Detection: Azure App Service ({website_name})")
         return 'production'
     
     # Détection variable explicite
     env = os.getenv('ENVIRONMENT', '').lower()
     if env in ['production', 'prod']:
-        print(f"✅ Détection: ENVIRONMENT={env}")
+        print(f"[INFO] Detection: ENVIRONMENT={env}")
         return 'production'
     
     # Défaut: développement
-    print(f"✅ Détection: Développement LOCAL")
+    print(f"[INFO] Detection: Developpement LOCAL")
     return 'development'
 
 
@@ -57,14 +57,14 @@ def get_env_file() -> str:
     
     if env == 'production':
         if os.path.exists('.env.production'):
-            print(f"📄 Chargement: .env.production")
+            print(f"[INFO] Chargement: .env.production")
             return '.env.production'
     else:
         if os.path.exists('.env.local'):
-            print(f"📄 Chargement: .env.local")
+            print(f"[INFO] Chargement: .env.local")
             return '.env.local'
     
-    print(f"📄 Chargement: .env (défaut)")
+    print(f"[INFO] Chargement: .env (defaut)")
     return '.env'
 
 
@@ -274,7 +274,7 @@ class Settings(BaseSettings):
             raise ValueError("SECRET_KEY par défaut détectée en production! Changez-la immédiatement.")
         
         if v in weak_keys:
-            warnings.warn("⚠️  SECRET_KEY par défaut utilisée. Changez-la en production!")
+            warnings.warn("[WARNING] SECRET_KEY par defaut utilisee. Changez-la en production!")
         
         return v
     
@@ -305,7 +305,7 @@ class Settings(BaseSettings):
         # Recommandation DEBUG
         if self.DEBUG:
             warnings.warn(
-                "⚠️  DEBUG=True en production peut exposer des informations sensibles!"
+                "[WARNING] DEBUG=True en production peut exposer des informations sensibles!"
             )
         
         return self
@@ -318,7 +318,7 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # Afficher un résumé au démarrage
-print(f"✅ Configuration chargée: {settings.ENVIRONMENT}")
+print(f"[INFO] Configuration chargee: {settings.ENVIRONMENT}")
 print(f"   - App: {settings.APP_NAME} v{settings.APP_VERSION}")
 print(f"   - Debug: {settings.DEBUG}")
 print(f"   - Database: {settings.DATABASE_URL[:50]}...")

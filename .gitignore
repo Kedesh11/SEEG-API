@@ -187,3 +187,5 @@ media/
 
 # Data
 data/
+# Container Registry Credentials
+ACR-INFO.md
