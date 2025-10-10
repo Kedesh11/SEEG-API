@@ -68,12 +68,9 @@ async def lifespan(app: FastAPI):
     # Le cache Redis s'initialise automatiquement dans le constructeur de CacheManager
     # Aucune action nécessaire ici
     
-    # Démarrer la collecte de métriques
+    # Les métriques sont collectées automatiquement à la demande
     if settings.METRICS_ENABLED:
-        try:
-            metrics_collector.start_system_metrics_collection()
-        except Exception as e:
-            safe_log("warning", "Impossible de démarrer la collecte de métriques", error=str(e))
+        safe_log("info", "Collecte de métriques Prometheus activée")
     
     # Validation de la configuration en production
     if settings.ENVIRONMENT == "production":
@@ -85,12 +82,7 @@ async def lifespan(app: FastAPI):
     safe_log("info", "Arrêt de l'API One HCM SEEG")
     
     # Le cache Redis se ferme automatiquement
-    # Arrêter la collecte de métriques
-    if settings.METRICS_ENABLED:
-        try:
-            metrics_collector.stop_system_metrics_collection()
-        except Exception as e:
-            safe_log("warning", "Erreur lors de l'arrêt de la collecte de métriques", error=str(e))
+    # Les métriques Prometheus s'arrêtent automatiquement
 
 # ============================================================================
 # CRÉATION DE L'APPLICATION FASTAPI
@@ -148,7 +140,7 @@ app = FastAPI(
         },
         {
             "name": "💼 Offres d'emploi",
-            "description": "Gestion des offres d'emploi - Création, modification, consultation"
+            "description": "Gestion des offres d'emploi avec questions MTP (Métier, Talent, Paradigme) - Création, modification, consultation des offres internes et externes"
         },
         {
             "name": "📝 Candidatures",

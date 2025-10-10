@@ -10,7 +10,7 @@ import uuid
 from app.models.base import BaseModel
 
 class JobOffer(BaseModel):
-    __tablename__ = "job_offers"
+    __tablename__ = "job_offers"  # type: ignore[assignment]
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     recruiter_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
@@ -34,8 +34,14 @@ class JobOffer(BaseModel):
     profile = Column(Text)
     categorie_metier = Column(String)
     job_grade = Column(String)
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Questions MTP pour l'évaluation des candidats
+    question_metier = Column(Text, nullable=True, comment="Question évaluant les compétences techniques et opérationnelles")
+    question_talent = Column(Text, nullable=True, comment="Question évaluant les aptitudes personnelles et le potentiel")
+    question_paradigme = Column(Text, nullable=True, comment="Question évaluant la vision, les valeurs et la compatibilité culturelle")
+    
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)  # type: ignore[assignment]
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)  # type: ignore[assignment]
 
     # Relations
     recruiter = relationship("User", back_populates="job_offers")

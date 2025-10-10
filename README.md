@@ -1854,3 +1854,14 @@ Propriété de la SEEG (Société d'Énergie et d'Eau du Gabon)
 ---
 
 **Construit avec ❤️ pour la SEEG**
+
+# Rechercher le serveur PostgreSQL (Single Server)
+az postgres server list --resource-group seeg-rg --output table
+
+# Ajouter votre IP au firewall
+az postgres server firewall-rule create \
+  --resource-group seeg-rg \
+  --server-name seeg-postgres-server \
+  --name "Allow-Local-IP" \
+  --start-ip-address 154.116.31.161 \
+  --end-ip-address 154.116.31.161

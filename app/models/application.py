@@ -1,7 +1,7 @@
 """
 Modèles Application basés sur le schéma Supabase
 """
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON, Integer, LargeBinary
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON, Integer, LargeBinary, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -10,7 +10,7 @@ import uuid
 from app.models.base import BaseModel
 
 class Application(BaseModel):
-    __tablename__ = "applications"
+    __tablename__ = "applications"  # type: ignore[assignment]
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     candidate_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
@@ -19,6 +19,15 @@ class Application(BaseModel):
     
     reference_contacts = Column(Text)
     availability_start = Column(DateTime(timezone=True))
+    
+    # Champ de qualification pour candidats internes
+    has_been_manager = Column(Boolean, nullable=False, default=False, comment="Indique si le candidat interne a déjà occupé un poste de chef/manager")
+    
+    # Champs de recommandation pour candidats externes
+    ref_entreprise = Column(String(255), nullable=True, comment="Nom de l'entreprise/organisation recommandante")
+    ref_fullname = Column(String(255), nullable=True, comment="Nom complet du référent")
+    ref_mail = Column(String(255), nullable=True, comment="Adresse e-mail du référent")
+    ref_contact = Column(String(50), nullable=True, comment="Numéro de téléphone du référent")
     
     # MTP Questions
     mtp_answers = Column(JSON)
@@ -32,8 +41,8 @@ class Application(BaseModel):
     mtp_talent_q2 = Column(Text)
     mtp_talent_q3 = Column(Text)
     
-    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)  # type: ignore[assignment]
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)  # type: ignore[assignment]
 
     # Relations
     candidate = relationship("User", back_populates="applications")

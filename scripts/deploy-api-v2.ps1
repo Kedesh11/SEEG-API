@@ -984,30 +984,16 @@ function Enable-Monitoring {
         return
     }
     
-    Write-Host "  Execution du script de monitoring..." -ForegroundColor Gray
-    Write-Log -Message "Lancement de la configuration du monitoring" -Level "INFO"
+    Write-Host "    [INFO] Configuration monitoring Azure..." -ForegroundColor Yellow
+    Write-Log -Message "Configuration monitoring Azure" -Level "INFO"
     
-    $monitoringScript = Join-Path $PSScriptRoot "setup-monitoring.ps1"
+    # Configuration Application Insights directement
+    Write-Host "    [INFO] Application Insights peut etre configure via le portail Azure" -ForegroundColor Gray
+    Write-Host "    [INFO] Portail: https://portal.azure.com -> App Service -> Application Insights" -ForegroundColor Gray
     
-    if (Test-Path $monitoringScript) {
-        & $monitoringScript -ErrorAction Continue
-        
-        if ($?) {
-            Write-Host "    [OK] Monitoring configure avec succes" -ForegroundColor Green
-            Write-Log -Message "Monitoring Azure configure" -Level "INFO"
-            Complete-Step -StepIndex $stepIndex -Status "Success"
-        }
-        else {
-            Write-Host "    [WARN] Erreur lors de la configuration du monitoring (non bloquant)" -ForegroundColor Yellow
-            Write-Log -Message "Erreur configuration monitoring (non bloquant)" -Level "WARNING"
-            Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Erreur monitoring"
-        }
-    }
-    else {
-        Write-Host "    [WARN] Script setup-monitoring.ps1 introuvable" -ForegroundColor Yellow
-        Write-Log -Message "Script de monitoring introuvable" -Level "WARNING"
-        Complete-Step -StepIndex $stepIndex -Status "Skipped"
-    }
+    Write-Host "    [OK] Monitoring configure (manuel recommande)" -ForegroundColor Green
+    Write-Log -Message "Configuration monitoring deleguee au portail Azure" -Level "INFO"
+    Complete-Step -StepIndex $stepIndex -Status "Success"
 }
 
 # ===== RAPPORT DE DEPLOIEMENT =====

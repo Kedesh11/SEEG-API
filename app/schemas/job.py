@@ -27,6 +27,11 @@ class JobOfferBase(BaseModel):
     profile: Optional[str] = None
     categorie_metier: Optional[str] = None
     job_grade: Optional[str] = None
+    
+    # Questions MTP pour l'évaluation des candidats
+    question_metier: Optional[str] = Field(None, description="Question évaluant les compétences techniques et opérationnelles")
+    question_talent: Optional[str] = Field(None, description="Question évaluant les aptitudes personnelles et le potentiel")
+    question_paradigme: Optional[str] = Field(None, description="Question évaluant la vision, les valeurs et la compatibilité culturelle")
 
 class JobOfferCreate(JobOfferBase):
     recruiter_id: UUID
@@ -52,6 +57,11 @@ class JobOfferUpdate(BaseModel):
     profile: Optional[str] = None
     categorie_metier: Optional[str] = None
     job_grade: Optional[str] = None
+    
+    # Questions MTP pour l'évaluation des candidats
+    question_metier: Optional[str] = None
+    question_talent: Optional[str] = None
+    question_paradigme: Optional[str] = None
 
 class JobOfferResponse(JobOfferBase):
     id: UUID

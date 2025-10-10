@@ -9,9 +9,9 @@ from app.api.v1.endpoints import webhooks
 api_router = APIRouter()
 
 # Inclure tous les routers d'endpoints
-api_router.include_router(auth.router, prefix="/auth", tags=["Authentication"])
-api_router.include_router(users.router, prefix="/users", tags=["Users"])
-api_router.include_router(jobs.router, prefix="/jobs", tags=["Job Offers"])
+api_router.include_router(auth.router, prefix="/auth", tags=["🔐 Authentification"])
+api_router.include_router(users.router, prefix="/users", tags=["👥 Utilisateurs"])
+api_router.include_router(jobs.router, prefix="/jobs", tags=["💼 Offres d'emploi"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 
 # Endpoint de statut de l'API
