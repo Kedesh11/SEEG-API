@@ -100,11 +100,11 @@ if (-not (Test-Path $LOG_DIR)) {
 
 # Configuration Azure (centralise pour faciliter les modifications)
 $CONFIG = @{
-    ResourceGroup     = "seeg-rg"                    # Existe deja
+    ResourceGroup     = "seeg-rg"                    # Resource Group existant (corrige)
     Location          = "francecentral"
     ContainerRegistry = "seegregistry"               # Existe deja - cree le 2025-10-10
-    AppServicePlan    = "seeg-app-service-plan"      # A creer ou existe deja
-    AppName           = "seeg-backend-api"           # A creer
+    AppServicePlan    = "seeg-plan"                  # App Service Plan existant
+    AppName           = "seeg-backend-api"           # Existe deja
     ImageName         = "seeg-api"
     DockerfilePath    = ".\Dockerfile"
     SKU               = "B2"
@@ -415,41 +415,91 @@ function Test-AzureResources {
     }
     
     Write-Host "  Verification Container Registry..." -ForegroundColor Gray
-    # Supprimer completement les warnings Python
-    $ErrorActionPreference = "SilentlyContinue"
-    $acrResult = az acr show --name $CONFIG.ContainerRegistry --resource-group $CONFIG.ResourceGroup --output json 2>&1 | Out-String
-    $ErrorActionPreference = "Stop"
+    Write-Log -Message "Verification ACR: $($CONFIG.ContainerRegistry)" -Level "DEBUG"
     
-    if ($acrResult) {
-        try {
-            $acr = $acrResult | ConvertFrom-Json
-        }
-        catch {
-            $acr = $null
+    # Verification robuste de l'existence de l'ACR
+    $acr = $null
+    $acrExists = $false
+    
+    try {
+        $acrShowOutput = az acr show --name $CONFIG.ContainerRegistry --output json 2>&1 | Out-String
+        if ($LASTEXITCODE -eq 0 -and $acrShowOutput) {
+            $acr = $acrShowOutput | ConvertFrom-Json
+            $acrExists = $true
+            Write-Log -Message "ACR existe: $($acr.loginServer)" -Level "DEBUG"
         }
     }
-    else {
-        $acr = $null
+    catch {
+        Write-Log -Message "ACR non trouve ou erreur: $($_.Exception.Message)" -Level "DEBUG"
     }
     
-    if (-not $acr) {
-        Write-Log -Message "Creation ACR: $($CONFIG.ContainerRegistry)" -Level "INFO"
+    if (-not $acrExists) {
+        Write-Log -Message "Tentative de creation ACR: $($CONFIG.ContainerRegistry)" -Level "INFO"
         Write-Host "    [INFO] Creation du Container Registry..." -ForegroundColor Yellow
         
-        az acr create `
-            --name $CONFIG.ContainerRegistry `
-            --resource-group $CONFIG.ResourceGroup `
-            --location $CONFIG.Location `
-            --sku Basic `
-            --admin-enabled true `
-            --output none 2>&1 | Out-Null
+        # Capturer STDOUT et STDERR pour detecter AlreadyInUse
+        $acrCreateOutput = ""
+        $acrCreateError = ""
         
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "    [OK] ACR cree avec succes" -ForegroundColor Green
+        try {
+            $process = Start-Process -FilePath "az" `
+                -ArgumentList "acr", "create", "--name", $CONFIG.ContainerRegistry, "--resource-group", $CONFIG.ResourceGroup, "--location", $CONFIG.Location, "--sku", "Basic", "--admin-enabled", "true", "--output", "json" `
+                -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput "$LOG_DIR\acr_create_stdout_$TIMESTAMP.log" `
+                -RedirectStandardError "$LOG_DIR\acr_create_stderr_$TIMESTAMP.log"
+            
+            if (Test-Path "$LOG_DIR\acr_create_stdout_$TIMESTAMP.log") {
+                $acrCreateOutput = Get-Content "$LOG_DIR\acr_create_stdout_$TIMESTAMP.log" -Raw
+            }
+            if (Test-Path "$LOG_DIR\acr_create_stderr_$TIMESTAMP.log") {
+                $acrCreateError = Get-Content "$LOG_DIR\acr_create_stderr_$TIMESTAMP.log" -Raw
+            }
+            
+            $createExitCode = $process.ExitCode
+        }
+        catch {
+            $createExitCode = 1
+            $acrCreateError = $_.Exception.Message
+        }
+        
+        # Verifier si l'erreur est "AlreadyInUse" - dans ce cas, c'est OK
+        if ($createExitCode -ne 0) {
+            if ($acrCreateError -match "AlreadyInUse|already in use") {
+                Write-Log -Message "ACR existe deja (AlreadyInUse detecte), verification..." -Level "WARNING"
+                Write-Host "    [WARN] ACR existe deja dans Azure, verification..." -ForegroundColor Yellow
+                
+                # Re-verifier l'existence
+                try {
+                    $acrShowOutput = az acr show --name $CONFIG.ContainerRegistry --output json 2>&1 | Out-String
+                    if ($LASTEXITCODE -eq 0 -and $acrShowOutput) {
+                        $acr = $acrShowOutput | ConvertFrom-Json
+                        $acrExists = $true
+                        Write-Host "    [OK] ACR confirme: $($acr.loginServer)" -ForegroundColor Green
+                    }
+                    else {
+                        Write-Log -Message "ACR AlreadyInUse mais non accessible - il existe peut-etre dans un autre RG" -Level "ERROR"
+                        throw "Le nom ACR '$($CONFIG.ContainerRegistry)' est deja utilise mais non accessible. Verifiez qu'il existe dans le bon Resource Group ou choisissez un autre nom."
+                    }
+                }
+                catch {
+                    Write-Host "`n[ERROR] ACR AlreadyInUse mais verification echouee:" -ForegroundColor Red
+                    Write-Host "  $($_.Exception.Message)" -ForegroundColor Red
+                    throw
+                }
+            }
+            else {
+                Write-Host "`n[ERROR] Echec creation ACR:" -ForegroundColor Red
+                Write-Host "  $acrCreateError" -ForegroundColor Red
+                Write-Log -Message "Echec creation ACR - STDERR: $acrCreateError" -Level "ERROR"
+                if ($acrCreateOutput) {
+                    Write-Log -Message "ACR Create STDOUT: $acrCreateOutput" -Level "DEBUG"
+                }
+                throw "Echec de la creation du Container Registry. Voir logs: $LOG_DIR\acr_create_*_$TIMESTAMP.log"
+            }
         }
         else {
-            Write-Log -Message "Echec creation ACR" -Level "ERROR"
-            throw "Echec de la creation du Container Registry"
+            Write-Host "    [OK] ACR cree avec succes" -ForegroundColor Green
+            Write-Log -Message "ACR cree: $($CONFIG.ContainerRegistry)" -Level "INFO"
         }
     }
     else {
@@ -457,41 +507,91 @@ function Test-AzureResources {
     }
     
     Write-Host "  Verification App Service Plan..." -ForegroundColor Gray
-    # Supprimer completement les warnings Python
-    $ErrorActionPreference = "SilentlyContinue"
-    $planResult = az appservice plan show --name $CONFIG.AppServicePlan --resource-group $CONFIG.ResourceGroup --output json 2>&1 | Out-String
-    $ErrorActionPreference = "Stop"
+    Write-Log -Message "Verification App Service Plan: $($CONFIG.AppServicePlan)" -Level "DEBUG"
     
-    if ($planResult) {
-        try {
-            $plan = $planResult | ConvertFrom-Json
-        }
-        catch {
-            $plan = $null
+    # Verification robuste de l'existence du plan
+    $plan = $null
+    $planExists = $false
+    
+    try {
+        $planShowOutput = az appservice plan show --name $CONFIG.AppServicePlan --resource-group $CONFIG.ResourceGroup --output json 2>&1 | Out-String
+        if ($LASTEXITCODE -eq 0 -and $planShowOutput) {
+            $plan = $planShowOutput | ConvertFrom-Json
+            $planExists = $true
+            Write-Log -Message "App Service Plan existe: $($plan.name) (SKU: $($plan.sku.name))" -Level "DEBUG"
         }
     }
-    else {
-        $plan = $null
+    catch {
+        Write-Log -Message "App Service Plan non trouve ou erreur: $($_.Exception.Message)" -Level "DEBUG"
     }
     
-    if (-not $plan) {
-        Write-Log -Message "Creation App Service Plan: $($CONFIG.AppServicePlan)" -Level "INFO"
+    if (-not $planExists) {
+        Write-Log -Message "Tentative de creation App Service Plan: $($CONFIG.AppServicePlan)" -Level "INFO"
         Write-Host "    [INFO] Creation de l'App Service Plan..." -ForegroundColor Yellow
         
-        az appservice plan create `
-            --name $CONFIG.AppServicePlan `
-            --resource-group $CONFIG.ResourceGroup `
-            --location $CONFIG.Location `
-            --is-linux `
-            --sku $CONFIG.SKU `
-            --output none 2>&1 | Out-Null
+        # Capturer STDOUT et STDERR pour detecter Conflict
+        $planCreateOutput = ""
+        $planCreateError = ""
         
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "    [OK] App Service Plan cree (SKU: $($CONFIG.SKU))" -ForegroundColor Green
+        try {
+            $process = Start-Process -FilePath "az" `
+                -ArgumentList "appservice", "plan", "create", "--name", $CONFIG.AppServicePlan, "--resource-group", $CONFIG.ResourceGroup, "--location", $CONFIG.Location, "--is-linux", "--sku", $CONFIG.SKU, "--output", "json" `
+                -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput "$LOG_DIR\plan_create_stdout_$TIMESTAMP.log" `
+                -RedirectStandardError "$LOG_DIR\plan_create_stderr_$TIMESTAMP.log"
+            
+            if (Test-Path "$LOG_DIR\plan_create_stdout_$TIMESTAMP.log") {
+                $planCreateOutput = Get-Content "$LOG_DIR\plan_create_stdout_$TIMESTAMP.log" -Raw
+            }
+            if (Test-Path "$LOG_DIR\plan_create_stderr_$TIMESTAMP.log") {
+                $planCreateError = Get-Content "$LOG_DIR\plan_create_stderr_$TIMESTAMP.log" -Raw
+            }
+            
+            $createExitCode = $process.ExitCode
+        }
+        catch {
+            $createExitCode = 1
+            $planCreateError = $_.Exception.Message
+        }
+        
+        # Verifier si l'erreur est "Conflict" ou "AlreadyExists" - dans ce cas, c'est OK
+        if ($createExitCode -ne 0) {
+            if ($planCreateError -match "Conflict|AlreadyExists|already exists") {
+                Write-Log -Message "App Service Plan existe deja (Conflict detecte), verification..." -Level "WARNING"
+                Write-Host "    [WARN] App Service Plan existe deja, verification..." -ForegroundColor Yellow
+                
+                # Re-verifier l'existence
+                try {
+                    $planShowOutput = az appservice plan show --name $CONFIG.AppServicePlan --resource-group $CONFIG.ResourceGroup --output json 2>&1 | Out-String
+                    if ($LASTEXITCODE -eq 0 -and $planShowOutput) {
+                        $plan = $planShowOutput | ConvertFrom-Json
+                        $planExists = $true
+                        Write-Host "    [OK] App Service Plan confirme: $($plan.name) (SKU: $($plan.sku.name))" -ForegroundColor Green
+                    }
+                    else {
+                        Write-Log -Message "App Service Plan Conflict mais non accessible" -Level "ERROR"
+                        throw "Le nom App Service Plan '$($CONFIG.AppServicePlan)' existe mais n'est pas accessible. Verifiez qu'il existe dans le bon Resource Group."
+                    }
+                }
+                catch {
+                    Write-Host "`n[ERROR] App Service Plan Conflict mais verification echouee:" -ForegroundColor Red
+                    Write-Host "  $($_.Exception.Message)" -ForegroundColor Red
+                    throw
+                }
+            }
+            else {
+                Write-Host "`n[ERROR] Echec creation App Service Plan:" -ForegroundColor Red
+                Write-Host "  $planCreateError" -ForegroundColor Red
+                Write-Log -Message "Echec creation App Service Plan - STDERR: $planCreateError" -Level "ERROR"
+                if ($planCreateOutput) {
+                    Write-Log -Message "Plan Create STDOUT: $planCreateOutput" -Level "DEBUG"
+                }
+                throw "Echec de la creation de l'App Service Plan. Voir logs: $LOG_DIR\plan_create_*_$TIMESTAMP.log"
+            }
         }
         else {
-            Write-Log -Message "Echec creation App Service Plan" -Level "ERROR"
-            throw "Echec de la creation de l'App Service Plan"
+            Write-Host "    [OK] App Service Plan cree (SKU: $($CONFIG.SKU))" -ForegroundColor Green
+            Write-Log -Message "App Service Plan cree: $($CONFIG.AppServicePlan)" -Level "INFO"
         }
     }
     else {
@@ -523,47 +623,175 @@ function New-DockerImage {
         
         Write-Log -Message "Build de l'image Docker localement" -Level "INFO" -Context @{ Image = $imageFull }
         
-        # Supprimer les messages informatifs Docker
-        $ErrorActionPreference = "SilentlyContinue"
-        docker build -t $imageFull -f $CONFIG.DockerfilePath . 2>&1 | Out-Null
-        $buildResult = $LASTEXITCODE
-        $ErrorActionPreference = "Stop"
+        # Validation pre-build
+        if (-not (Test-Path $CONFIG.DockerfilePath)) {
+            Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Dockerfile introuvable: $($CONFIG.DockerfilePath)"
+            throw "Dockerfile introuvable: $($CONFIG.DockerfilePath)"
+        }
+        
+        Write-Log -Message "Validation pre-build OK - Dockerfile: $($CONFIG.DockerfilePath)" -Level "DEBUG"
+        Write-Log -Message "Commande Docker: docker build -t $imageFull -f $($CONFIG.DockerfilePath) ." -Level "DEBUG"
+        
+        # Capture complete de la sortie pour debugging
+        $dockerOutput = @()
+        $dockerErrors = @()
+        
+        try {
+            $process = Start-Process -FilePath "docker" `
+                -ArgumentList "build", "-t", $imageFull, "-f", $CONFIG.DockerfilePath, "." `
+                -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput "$LOG_DIR\docker_build_stdout_$TIMESTAMP.log" `
+                -RedirectStandardError "$LOG_DIR\docker_build_stderr_$TIMESTAMP.log"
+            
+            $buildResult = $process.ExitCode
+            
+            # Lire les logs pour affichage en cas d'erreur (forcer en tableau)
+            if (Test-Path "$LOG_DIR\docker_build_stdout_$TIMESTAMP.log") {
+                $dockerOutput = @(Get-Content "$LOG_DIR\docker_build_stdout_$TIMESTAMP.log")
+            }
+            if (Test-Path "$LOG_DIR\docker_build_stderr_$TIMESTAMP.log") {
+                $dockerErrors = @(Get-Content "$LOG_DIR\docker_build_stderr_$TIMESTAMP.log")
+            }
+        }
+        catch {
+            Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Erreur lors de l'execution docker build: $($_.Exception.Message)"
+            throw "Erreur lors de l'execution docker build: $($_.Exception.Message)"
+        }
         
         if ($buildResult -ne 0) {
-            Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Echec du build Docker"
-            throw "Echec du build Docker"
+            Write-Log -Message "Build Docker echoue avec code $buildResult" -Level "ERROR"
+            
+            # Afficher les dernieres lignes de sortie pour debug
+            Write-Host "`n[ERROR] Build Docker echoue - Dernieres lignes de sortie:" -ForegroundColor Red
+            if ($dockerOutput.Count -gt 0) {
+                Write-Host "=== STDOUT (dernieres 20 lignes) ===" -ForegroundColor Yellow
+                $dockerOutput | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+            }
+            if ($dockerErrors.Count -gt 0) {
+                Write-Host "=== STDERR (dernieres 20 lignes) ===" -ForegroundColor Yellow
+                $dockerErrors | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+            }
+            Write-Host "`nLogs complets disponibles:" -ForegroundColor Yellow
+            Write-Host "  STDOUT: $LOG_DIR\docker_build_stdout_$TIMESTAMP.log" -ForegroundColor Cyan
+            Write-Host "  STDERR: $LOG_DIR\docker_build_stderr_$TIMESTAMP.log" -ForegroundColor Cyan
+            
+            Write-Log -Message "Docker build STDOUT (dernieres lignes): $($dockerOutput | Select-Object -Last 10 | Out-String)" -Level "ERROR"
+            Write-Log -Message "Docker build STDERR: $($dockerErrors | Out-String)" -Level "ERROR"
+            
+            Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Echec du build Docker (code $buildResult)"
+            throw "Echec du build Docker (code $buildResult). Voir logs: $LOG_DIR\docker_build_*_$TIMESTAMP.log"
         }
+        
+        Write-Log -Message "Build Docker reussi" -Level "INFO"
         
         Write-ProgressBar -Activity "Build Docker" -Current 1 -Total 3 -Status "Image construite"
         Write-Host "    [OK] Image Docker construite" -ForegroundColor Green
         
         Write-Host "  Connexion a Azure Container Registry..." -ForegroundColor Gray
-        # Supprimer les messages informatifs Azure CLI
-        $ErrorActionPreference = "SilentlyContinue"
-        az acr login --name $CONFIG.ContainerRegistry 2>&1 | Out-Null
-        $loginResult = $LASTEXITCODE
-        $ErrorActionPreference = "Stop"
+        Write-Log -Message "Tentative de connexion ACR: $($CONFIG.ContainerRegistry)" -Level "DEBUG"
+        
+        $acrLoginOutput = @()
+        $acrLoginErrors = @()
+        
+        try {
+            $process = Start-Process -FilePath "az" `
+                -ArgumentList "acr", "login", "--name", $CONFIG.ContainerRegistry `
+                -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput "$LOG_DIR\acr_login_stdout_$TIMESTAMP.log" `
+                -RedirectStandardError "$LOG_DIR\acr_login_stderr_$TIMESTAMP.log"
+            
+            $loginResult = $process.ExitCode
+            
+            if (Test-Path "$LOG_DIR\acr_login_stdout_$TIMESTAMP.log") {
+                $acrLoginOutput = @(Get-Content "$LOG_DIR\acr_login_stdout_$TIMESTAMP.log")
+            }
+            if (Test-Path "$LOG_DIR\acr_login_stderr_$TIMESTAMP.log") {
+                $acrLoginErrors = @(Get-Content "$LOG_DIR\acr_login_stderr_$TIMESTAMP.log")
+            }
+        }
+        catch {
+            Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Erreur lors de l'execution az acr login: $($_.Exception.Message)"
+            throw "Erreur lors de l'execution az acr login: $($_.Exception.Message)"
+        }
         
         if ($loginResult -ne 0) {
-            Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Echec login ACR"
-            throw "Echec de la connexion ACR"
+            Write-Log -Message "ACR Login echoue avec code $loginResult" -Level "ERROR"
+            
+            Write-Host "`n[ERROR] Connexion ACR echouee:" -ForegroundColor Red
+            if ($acrLoginOutput.Count -gt 0) {
+                Write-Host "=== STDOUT ===" -ForegroundColor Yellow
+                $acrLoginOutput | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+            }
+            if ($acrLoginErrors.Count -gt 0) {
+                Write-Host "=== STDERR ===" -ForegroundColor Yellow
+                $acrLoginErrors | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+            }
+            Write-Host "`nLogs complets disponibles:" -ForegroundColor Yellow
+            Write-Host "  STDOUT: $LOG_DIR\acr_login_stdout_$TIMESTAMP.log" -ForegroundColor Cyan
+            Write-Host "  STDERR: $LOG_DIR\acr_login_stderr_$TIMESTAMP.log" -ForegroundColor Cyan
+            
+            Write-Log -Message "ACR Login STDERR: $($acrLoginErrors | Out-String)" -Level "ERROR"
+            
+            Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Echec login ACR (code $loginResult)"
+            throw "Echec de la connexion ACR (code $loginResult). Verifiez les credentials et l'acces reseau."
         }
+        
+        Write-Log -Message "ACR Login reussi" -Level "INFO"
         
         Write-ProgressBar -Activity "Build Docker" -Current 2 -Total 3 -Status "Login ACR reussi"
         
         Write-Host "  Push de l'image vers ACR..." -ForegroundColor Gray
         Write-Log -Message "Push de l'image vers ACR" -Level "INFO" -Context @{ Image = $imageFull }
+        Write-Log -Message "Commande Docker: docker push $imageFull" -Level "DEBUG"
         
-        # Supprimer les messages informatifs Docker
-        $ErrorActionPreference = "SilentlyContinue"
-        docker push $imageFull 2>&1 | Out-Null
-        $pushResult = $LASTEXITCODE
-        $ErrorActionPreference = "Stop"
+        $dockerPushOutput = @()
+        $dockerPushErrors = @()
+        
+        try {
+            $process = Start-Process -FilePath "docker" `
+                -ArgumentList "push", $imageFull `
+                -NoNewWindow -Wait -PassThru `
+                -RedirectStandardOutput "$LOG_DIR\docker_push_stdout_$TIMESTAMP.log" `
+                -RedirectStandardError "$LOG_DIR\docker_push_stderr_$TIMESTAMP.log"
+            
+            $pushResult = $process.ExitCode
+            
+            if (Test-Path "$LOG_DIR\docker_push_stdout_$TIMESTAMP.log") {
+                $dockerPushOutput = @(Get-Content "$LOG_DIR\docker_push_stdout_$TIMESTAMP.log")
+            }
+            if (Test-Path "$LOG_DIR\docker_push_stderr_$TIMESTAMP.log") {
+                $dockerPushErrors = @(Get-Content "$LOG_DIR\docker_push_stderr_$TIMESTAMP.log")
+            }
+        }
+        catch {
+            Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Erreur lors de l'execution docker push: $($_.Exception.Message)"
+            throw "Erreur lors de l'execution docker push: $($_.Exception.Message)"
+        }
         
         if ($pushResult -ne 0) {
-            Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Echec push Docker"
-            throw "Echec du push vers ACR"
+            Write-Log -Message "Docker push echoue avec code $pushResult" -Level "ERROR"
+            
+            Write-Host "`n[ERROR] Push Docker echoue:" -ForegroundColor Red
+            if ($dockerPushOutput.Count -gt 0) {
+                Write-Host "=== STDOUT (dernieres 20 lignes) ===" -ForegroundColor Yellow
+                $dockerPushOutput | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Gray }
+            }
+            if ($dockerPushErrors.Count -gt 0) {
+                Write-Host "=== STDERR (dernieres 20 lignes) ===" -ForegroundColor Yellow
+                $dockerPushErrors | Select-Object -Last 20 | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+            }
+            Write-Host "`nLogs complets disponibles:" -ForegroundColor Yellow
+            Write-Host "  STDOUT: $LOG_DIR\docker_push_stdout_$TIMESTAMP.log" -ForegroundColor Cyan
+            Write-Host "  STDERR: $LOG_DIR\docker_push_stderr_$TIMESTAMP.log" -ForegroundColor Cyan
+            
+            Write-Log -Message "Docker push STDOUT (dernieres lignes): $($dockerPushOutput | Select-Object -Last 10 | Out-String)" -Level "ERROR"
+            Write-Log -Message "Docker push STDERR: $($dockerPushErrors | Out-String)" -Level "ERROR"
+            
+            Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Echec push Docker (code $pushResult)"
+            throw "Echec du push vers ACR (code $pushResult). Verifiez la connexion ACR et les credentials."
         }
+        
+        Write-Log -Message "Docker push reussi" -Level "INFO"
         
         Write-ProgressBar -Activity "Build Docker" -Current 3 -Total 3 -Status "Push termine avec succes"
         Write-Host "    [OK] Image pushee vers ACR" -ForegroundColor Green
@@ -1015,12 +1243,12 @@ function New-DeploymentReport {
         Errors        = $DEPLOYMENT_ERRORS
         Warnings      = $DEPLOYMENT_WARNINGS
         Summary       = @{
-            TotalSteps      = $DEPLOYMENT_STEPS.Count
-            SuccessfulSteps = ($DEPLOYMENT_STEPS | Where-Object { $_.Status -eq "Success" }).Count
-            FailedSteps     = ($DEPLOYMENT_STEPS | Where-Object { $_.Status -eq "Failed" }).Count
-            SkippedSteps    = ($DEPLOYMENT_STEPS | Where-Object { $_.Status -eq "Skipped" }).Count
-            TotalErrors     = $DEPLOYMENT_ERRORS.Count
-            TotalWarnings   = $DEPLOYMENT_WARNINGS.Count
+            TotalSteps      = @($DEPLOYMENT_STEPS).Count
+            SuccessfulSteps = @($DEPLOYMENT_STEPS | Where-Object { $_.Status -eq "Success" }).Count
+            FailedSteps     = @($DEPLOYMENT_STEPS | Where-Object { $_.Status -eq "Failed" }).Count
+            SkippedSteps    = @($DEPLOYMENT_STEPS | Where-Object { $_.Status -eq "Skipped" }).Count
+            TotalErrors     = @($DEPLOYMENT_ERRORS).Count
+            TotalWarnings   = @($DEPLOYMENT_WARNINGS).Count
         }
         AppURL        = "https://$($CONFIG.AppName).azurewebsites.net"
         DocsURL       = "https://$($CONFIG.AppName).azurewebsites.net/docs"

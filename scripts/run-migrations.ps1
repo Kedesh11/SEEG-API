@@ -7,7 +7,7 @@
 
 param(
     [Parameter(Mandatory = $false)]
-    [string]$ResourceGroup = "seeg-backend-rg",
+    [string]$ResourceGroup = "seeg-rg",
     
     [Parameter(Mandatory = $false)]
     [string]$AppName = "seeg-backend-api",

@@ -89,7 +89,7 @@ COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
 # Copier le code applicatif
 COPY --chown=appuser:appuser app/ ./app/
 COPY --chown=appuser:appuser alembic.ini ./
-COPY --chown=appuser:appuser scripts/ ./scripts/
+# scripts/ exclus (pas necessaire en production, utilise uniquement pour deploiement)
 COPY --chown=appuser:appuser logging.yaml ./
 COPY --chown=appuser:appuser docker-entrypoint.sh ./
 
