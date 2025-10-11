@@ -53,15 +53,32 @@ LICENSE
 .env
 .env.*
 !.env.example
+.env.production
+.env.local
+.env.insights
 
 # Logs
 *.log
 logs/
+logs-*/
+live-logs.txt
+api_startup_*.log*
 
 # Temporary files
 tmp/
 temp/
 *.tmp
+
+# Deployments
+deployments/
+
+# Backups and archives
+*.zip
+*.tar
+*.gz
+
+# Scripts (not needed in container)
+scripts/
 
 # Database
 *.db

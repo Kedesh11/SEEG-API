@@ -35,15 +35,31 @@ class LoginRequest(BaseModel):
 
 
 class CandidateSignupRequest(BaseModel):
-    """Schéma pour l'inscription des candidats (internes et externes)"""
+    """
+    Schéma pour l'inscription des candidats (internes et externes).
+    
+    Règles métier:
+    - Candidats EXTERNES: matricule=None, no_seeg_email=False, n'importe quel email
+    - Candidats INTERNES avec email SEEG: matricule requis, no_seeg_email=False, email @seeg-gabon.com
+    - Candidats INTERNES sans email SEEG: matricule requis, no_seeg_email=True, n'importe quel email
+    """
     email: str = Field(..., description="Adresse email")
-    password: str = Field(..., description="Mot de passe")
+    password: str = Field(..., min_length=12, description="Mot de passe (minimum 12 caractères)")
     first_name: str = Field(..., min_length=1, max_length=100, description="Prénom")
     last_name: str = Field(..., min_length=1, max_length=100, description="Nom")
-    matricule: Optional[int] = Field(None, description="Matricule SEEG (obligatoire pour candidats INTERNES, null pour EXTERNES)")
     phone: Optional[str] = Field(None, max_length=20, description="Numéro de téléphone")
-    date_of_birth: date = Field(..., description="Date de naissance (obligatoire pour les candidats)")
-    sexe: str = Field(..., description="Sexe (obligatoire pour les candidats)")
+    date_of_birth: date = Field(..., description="Date de naissance")
+    sexe: str = Field(..., min_length=1, max_length=1, description="Sexe: M (Homme) ou F (Femme)")
+    
+    # Champs pour déterminer le type de candidat
+    candidate_status: str = Field(..., description="Type de candidat: 'interne' (employé SEEG) ou 'externe'")
+    matricule: Optional[int] = Field(None, description="Matricule SEEG (OBLIGATOIRE pour candidats internes, NULL pour externes)")
+    no_seeg_email: bool = Field(default=False, description="Candidat interne sans email professionnel @seeg-gabon.com")
+    
+    # Champs optionnels de profil
+    adresse: Optional[str] = Field(None, description="Adresse complète")
+    poste_actuel: Optional[str] = Field(None, description="Poste actuel (optionnel)")
+    annees_experience: Optional[int] = Field(None, ge=0, description="Années d'expérience professionnelle")
 
     # Validation de l'email
     @field_validator('email')
@@ -62,18 +78,39 @@ class CandidateSignupRequest(BaseModel):
     @classmethod
     def validate_date_of_birth(cls, v):
         return Validators.validate_date_of_birth(v)
+    
+    # Validation du sexe
+    @field_validator('sexe')
+    @classmethod
+    def validate_sexe(cls, v):
+        if v not in ['M', 'F']:
+            raise ValueError("Le sexe doit être 'M' (Homme) ou 'F' (Femme)")
+        return v
+    
+    # Validation du candidate_status
+    @field_validator('candidate_status')
+    @classmethod
+    def validate_candidate_status(cls, v):
+        if v not in ['interne', 'externe']:
+            raise ValueError("Le candidate_status doit être 'interne' ou 'externe'")
+        return v
 
     class Config:
         json_schema_extra = {
             "example": {
-                "email": "candidat@seeg.ga",
-                "password": "Password#2025",
+                "email": "jean.dupont@seeg-gabon.com",
+                "password": "Password#2025!Secure",
                 "first_name": "Jean",
                 "last_name": "Dupont",
-                "matricule": 123456,
                 "phone": "+24106223344",
                 "date_of_birth": "1990-05-15",
-                "sexe": "M"
+                "sexe": "M",
+                "candidate_status": "interne",
+                "matricule": 123456,
+                "no_seeg_email": False,
+                "adresse": "123 Rue de la Liberté, Libreville",
+                "poste_actuel": "Technicien Réseau",
+                "annees_experience": 5
             }
         }
 

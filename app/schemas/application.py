@@ -14,6 +14,34 @@ class ApplicationBase(BaseModel):
     reference_contacts: Optional[str] = None
     availability_start: Optional[datetime] = None
     
+    # Champ de qualification pour candidats internes
+    has_been_manager: bool = Field(
+        default=False,
+        description="Indique si le candidat interne a déjà occupé un poste de chef/manager (obligatoire pour candidats internes)"
+    )
+    
+    # Champs de recommandation pour candidats externes
+    ref_entreprise: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Nom de l'entreprise/organisation recommandante (obligatoire pour candidats externes)"
+    )
+    ref_fullname: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Nom complet du référent (obligatoire pour candidats externes)"
+    )
+    ref_mail: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Adresse e-mail du référent (obligatoire pour candidats externes)"
+    )
+    ref_contact: Optional[str] = Field(
+        None,
+        max_length=50,
+        description="Numéro de téléphone du référent (obligatoire pour candidats externes)"
+    )
+    
     # MTP Questions
     mtp_answers: Optional[Dict[str, Any]] = None
     mtp_metier_q1: Optional[str] = None
@@ -32,7 +60,12 @@ class ApplicationBase(BaseModel):
                 "status": "pending",
                 "reference_contacts": "Mme X (+241...), M. Y (+241...)",
                 "availability_start": "2025-10-01T00:00:00Z",
-                "mtp_answers": {"q1": "réponse"}
+                "mtp_answers": {"q1": "réponse"},
+                "has_been_manager": False,
+                "ref_entreprise": "Entreprise ABC",
+                "ref_fullname": "Jean Dupont",
+                "ref_mail": "jean.dupont@abc.com",
+                "ref_contact": "+241 01 02 03 04"
             }
         }
 
@@ -55,6 +88,11 @@ class ApplicationUpdate(BaseModel):
     status: Optional[str] = None
     reference_contacts: Optional[str] = None
     availability_start: Optional[datetime] = None
+    has_been_manager: Optional[bool] = None
+    ref_entreprise: Optional[str] = Field(None, max_length=255)
+    ref_fullname: Optional[str] = Field(None, max_length=255)
+    ref_mail: Optional[str] = Field(None, max_length=255)
+    ref_contact: Optional[str] = Field(None, max_length=50)
     mtp_answers: Optional[Dict[str, Any]] = None
     mtp_metier_q1: Optional[str] = None
     mtp_metier_q2: Optional[str] = None
@@ -70,7 +108,12 @@ class ApplicationUpdate(BaseModel):
         json_schema_extra = {
             "example": {
                 "status": "reviewed",
-                "reference_contacts": "M. Kassa (+241...)"
+                "reference_contacts": "M. Kassa (+241...)",
+                "has_been_manager": True,
+                "ref_entreprise": "Entreprise XYZ",
+                "ref_fullname": "Marie Martin",
+                "ref_mail": "marie.martin@xyz.com",
+                "ref_contact": "+241 05 06 07 08"
             }
         }
 

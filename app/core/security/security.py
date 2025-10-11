@@ -3,7 +3,7 @@ Gestion de la sécurité et de l'authentification
 """
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
-from passlib.context import CryptContext
+import bcrypt
 from jose import JWTError, jwt
 import structlog
 
@@ -11,8 +11,8 @@ from app.core.config.config import settings
 
 logger = structlog.get_logger(__name__)
 
-# Configuration du hachage des mots de passe
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Configuration du nombre de rounds pour bcrypt (12 est un bon équilibre sécurité/performance)
+BCRYPT_ROUNDS = 12
 
 
 class PasswordManager:
@@ -21,20 +21,33 @@ class PasswordManager:
     @staticmethod
     def hash_password(password: str) -> str:
         """
-        Hacher un mot de passe
+        Hacher un mot de passe avec bcrypt
         
         Args:
             password: Mot de passe en clair
             
         Returns:
             str: Mot de passe haché
+            
+        Note:
+            bcrypt a une limite de 72 bytes. Le mot de passe est automatiquement tronqué.
         """
-        return pwd_context.hash(password)
+        # Convertir en bytes et tronquer à 72 bytes si nécessaire
+        password_bytes = password.encode('utf-8')
+        if len(password_bytes) > 72:
+            password_bytes = password_bytes[:72]
+        
+        # Générer le hash avec bcrypt
+        salt = bcrypt.gensalt(rounds=BCRYPT_ROUNDS)
+        hashed = bcrypt.hashpw(password_bytes, salt)
+        
+        # Retourner en string
+        return hashed.decode('utf-8')
     
     @staticmethod
     def verify_password(plain_password: str, hashed_password: str) -> bool:
         """
-        Vérifier un mot de passe
+        Vérifier un mot de passe avec bcrypt
         
         Args:
             plain_password: Mot de passe en clair
@@ -42,8 +55,18 @@ class PasswordManager:
             
         Returns:
             bool: True si le mot de passe est correct
+            
+        Note:
+            bcrypt a une limite de 72 bytes. Le mot de passe est automatiquement tronqué.
         """
-        return pwd_context.verify(plain_password, hashed_password)
+        # Convertir en bytes et tronquer à 72 bytes si nécessaire
+        password_bytes = plain_password.encode('utf-8')
+        if len(password_bytes) > 72:
+            password_bytes = password_bytes[:72]
+        
+        # Vérifier le hash
+        hashed_bytes = hashed_password.encode('utf-8')
+        return bcrypt.checkpw(password_bytes, hashed_bytes)
 
 
 class TokenManager:
@@ -277,9 +300,9 @@ def create_password_reset_token(email: str) -> str:
     Returns:
         str: Token de réinitialisation
     """
-    data = {"email": email, "type": "password_reset"}
+    data: Dict[str, Any] = {"email": email, "type": "password_reset"}
     expire = datetime.now(timezone.utc) + timedelta(hours=1)  # Token valide 1 heure
-    data.update({"exp": expire})
+    data["exp"] = expire
     
     return jwt.encode(data, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
@@ -343,8 +366,8 @@ async def get_current_user(
         if payload is None:
             raise credentials_exception
         
-        user_id: str = payload.get("sub")
-        if user_id is None:
+        user_id = payload.get("sub")
+        if user_id is None or not isinstance(user_id, str):
             raise credentials_exception
             
     except JWTError:

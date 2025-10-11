@@ -485,3 +485,625 @@ L'Ã©quipe RH - SEEG
             "limit": limit,
             "has_more": skip + len(logs) < total_count
         }
+    
+    # ========================================================================
+    # TEMPLATES EMAIL - SYSTÈME D'AUTHENTIFICATION v2.0
+    # ========================================================================
+    
+    def _get_salutation(self, sexe: Optional[str], first_name: str, last_name: str) -> str:
+        """
+        Générer la salutation appropriée selon le sexe.
+        
+        Args:
+            sexe: 'M' (Homme) ou 'F' (Femme)
+            first_name: Prénom
+            last_name: Nom
+            
+        Returns:
+            str: "Monsieur Jean Dupont" ou "Madame Marie Martin"
+        """
+        if sexe == 'M':
+            return f"Monsieur {first_name} {last_name}"
+        elif sexe == 'F':
+            return f"Madame {first_name} {last_name}"
+        else:
+            return f"{first_name} {last_name}"
+    
+    async def send_welcome_email(
+        self,
+        to_email: str,
+        first_name: str,
+        last_name: str,
+        sexe: Optional[str] = None
+    ) -> bool:
+        """
+        Email 1 : Bienvenue sur la plateforme (pour candidats avec statut='actif').
+        
+        Envoyé à :
+        - Candidats EXTERNES après inscription
+        - Candidats INTERNES avec email @seeg-gabon.com après inscription
+        
+        Args:
+            to_email: Email du candidat
+            first_name: Prénom
+            last_name: Nom
+            sexe: 'M' ou 'F' pour personnaliser la salutation
+        """
+        salutation = self._get_salutation(sexe, first_name, last_name)
+        
+        subject = "Bienvenue sur OneHCM - SEEG Talent Source"
+        
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: linear-gradient(135deg, #00C7B7 0%, #0078D4 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }}
+        .info-box {{ background: #E3F2FD; border-left: 4px solid #0078D4; padding: 15px; margin: 20px 0; border-radius: 4px; }}
+        .button {{ display: inline-block; background: #00C7B7; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
+        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; }}
+        ul {{ line-height: 2; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Bienvenue sur OneHCM</h1>
+            <p>SEEG Talent Source</p>
+        </div>
+        <div class="content">
+            <p><strong>{salutation},</strong></p>
+            
+            <p>Bienvenue sur la plateforme <strong>OneHCM - SEEG Talent Source</strong> !</p>
+            
+            <p>Votre compte a été créé avec succès. Vous pouvez désormais :</p>
+            <ul>
+                <li>Consulter les offres d'emploi disponibles</li>
+                <li>Postuler aux postes qui vous intéressent</li>
+                <li>Suivre l'état de vos candidatures</li>
+                <li>Mettre à jour votre profil</li>
+            </ul>
+            
+            <p>Pour vous connecter, rendez-vous sur :</p>
+            <p style="text-align: center;">
+                <a href="{settings.PUBLIC_APP_URL}" class="button">Se connecter à OneHCM</a>
+            </p>
+            
+            <div class="info-box">
+                <p><strong>📧 Besoin d'aide ?</strong></p>
+                <p>Contactez-nous : <a href="mailto:support@seeg-talentsource.com">support@seeg-talentsource.com</a></p>
+            </div>
+            
+            <p>Cordialement,<br>
+            <strong>L'équipe OneHCM - SEEG Talent Source</strong><br>
+            <a href="{settings.PUBLIC_APP_URL}">{settings.PUBLIC_APP_URL}</a></p>
+        </div>
+        <div class="footer">
+            <p>&copy; 2025 SEEG - Société d'Énergie et d'Eau du Gabon</p>
+            <p>OneHCM - Système de Gestion des Ressources Humaines</p>
+        </div>
+    </div>
+</body>
+</html>
+        """
+        
+        plain_body = f"""
+{salutation},
+
+Bienvenue sur la plateforme OneHCM - SEEG Talent Source !
+
+Votre compte a été créé avec succès. Vous pouvez désormais :
+- Consulter les offres d'emploi disponibles
+- Postuler aux postes qui vous intéressent
+- Suivre l'état de vos candidatures
+- Mettre à jour votre profil
+
+Pour vous connecter, rendez-vous sur :
+{settings.PUBLIC_APP_URL}
+
+📧 Besoin d'aide ?
+Contactez-nous : support@seeg-talentsource.com
+
+Cordialement,
+L'équipe OneHCM - SEEG Talent Source
+{settings.PUBLIC_APP_URL}
+        """
+        
+        try:
+            await self.send_email(
+                to=to_email,
+                subject=subject,
+                body=plain_body,
+                html_body=html_body
+            )
+            logger.info("Email de bienvenue envoyé", to=to_email, name=f"{first_name} {last_name}")
+            return True
+        except Exception as e:
+            logger.error("Erreur envoi email bienvenue", to=to_email, error=str(e))
+            return False
+    
+    async def send_access_request_pending_email(
+        self,
+        to_email: str,
+        first_name: str,
+        last_name: str,
+        sexe: Optional[str] = None
+    ) -> bool:
+        """
+        Email 2 : Demande d'accès en cours de traitement.
+        
+        Envoyé aux candidats internes sans email @seeg-gabon.com.
+        Leur compte est en attente de validation par un recruteur.
+        
+        Args:
+            to_email: Email du candidat
+            first_name: Prénom
+            last_name: Nom
+            sexe: 'M' ou 'F'
+        """
+        salutation = self._get_salutation(sexe, first_name, last_name)
+        
+        subject = "Demande d'Accès en Cours de Traitement - OneHCM"
+        
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }}
+        .warning-box {{ background: #FFF3E0; border-left: 4px solid #FF9800; padding: 15px; margin: 20px 0; border-radius: 4px; }}
+        .info-box {{ background: #E3F2FD; border-left: 4px solid #0078D4; padding: 15px; margin: 20px 0; border-radius: 4px; }}
+        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⏳ Demande d'Accès en Cours de Traitement</h1>
+        </div>
+        <div class="content">
+            <p><strong>{salutation},</strong></p>
+            
+            <p>Votre demande d'accès à la plateforme <strong>OneHCM - SEEG Talent Source</strong> a bien été enregistrée.</p>
+            
+            <div class="warning-box">
+                <p><strong>⏳ Statut : En attente de validation</strong></p>
+                <p>Notre équipe va examiner votre demande et vous recevrez un email de confirmation une fois votre accès validé.</p>
+                <p>Cela peut prendre quelques jours ouvrables.</p>
+            </div>
+            
+            <div class="info-box">
+                <p><strong>📞 Questions ?</strong></p>
+                <p>Contact : <a href="mailto:support@seeg-talentsource.com">support@seeg-talentsource.com</a></p>
+            </div>
+            
+            <p>Cordialement,<br>
+            <strong>L'équipe OneHCM - SEEG Talent Source</strong><br>
+            <a href="{settings.PUBLIC_APP_URL}">{settings.PUBLIC_APP_URL}</a></p>
+        </div>
+        <div class="footer">
+            <p>&copy; 2025 SEEG - Société d'Énergie et d'Eau du Gabon</p>
+        </div>
+    </div>
+</body>
+</html>
+        """
+        
+        plain_body = f"""
+{salutation},
+
+Votre demande d'accès à la plateforme OneHCM - SEEG Talent Source a bien été enregistrée.
+
+⏳ STATUT : EN ATTENTE DE VALIDATION
+
+Notre équipe va examiner votre demande et vous recevrez un email de confirmation 
+une fois votre accès validé. Cela peut prendre quelques jours ouvrables.
+
+📞 Questions ?
+Contact : support@seeg-talentsource.com
+
+Cordialement,
+L'équipe OneHCM - SEEG Talent Source
+{settings.PUBLIC_APP_URL}
+        """
+        
+        try:
+            await self.send_email(
+                to=to_email,
+                subject=subject,
+                body=plain_body,
+                html_body=html_body
+            )
+            logger.info("Email demande en attente envoyé", to=to_email, name=f"{first_name} {last_name}")
+            return True
+        except Exception as e:
+            logger.error("Erreur envoi email demande en attente", to=to_email, error=str(e))
+            return False
+    
+    async def send_access_request_notification_to_admin(
+        self,
+        first_name: str,
+        last_name: str,
+        email: str,
+        phone: Optional[str],
+        matricule: Optional[str],
+        date_of_birth: Optional[str],
+        sexe: Optional[str],
+        adresse: Optional[str]
+    ) -> bool:
+        """
+        Email 3 : Notification admin - Nouvelle demande d'accès.
+        
+        Envoyé à support@seeg-talentsource.com quand un candidat interne 
+        sans email SEEG s'inscrit.
+        
+        Args:
+            first_name: Prénom du candidat
+            last_name: Nom du candidat
+            email: Email du candidat
+            phone: Téléphone
+            matricule: Matricule SEEG
+            date_of_birth: Date de naissance
+            sexe: Sexe (M/F)
+            adresse: Adresse
+        """
+        sexe_label = "Homme" if sexe == 'M' else ("Femme" if sexe == 'F' else "Non précisé")
+        
+        subject = "🔔 Nouvelle Demande d'Accès - OneHCM"
+        
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: linear-gradient(135deg, #0078D4 0%, #00C7B7 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }}
+        .info-card {{ background: white; border: 1px solid #ddd; padding: 20px; margin: 20px 0; border-radius: 6px; }}
+        .info-row {{ display: flex; padding: 8px 0; border-bottom: 1px solid #eee; }}
+        .info-label {{ font-weight: bold; min-width: 150px; color: #555; }}
+        .info-value {{ color: #333; }}
+        .button {{ display: inline-block; background: #00C7B7; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; }}
+        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔔 Nouvelle Demande d'Accès</h1>
+        </div>
+        <div class="content">
+            <p>Une nouvelle demande d'accès à la plateforme a été enregistrée.</p>
+            
+            <div class="info-card">
+                <h3>📋 Informations du Candidat</h3>
+                <div class="info-row">
+                    <div class="info-label">Nom complet :</div>
+                    <div class="info-value">{first_name} {last_name}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Email :</div>
+                    <div class="info-value">{email}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Téléphone :</div>
+                    <div class="info-value">{phone or 'Non renseigné'}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Matricule SEEG :</div>
+                    <div class="info-value"><strong>{matricule}</strong></div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Date de naissance :</div>
+                    <div class="info-value">{date_of_birth or 'Non renseignée'}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Sexe :</div>
+                    <div class="info-value">{sexe_label}</div>
+                </div>
+                <div class="info-row">
+                    <div class="info-label">Adresse :</div>
+                    <div class="info-value">{adresse or 'Non renseignée'}</div>
+                </div>
+            </div>
+            
+            <p><strong>Type de demande :</strong> Candidat interne sans email professionnel SEEG</p>
+            <p><strong>Date de la demande :</strong> {datetime.now(timezone.utc).strftime('%d/%m/%Y à %H:%M')}</p>
+            
+            <p style="text-align: center;">
+                <a href="{settings.PUBLIC_APP_URL}/recruiter/access-requests" class="button">
+                    Accéder au Dashboard Recruteur
+                </a>
+            </p>
+            
+            <p>Cordialement,<br>
+            <strong>Système OneHCM - SEEG Talent Source</strong></p>
+        </div>
+        <div class="footer">
+            <p>Email automatique - Ne pas répondre</p>
+        </div>
+    </div>
+</body>
+</html>
+        """
+        
+        plain_body = f"""
+🔔 NOUVELLE DEMANDE D'ACCÈS
+
+Une nouvelle demande d'accès à la plateforme a été enregistrée.
+
+INFORMATIONS DU CANDIDAT
+------------------------
+Nom complet : {first_name} {last_name}
+Email : {email}
+Téléphone : {phone or 'Non renseigné'}
+Matricule SEEG : {matricule}
+Date de naissance : {date_of_birth or 'Non renseignée'}
+Sexe : {sexe_label}
+Adresse : {adresse or 'Non renseignée'}
+
+Type de demande : Candidat interne sans email professionnel SEEG
+Date de la demande : {datetime.now(timezone.utc).strftime('%d/%m/%Y à %H:%M')}
+
+Accéder au Dashboard Recruteur :
+{settings.PUBLIC_APP_URL}/recruiter/access-requests
+
+Cordialement,
+Système OneHCM - SEEG Talent Source
+        """
+        
+        admin_email = "support@seeg-talentsource.com"
+        
+        try:
+            await self.send_email(
+                to=admin_email,
+                subject=subject,
+                body=plain_body,
+                html_body=html_body
+            )
+            logger.info("Email notification admin envoyé", 
+                       to=admin_email, 
+                       candidate=f"{first_name} {last_name}",
+                       matricule=matricule)
+            return True
+        except Exception as e:
+            logger.error("Erreur envoi notification admin", error=str(e))
+            return False
+    
+    async def send_access_approved_email(
+        self,
+        to_email: str,
+        first_name: str,
+        last_name: str,
+        sexe: Optional[str] = None
+    ) -> bool:
+        """
+        Email 4 : Demande d'accès approuvée.
+        
+        Envoyé au candidat quand un recruteur approuve sa demande d'accès.
+        Le compte passe de 'en_attente' à 'actif'.
+        
+        Args:
+            to_email: Email du candidat
+            first_name: Prénom
+            last_name: Nom
+            sexe: 'M' ou 'F'
+        """
+        salutation = self._get_salutation(sexe, first_name, last_name)
+        
+        subject = "✅ Accès Approuvé - OneHCM"
+        
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }}
+        .success-box {{ background: #E8F5E9; border-left: 4px solid #4CAF50; padding: 15px; margin: 20px 0; border-radius: 4px; }}
+        .info-box {{ background: #E3F2FD; border-left: 4px solid #0078D4; padding: 15px; margin: 20px 0; border-radius: 4px; }}
+        .button {{ display: inline-block; background: #4CAF50; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin: 20px 0; font-weight: bold; }}
+        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; }}
+        ul {{ line-height: 2; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>✅ Demande d'Accès Approuvée</h1>
+        </div>
+        <div class="content">
+            <p><strong>{salutation},</strong></p>
+            
+            <p><strong>Bonne nouvelle !</strong> Votre demande d'accès à la plateforme <strong>OneHCM - SEEG Talent Source</strong> a été approuvée.</p>
+            
+            <div class="success-box">
+                <p style="font-size: 18px; margin: 0;"><strong>✅ Votre compte est maintenant actif !</strong></p>
+            </div>
+            
+            <p>Vous pouvez désormais vous connecter et accéder à toutes les fonctionnalités :</p>
+            <ul>
+                <li>Consulter les offres d'emploi</li>
+                <li>Postuler aux postes disponibles</li>
+                <li>Suivre vos candidatures</li>
+                <li>Gérer votre profil</li>
+            </ul>
+            
+            <p style="text-align: center;">
+                <a href="{settings.PUBLIC_APP_URL}" class="button">Se Connecter Maintenant</a>
+            </p>
+            
+            <div class="info-box">
+                <p><strong>📧 Besoin d'aide ?</strong></p>
+                <p>Contact : <a href="mailto:support@seeg-talentsource.com">support@seeg-talentsource.com</a></p>
+            </div>
+            
+            <p>Cordialement,<br>
+            <strong>L'équipe OneHCM - SEEG Talent Source</strong><br>
+            <a href="{settings.PUBLIC_APP_URL}">{settings.PUBLIC_APP_URL}</a></p>
+        </div>
+        <div class="footer">
+            <p>&copy; 2025 SEEG - Société d'Énergie et d'Eau du Gabon</p>
+        </div>
+    </div>
+</body>
+</html>
+        """
+        
+        plain_body = f"""
+{salutation},
+
+Bonne nouvelle ! Votre demande d'accès à la plateforme OneHCM - SEEG Talent Source a été approuvée.
+
+✅ VOTRE COMPTE EST MAINTENANT ACTIF !
+
+Vous pouvez désormais vous connecter et accéder à toutes les fonctionnalités :
+- Consulter les offres d'emploi
+- Postuler aux postes disponibles
+- Suivre vos candidatures
+- Gérer votre profil
+
+Se connecter : {settings.PUBLIC_APP_URL}
+
+📧 Besoin d'aide ?
+Contact : support@seeg-talentsource.com
+
+Cordialement,
+L'équipe OneHCM - SEEG Talent Source
+{settings.PUBLIC_APP_URL}
+        """
+        
+        try:
+            await self.send_email(
+                to=to_email,
+                subject=subject,
+                body=plain_body,
+                html_body=html_body
+            )
+            logger.info("Email d'approbation envoyé", to=to_email, name=f"{first_name} {last_name}")
+            return True
+        except Exception as e:
+            logger.error("Erreur envoi email approbation", to=to_email, error=str(e))
+            return False
+    
+    async def send_access_rejected_email(
+        self,
+        to_email: str,
+        first_name: str,
+        last_name: str,
+        rejection_reason: str,
+        sexe: Optional[str] = None
+    ) -> bool:
+        """
+        Email 5 : Demande d'accès refusée.
+        
+        Envoyé au candidat quand un recruteur refuse sa demande d'accès.
+        Le compte passe de 'en_attente' à 'bloqué'.
+        Inclut le motif du refus saisi par le recruteur.
+        
+        Args:
+            to_email: Email du candidat
+            first_name: Prénom
+            last_name: Nom
+            rejection_reason: Motif du refus (≥ 20 caractères)
+            sexe: 'M' ou 'F'
+        """
+        salutation = self._get_salutation(sexe, first_name, last_name)
+        
+        subject = "❌ Demande d'Accès Refusée - OneHCM"
+        
+        html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: linear-gradient(135deg, #F44336 0%, #D32F2F 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }}
+        .error-box {{ background: #FFEBEE; border-left: 4px solid #F44336; padding: 15px; margin: 20px 0; border-radius: 4px; }}
+        .info-box {{ background: #E3F2FD; border-left: 4px solid #0078D4; padding: 15px; margin: 20px 0; border-radius: 4px; }}
+        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>❌ Demande d'Accès Refusée</h1>
+        </div>
+        <div class="content">
+            <p><strong>{salutation},</strong></p>
+            
+            <p>Nous vous informons que votre demande d'accès à la plateforme <strong>OneHCM - SEEG Talent Source</strong> n'a pas pu être validée.</p>
+            
+            <div class="error-box">
+                <p><strong>❌ Motif du refus</strong></p>
+                <p style="margin: 10px 0; padding: 10px; background: white; border-radius: 4px;">{rejection_reason}</p>
+            </div>
+            
+            <p>Si vous pensez qu'il s'agit d'une erreur ou si vous avez des questions, n'hésitez pas à contacter notre équipe support.</p>
+            
+            <div class="info-box">
+                <p><strong>📞 Contact Support</strong></p>
+                <p><a href="mailto:support@seeg-talentsource.com">support@seeg-talentsource.com</a></p>
+            </div>
+            
+            <p>Cordialement,<br>
+            <strong>L'équipe OneHCM - SEEG Talent Source</strong><br>
+            <a href="{settings.PUBLIC_APP_URL}">{settings.PUBLIC_APP_URL}</a></p>
+        </div>
+        <div class="footer">
+            <p>&copy; 2025 SEEG - Société d'Énergie et d'Eau du Gabon</p>
+        </div>
+    </div>
+</body>
+</html>
+        """
+        
+        plain_body = f"""
+{salutation},
+
+Nous vous informons que votre demande d'accès à la plateforme OneHCM - SEEG Talent Source 
+n'a pas pu être validée.
+
+❌ MOTIF DU REFUS
+-----------------
+{rejection_reason}
+
+Si vous pensez qu'il s'agit d'une erreur ou si vous avez des questions, 
+n'hésitez pas à contacter notre équipe support.
+
+📞 CONTACT SUPPORT
+support@seeg-talentsource.com
+
+Cordialement,
+L'équipe OneHCM - SEEG Talent Source
+{settings.PUBLIC_APP_URL}
+        """
+        
+        try:
+            await self.send_email(
+                to=to_email,
+                subject=subject,
+                body=plain_body,
+                html_body=html_body
+            )
+            logger.info("Email de refus envoyé", to=to_email, name=f"{first_name} {last_name}")
+            return True
+        except Exception as e:
+            logger.error("Erreur envoi email refus", to=to_email, error=str(e))
+            return False

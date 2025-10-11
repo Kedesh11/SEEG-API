@@ -17,10 +17,10 @@ from app.services.file import FileService
 from app.services.email import EmailService
 from app.services.pdf import ApplicationPDFService
 from app.schemas.application import (
-    ApplicationCreate, ApplicationUpdate, ApplicationResponse, ApplicationListResponse,
+    Application, ApplicationCreate, ApplicationUpdate, ApplicationResponse, ApplicationListResponse,
     ApplicationDocumentResponse, ApplicationDocumentCreate, ApplicationDocumentUpdate,
     ApplicationDocumentWithDataResponse, ApplicationDocumentListResponse,
-    FileUploadRequest, MultipleFileUploadRequest,
+    ApplicationDocument, FileUploadRequest, MultipleFileUploadRequest,
     ApplicationDraftCreate, ApplicationDraftUpdate, ApplicationDraft, ApplicationDraftInDB,
     ApplicationHistoryCreate, ApplicationHistory, ApplicationHistoryInDB
 )
@@ -33,20 +33,35 @@ router = APIRouter()
 
 
 def safe_log(level: str, message: str, **kwargs):
-    """Log avec gestion d'erreur pour Ã©viter les problÃ¨mes de handler."""
+    """Log avec gestion d'erreur pour éviter les problèmes de handler."""
     try:
         getattr(logger, level)(message, **kwargs)
     except (TypeError, AttributeError):
         print(f"{level.upper()}: {message} - {kwargs}")
 
 
-@router.post("/", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED, summary="CrÃ©er une candidature", openapi_extra={
+def convert_orm_to_schema(orm_obj, schema_class):
+    """Convertit un objet ORM vers un schéma Pydantic."""
+    return schema_class.model_validate(orm_obj)
+
+
+def convert_orm_list_to_schema(orm_list: List, schema_class):
+    """Convertit une liste d'objets ORM vers des schémas Pydantic."""
+    return [schema_class.model_validate(item) for item in orm_list]
+
+
+@router.post("/", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED, summary="Créer une candidature", openapi_extra={
     "requestBody": {"content": {"application/json": {"example": {
         "candidate_id": "00000000-0000-0000-0000-000000000001",
         "job_offer_id": "00000000-0000-0000-0000-0000000000AA",
-        "reference_contacts": "Mme X (+241...), M. Y (+241...)"
+        "reference_contacts": "Mme X (+241...), M. Y (+241...)",
+        "has_been_manager": False,
+        "ref_entreprise": "Entreprise ABC",
+        "ref_fullname": "Jean Dupont",
+        "ref_mail": "jean.dupont@abc.com",
+        "ref_contact": "+241 01 02 03 04"
     }}}},
-    "responses": {"201": {"content": {"application/json": {"example": {"success": True, "message": "Candidature crÃ©Ã©e avec succÃ¨s", "data": {"id": "uuid"}}}}}}
+    "responses": {"201": {"content": {"application/json": {"example": {"success": True, "message": "Candidature créée avec succès", "data": {"id": "uuid"}}}}}}
 })
 async def create_application(
     application_data: ApplicationCreate,
@@ -54,38 +69,74 @@ async def create_application(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    CrÃ©er une nouvelle candidature
+    Créer une nouvelle candidature avec validation des champs selon le type de candidat
     
+    **Champs de base:**
     - **candidate_id**: ID du candidat
     - **job_offer_id**: ID de l'offre d'emploi
-    - **reference_contacts**: Contacts de rÃ©fÃ©rence (optionnel)
-    - **availability_start**: Date de disponibilitÃ© (optionnel)
-    - **mtp_answers**: RÃ©ponses MTP (optionnel)
+    - **reference_contacts**: Contacts de référence (optionnel)
+    - **availability_start**: Date de disponibilité (optionnel)
+    - **mtp_answers**: Réponses MTP (optionnel)
+    
+    **Champs spécifiques aux candidats INTERNES (employés SEEG avec matricule):**
+    - **has_been_manager**: Indique si le candidat a déjà occupé un poste de chef/manager (OBLIGATOIRE)
+    - Les champs ref_* peuvent être NULL
+    
+    **Champs spécifiques aux candidats EXTERNES (sans matricule):**
+    - **ref_entreprise**: Nom de l'entreprise/organisation recommandante (OBLIGATOIRE)
+    - **ref_fullname**: Nom complet du référent (OBLIGATOIRE)
+    - **ref_mail**: Adresse e-mail du référent (OBLIGATOIRE)
+    - **ref_contact**: Numéro de téléphone du référent (OBLIGATOIRE)
+    - Le champ has_been_manager peut rester FALSE par défaut
+    
+    **Validation automatique**: Le système vérifie que les champs obligatoires sont bien renseignés selon le type de candidat.
+    
+    **📊 Règles MTP (Métier, Talent, Paradigme):**
+    
+    Le système valide automatiquement le nombre de questions MTP selon le type de candidat:
+    
+    - **Candidats INTERNES** (avec matricule):
+      - Questions Métier (mtp_metier_q1, q2, q3...): Maximum 7 questions
+      - Questions Talent (mtp_talent_q1, q2, q3...): Maximum 3 questions  
+      - Questions Paradigme (mtp_paradigme_q1, q2, q3...): Maximum 3 questions
+      - **Total: 13 questions maximum**
+    
+    - **Candidats EXTERNES** (sans matricule):
+      - Questions Métier: Maximum 3 questions
+      - Questions Talent: Maximum 3 questions
+      - Questions Paradigme: Maximum 3 questions
+      - **Total: 9 questions maximum**
+    
+    ⚠️ Si les limites sont dépassées, la candidature est automatiquement rejetée avec un message d'erreur détaillé.
     """
     try:
         application_service = ApplicationService(db)
         email_service = EmailService(db)
         
-        # CrÃ©ation de la candidature
+        # Création de la candidature avec validation des champs selon le type de candidat
         application = await application_service.create_application(
             application_data, str(current_user.id)
         )
         
-        # Envoi d'email de confirmation (en arriÃ¨re-plan)
+        # Envoi d'email de confirmation (en arrière-plan)
         try:
+            candidate_name = f"{application.candidate.firstname} {application.candidate.lastname}"
             await email_service.send_application_confirmation(
-                application.candidate.email,
-                application.job_offer.title
+                candidate_email=application.candidate.email,
+                candidate_name=candidate_name,
+                job_title=application.job_offer.title,
+                application_id=str(application.id)
             )
         except Exception as e:
-            # Log l'erreur mais ne fait pas Ã©chouer la crÃ©ation
+            # Log l'erreur mais ne fait pas échouer la création
             safe_log("warning", "Erreur envoi email confirmation", error=str(e), application_id=str(application.id))
         
-        safe_log("info", "Candidature crÃ©Ã©e", application_id=str(application.id), candidate_id=str(current_user.id))
+        safe_log("info", "Candidature créée", application_id=str(application.id), candidate_id=str(current_user.id))
+        
         return ApplicationResponse(
             success=True,
-            message="Candidature crÃ©Ã©e avec succÃ¨s",
-            data=application
+            message="Candidature créée avec succès",
+            data=convert_orm_to_schema(application, Application)  # type: ignore
         )
         
     except ValidationError as e:
@@ -138,11 +189,11 @@ async def get_applications(
             candidate_id=candidate_id
         )
         
-        safe_log("info", "Liste candidatures rÃ©cupÃ©rÃ©e", count=len(applications), requester_id=str(current_user.id))
+        safe_log("info", "Liste candidatures récupérée", count=len(applications), requester_id=str(current_user.id))
         return ApplicationListResponse(
             success=True,
-            message=f"{len(applications)} candidature(s) trouvÃ©e(s)",
-            data=applications,
+            message=f"{len(applications)} candidature(s) trouvée(s)",
+            data=convert_orm_list_to_schema(applications, Application),  # type: ignore
             total=total,
             page=(skip // limit) + 1,
             per_page=limit
@@ -169,13 +220,13 @@ async def get_application(
         application = await application_service.get_application_by_id(application_id)
         
         if not application:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidature non trouvÃ©e")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidature non trouvée")
         
-        safe_log("info", "Candidature rÃ©cupÃ©rÃ©e", application_id=application_id, requester_id=str(current_user.id))
+        safe_log("info", "Candidature récupérée", application_id=application_id, requester_id=str(current_user.id))
         return ApplicationResponse(
             success=True,
-            message="Candidature rÃ©cupÃ©rÃ©e avec succÃ¨s",
-            data=application
+            message="Candidature récupérée avec succès",
+            data=convert_orm_to_schema(application, Application)  # type: ignore
         )
         
     except NotFoundError as e:
@@ -203,11 +254,11 @@ async def update_application(
         application_service = ApplicationService(db)
         application = await application_service.update_application(application_id, application_data)
         
-        safe_log("info", "Candidature mise Ã  jour", application_id=application_id, requester_id=str(current_user.id))
+        safe_log("info", "Candidature mise à jour", application_id=application_id, requester_id=str(current_user.id))
         return ApplicationResponse(
             success=True,
-            message="Candidature mise Ã  jour avec succÃ¨s",
-            data=application
+            message="Candidature mise à jour avec succès",
+            data=convert_orm_to_schema(application, Application)  # type: ignore
         )
         
     except NotFoundError as e:
@@ -270,11 +321,11 @@ async def upload_document(
     - **file**: Fichier PDF Ã  uploader (max 10MB)
     """
     try:
-        # VÃ©rifier que le fichier est un PDF
-        if not file.filename.lower().endswith('.pdf'):
+        # Vérifier que le fichier est un PDF
+        if not file.filename or not file.filename.lower().endswith('.pdf'):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Seuls les fichiers PDF sont acceptÃ©s"
+                detail="Seuls les fichiers PDF sont acceptés"
             )
         
         # Lire le contenu du fichier
@@ -301,11 +352,15 @@ async def upload_document(
         # Valeur par dÃ©faut si non fourni
         resolved_type = (document_type or 'certificats')
         
-        # CrÃ©er le document
+        # Créer le document
+        safe_filename = file.filename or "document.pdf"
+        if not safe_filename.lower().endswith('.pdf'):
+            safe_filename = f"{safe_filename}.pdf"
+            
         document_data = ApplicationDocumentCreate(
             application_id=uuid.UUID(application_id),
             document_type=resolved_type,
-            file_name=file.filename if file.filename.lower().endswith('.pdf') else f"{file.filename}.pdf",
+            file_name=safe_filename,
             file_data=file_data_b64,
             file_size=len(file_content),
             file_type="application/pdf"
@@ -314,17 +369,17 @@ async def upload_document(
         application_service = ApplicationService(db)
         document = await application_service.create_document(document_data)
         
-        safe_log("info", "Document uploadÃ©", 
+        safe_log("info", "Document uploadé", 
                 application_id=application_id, 
                 document_type=resolved_type,
                 file_size=len(file_content),
-                file_name=file.filename,
+                file_name=safe_filename,
                 user_id=str(current_user.id))
         
         return ApplicationDocumentResponse(
             success=True,
-            message="Document uploadÃ© avec succÃ¨s",
-            data=document
+            message="Document uploadé avec succès",
+            data=convert_orm_to_schema(document, ApplicationDocument)  # type: ignore
         )
         
     except ValueError as e:
@@ -373,11 +428,12 @@ async def upload_multiple_documents(
         documents = []
         
         for file, doc_type in zip(files, document_types):
-            # VÃ©rifier que le fichier est un PDF
-            if not file.filename.lower().endswith('.pdf'):
+            # Vérifier que le fichier est un PDF
+            if not file.filename or not file.filename.lower().endswith('.pdf'):
+                filename = file.filename or "fichier_inconnu"
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Seuls les fichiers PDF sont acceptÃ©s. Fichier invalide: {file.filename}"
+                    detail=f"Seuls les fichiers PDF sont acceptés. Fichier invalide: {filename}"
                 )
             
             # Lire le contenu du fichier
@@ -385,26 +441,32 @@ async def upload_multiple_documents(
             
             # Validation de la taille
             if len(file_content) > MAX_FILE_SIZE:
+                filename = file.filename or "fichier_inconnu"
                 raise HTTPException(
                     status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail=f"Le fichier '{file.filename}' est trop volumineux. Taille maximale: 10MB. Taille actuelle: {len(file_content) / (1024 * 1024):.2f}MB"
+                    detail=f"Le fichier '{filename}' est trop volumineux. Taille maximale: 10MB. Taille actuelle: {len(file_content) / (1024 * 1024):.2f}MB"
                 )
             
-            # VÃ©rifier que c'est bien un PDF
+            # Vérifier que c'est bien un PDF
             if not file_content.startswith(b'%PDF'):
+                filename = file.filename or "fichier_inconnu"
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Le fichier n'est pas un PDF valide: {file.filename}"
+                    detail=f"Le fichier n'est pas un PDF valide: {filename}"
                 )
             
             # Encoder en base64
             file_data_b64 = base64.b64encode(file_content).decode('utf-8')
             
-            # CrÃ©er le document
+            # Créer le document
+            safe_filename = file.filename or "document.pdf"
+            if not safe_filename.lower().endswith('.pdf'):
+                safe_filename = f"{safe_filename}.pdf"
+                
             document_data = ApplicationDocumentCreate(
                 application_id=uuid.UUID(application_id),
                 document_type=doc_type,
-                file_name=file.filename,
+                file_name=safe_filename,
                 file_data=file_data_b64,
                 file_size=len(file_content),
                 file_type="application/pdf"
@@ -413,7 +475,7 @@ async def upload_multiple_documents(
             document = await application_service.create_document(document_data)
             documents.append(document)
         
-        safe_log("info", "Documents multiples uploadÃ©s",
+        safe_log("info", "Documents multiples uploadés",
                 application_id=application_id,
                 count=len(documents),
                 total_size=sum(d.file_size for d in documents),
@@ -421,8 +483,8 @@ async def upload_multiple_documents(
         
         return ApplicationDocumentListResponse(
             success=True,
-            message=f"{len(documents)} document(s) uploadÃ©(s) avec succÃ¨s",
-            data=documents,
+            message=f"{len(documents)} document(s) uploadé(s) avec succès",
+            data=convert_orm_list_to_schema(documents, ApplicationDocument),  # type: ignore
             total=len(documents)
         )
         
@@ -456,11 +518,11 @@ async def get_application_documents(
         application_service = ApplicationService(db)
         documents = await application_service.get_application_documents(application_id, document_type)
         
-        safe_log("info", "Documents rÃ©cupÃ©rÃ©s", application_id=application_id, count=len(documents))
+        safe_log("info", "Documents récupérés", application_id=application_id, count=len(documents))
         return ApplicationDocumentListResponse(
             success=True,
-            message=f"{len(documents)} document(s) trouvÃ©(s)",
-            data=documents,
+            message=f"{len(documents)} document(s) trouvé(s)",
+            data=convert_orm_list_to_schema(documents, ApplicationDocument),  # type: ignore
             total=len(documents)
         )
         
@@ -744,25 +806,26 @@ async def export_application_pdf(
         if not application:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidature non trouvÃ©e")
         
-        # 2. VÃ©rifier les permissions
-        is_admin = hasattr(current_user, 'role') and current_user.role in ['admin', 'observer']
-        is_recruiter = hasattr(current_user, 'role') and current_user.role == 'recruiter'
+        # 2. Vérifier les permissions
+        is_admin = hasattr(current_user, 'role') and str(current_user.role) in ['admin', 'observer']
+        is_recruiter = hasattr(current_user, 'role') and str(current_user.role) == 'recruiter'
         is_candidate = str(application.candidate_id) == str(current_user.id)
 
-        # Recruteur: vÃ©rifier que c'est son offre (relation singuliÃ¨re job_offer)
+        # Recruteur: vérifier que c'est son offre (relation singulière job_offer)
         if is_recruiter and getattr(application, 'job_offer', None):
-            if getattr(application.job_offer, 'recruiter_id', None) is not None:
-                if str(application.job_offer.recruiter_id) != str(current_user.id):
+            recruiter_id = getattr(application.job_offer, 'recruiter_id', None)
+            if recruiter_id is not None:
+                if str(recruiter_id) != str(current_user.id):
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
-                        detail="AccÃ¨s non autorisÃ© : vous ne pouvez tÃ©lÃ©charger que les candidatures de vos offres"
+                        detail="Accès non autorisé : vous ne pouvez télécharger que les candidatures de vos offres"
                     )
         
-        # Si ni admin, ni recruteur autorisÃ©, ni candidat
+        # Si ni admin, ni recruteur autorisé, ni candidat
         if not (is_admin or is_candidate or is_recruiter):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="AccÃ¨s non autorisÃ©"
+                detail="Accès non autorisé"
             )
         
         # 3. GÃ©nÃ©rer le PDF

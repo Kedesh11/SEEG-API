@@ -68,12 +68,9 @@ async def lifespan(app: FastAPI):
     # Le cache Redis s'initialise automatiquement dans le constructeur de CacheManager
     # Aucune action nécessaire ici
     
-    # Démarrer la collecte de métriques
+    # Les métriques sont collectées automatiquement à la demande
     if settings.METRICS_ENABLED:
-        try:
-            metrics_collector.start_system_metrics_collection()
-        except Exception as e:
-            safe_log("warning", "Impossible de démarrer la collecte de métriques", error=str(e))
+        safe_log("info", "Collecte de métriques Prometheus activée")
     
     # Validation de la configuration en production
     if settings.ENVIRONMENT == "production":
@@ -85,12 +82,7 @@ async def lifespan(app: FastAPI):
     safe_log("info", "Arrêt de l'API One HCM SEEG")
     
     # Le cache Redis se ferme automatiquement
-    # Arrêter la collecte de métriques
-    if settings.METRICS_ENABLED:
-        try:
-            metrics_collector.stop_system_metrics_collection()
-        except Exception as e:
-            safe_log("warning", "Erreur lors de l'arrêt de la collecte de métriques", error=str(e))
+    # Les métriques Prometheus s'arrêtent automatiquement
 
 # ============================================================================
 # CRÉATION DE L'APPLICATION FASTAPI
@@ -143,12 +135,16 @@ app = FastAPI(
             "description": "Gestion de l'authentification - Connexion, inscription, tokens JWT"
         },
         {
+            "name": "👥 Gestion des Demandes d'Accès",
+            "description": "Gestion des demandes d'accès à la plateforme - Approbation/refus par les recruteurs pour les candidats internes sans email SEEG"
+        },
+        {
             "name": "👥 Utilisateurs",
             "description": "Gestion des utilisateurs - Profils, rôles, permissions"
         },
         {
             "name": "💼 Offres d'emploi",
-            "description": "Gestion des offres d'emploi - Création, modification, consultation"
+            "description": "Gestion des offres d'emploi avec questions MTP (Métier, Talent, Paradigme) - Création, modification, consultation des offres internes et externes"
         },
         {
             "name": "📝 Candidatures",
@@ -371,11 +367,12 @@ async def info():
 # ============================================================================
 
 # Import des routes API
-from app.api.v1.endpoints import auth, users, jobs, applications, evaluations, notifications, interviews, emails, optimized, webhooks
+from app.api.v1.endpoints import auth, users, jobs, applications, evaluations, notifications, interviews, emails, optimized, webhooks, access_requests
 from app.api.v1.endpoints.monitoring import router as monitoring_router
 
 # Inclusion des routes dans l'application
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["🔐 Authentification"])
+app.include_router(access_requests.router, prefix="/api/v1/access-requests", tags=["🔐 Authentification", "👥 Gestion des Demandes d'Accès"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["👥 Utilisateurs"])
 app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["💼 Offres d'emploi (filtrage auto interne/externe)"])
 app.include_router(applications.router, prefix="/api/v1/applications", tags=["📝 Candidatures", "📄 Documents PDF"])
