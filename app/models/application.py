@@ -1,8 +1,8 @@
 """
 Modèles Application basés sur le schéma Supabase
 """
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, JSON, Integer, LargeBinary, Boolean
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Integer, LargeBinary, Boolean
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -29,10 +29,10 @@ class Application(BaseModel):
     ref_mail = Column(String(255), nullable=True, comment="Adresse e-mail du référent")
     ref_contact = Column(String(50), nullable=True, comment="Numéro de téléphone du référent")
     
-    # Réponses MTP du candidat (format JSON auto-incrémenté)
+    # Réponses MTP du candidat (format JSONB structuré)
     # Format: {"reponses_metier": ["R1", "R2", ...], "reponses_talent": [...], "reponses_paradigme": [...]}
     # Le nombre de réponses doit correspondre au nombre de questions de l'offre
-    mtp_answers = Column(JSON, nullable=True, comment="Réponses MTP sous forme de tableau auto-incrémenté")
+    mtp_answers = Column(JSONB, nullable=True, comment="Réponses MTP sous forme de JSON structuré")
     
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)  # type: ignore[assignment]
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)  # type: ignore[assignment]
@@ -67,8 +67,8 @@ class ApplicationDraft(BaseModel):
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     job_offer_id = Column(UUID(as_uuid=True), ForeignKey("job_offers.id", ondelete="CASCADE"), primary_key=True)
-    form_data = Column(JSON)
-    ui_state = Column(JSON)
+    form_data = Column(JSONB)  # Brouillon de formulaire stocké en JSONB
+    ui_state = Column(JSONB)   # État de l'interface utilisateur stocké en JSONB
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)  # type: ignore[assignment]
 
     # Relations

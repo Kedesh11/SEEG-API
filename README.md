@@ -768,7 +768,7 @@ LOG_LEVEL=DEBUG
 ## 👨‍💻 Développeurs
 
 **Lead Developer** : Sevan Kedesh IKISSA PENDY  
-**Email** : sevankedesh11@gmail.com  
+**Email** : sevankedesh11@gmail.com
 **Organisation** : CNX 4.0
 
 ---
@@ -783,3 +783,4 @@ LOG_LEVEL=DEBUG
 ---
 
 **Construit avec ❤️ pour la SEEG**
+

@@ -1,7 +1,7 @@
 """
 Schémas Pydantic pour les offres d'emploi
 """
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from uuid import UUID
@@ -18,7 +18,13 @@ class JobOfferBase(BaseModel):
     benefits: Optional[List[str]] = None
     responsibilities: Optional[List[str]] = None
     status: str = "active"
-    is_internal_only: bool = False  # True = Offre réservée aux candidats INTERNES, False = Accessible à tous
+    
+    # Statut de visibilité de l'offre
+    offer_status: str = Field(
+        default="tous",
+        description="Visibilité de l'offre: 'tous' (internes+externes), 'interne' (employés SEEG uniquement), 'externe' (candidats externes uniquement)"
+    )
+    
     application_deadline: Optional[datetime] = None
     date_limite: Optional[datetime] = None
     reporting_line: Optional[str] = None
@@ -53,6 +59,53 @@ class JobOfferBase(BaseModel):
 
 class JobOfferCreate(JobOfferBase):
     recruiter_id: Optional[UUID] = None  # Ajouté automatiquement depuis le token JWT
+    
+    # Champs legacy pour compatibilité avec le frontend (format string)
+    question_metier: Optional[str] = Field(None, exclude=True)
+    question_talent: Optional[str] = Field(None, exclude=True)
+    question_paradigme: Optional[str] = Field(None, exclude=True)
+    
+    @model_validator(mode='after')
+    def transform_mtp_questions(self):
+        """
+        Transformer les questions MTP du format legacy (strings) au format structuré (Dict[str, List[str]])
+        
+        Règle de transformation:
+        - Si questions_mtp existe déjà → le garder tel quel
+        - Sinon, si question_* existent → les transformer en questions_mtp structuré
+        - Chaque question est séparée par un retour à la ligne (\n)
+        """
+        # Si questions_mtp est déjà fourni, ne rien faire
+        if self.questions_mtp is not None:
+            return self
+        
+        # Sinon, construire questions_mtp depuis les champs legacy
+        questions_dict = {}
+        
+        # Transformer question_metier
+        if self.question_metier:
+            # Séparer les questions par retour à la ligne et nettoyer
+            questions = [q.strip() for q in self.question_metier.split('\n') if q.strip()]
+            if questions:
+                questions_dict['questions_metier'] = questions
+        
+        # Transformer question_talent
+        if self.question_talent:
+            questions = [q.strip() for q in self.question_talent.split('\n') if q.strip()]
+            if questions:
+                questions_dict['questions_talent'] = questions
+        
+        # Transformer question_paradigme
+        if self.question_paradigme:
+            questions = [q.strip() for q in self.question_paradigme.split('\n') if q.strip()]
+            if questions:
+                questions_dict['questions_paradigme'] = questions
+        
+        # Assigner le dictionnaire structuré si non vide
+        if questions_dict:
+            self.questions_mtp = questions_dict
+        
+        return self
 
 class JobOfferUpdate(BaseModel):
     title: Optional[str] = None
@@ -66,7 +119,10 @@ class JobOfferUpdate(BaseModel):
     benefits: Optional[List[str]] = None
     responsibilities: Optional[List[str]] = None
     status: Optional[str] = None
-    is_internal_only: Optional[bool] = None  # True = Offre réservée aux candidats INTERNES, False = Accessible à tous
+    offer_status: Optional[str] = Field(
+        None,
+        description="Visibilité de l'offre: 'tous', 'interne', 'externe'"
+    )
     application_deadline: Optional[datetime] = None
     date_limite: Optional[datetime] = None
     reporting_line: Optional[str] = None
@@ -78,6 +134,52 @@ class JobOfferUpdate(BaseModel):
     
     # Questions MTP (format JSON auto-incrémenté)
     questions_mtp: Optional[Dict[str, List[str]]] = None
+    
+    # Champs legacy pour compatibilité avec le frontend (format string)
+    question_metier: Optional[str] = Field(None, exclude=True)
+    question_talent: Optional[str] = Field(None, exclude=True)
+    question_paradigme: Optional[str] = Field(None, exclude=True)
+    
+    @model_validator(mode='after')
+    def transform_mtp_questions(self):
+        """
+        Transformer les questions MTP du format legacy (strings) au format structuré (Dict[str, List[str]])
+        
+        Règle de transformation:
+        - Si questions_mtp existe déjà → le garder tel quel
+        - Sinon, si question_* existent → les transformer en questions_mtp structuré
+        - Chaque question est séparée par un retour à la ligne (\n)
+        """
+        # Si questions_mtp est déjà fourni, ne rien faire
+        if self.questions_mtp is not None:
+            return self
+        
+        # Sinon, construire questions_mtp depuis les champs legacy
+        questions_dict = {}
+        
+        # Transformer question_metier
+        if self.question_metier:
+            questions = [q.strip() for q in self.question_metier.split('\n') if q.strip()]
+            if questions:
+                questions_dict['questions_metier'] = questions
+        
+        # Transformer question_talent
+        if self.question_talent:
+            questions = [q.strip() for q in self.question_talent.split('\n') if q.strip()]
+            if questions:
+                questions_dict['questions_talent'] = questions
+        
+        # Transformer question_paradigme
+        if self.question_paradigme:
+            questions = [q.strip() for q in self.question_paradigme.split('\n') if q.strip()]
+            if questions:
+                questions_dict['questions_paradigme'] = questions
+        
+        # Assigner le dictionnaire structuré si non vide
+        if questions_dict:
+            self.questions_mtp = questions_dict
+        
+        return self
 
 class JobOfferResponse(JobOfferBase):
     id: UUID
@@ -107,6 +209,7 @@ class JobOfferPublicResponse(BaseModel):
     requirements: Optional[List[str]] = None
     benefits: Optional[List[str]] = None
     responsibilities: Optional[List[str]] = None
+    offer_status: str = Field(description="Visibilité: 'tous', 'interne', 'externe'")
     application_deadline: Optional[datetime] = None
     date_limite: Optional[datetime] = None
     start_date: Optional[datetime] = None
@@ -133,6 +236,7 @@ class JobOfferDetailPublicResponse(BaseModel):
     requirements: Optional[List[str]] = None
     benefits: Optional[List[str]] = None
     responsibilities: Optional[List[str]] = None
+    offer_status: str = Field(description="Visibilité: 'tous', 'interne', 'externe'")
     application_deadline: Optional[datetime] = None
     date_limite: Optional[datetime] = None
     reporting_line: Optional[str] = None

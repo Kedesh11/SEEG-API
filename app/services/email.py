@@ -2,7 +2,8 @@
 Service pour l'envoi d'emails
 """
 from typing import List, Optional, Dict, Any
-from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, insert, func, desc
 from datetime import datetime, timezone
@@ -37,19 +38,21 @@ class EmailService:
             return
             
         try:
+            # Configuration FastMail avec les nouveaux noms de champs (fastapi-mail v1.4+)
             self.mail_config = ConnectionConfig(
                 MAIL_USERNAME=settings.SMTP_USERNAME,
-                MAIL_PASSWORD=settings.SMTP_PASSWORD,
+                MAIL_PASSWORD=SecretStr(settings.SMTP_PASSWORD),  # SecretStr requis
                 MAIL_FROM=settings.MAIL_FROM_EMAIL,
                 MAIL_FROM_NAME=settings.MAIL_FROM_NAME,
                 MAIL_PORT=settings.SMTP_PORT,
                 MAIL_SERVER=settings.SMTP_HOST,
-                MAIL_TLS=settings.SMTP_TLS,
-                MAIL_SSL=settings.SMTP_SSL,
+                MAIL_STARTTLS=settings.SMTP_TLS,  # Nouveau nom (anciennement MAIL_TLS)
+                MAIL_SSL_TLS=settings.SMTP_SSL,   # Nouveau nom (anciennement MAIL_SSL)
                 USE_CREDENTIALS=True,
                 VALIDATE_CERTS=True
             )
             self.fastmail = FastMail(self.mail_config)
+            logger.info("✅ FastMail configuré avec succès")
         except Exception as e:
             logger.error("Failed to setup FastMail", error=str(e))
             self.fastmail = None
@@ -63,7 +66,7 @@ class EmailService:
         sender: Optional[str] = None,
         cc: Optional[List[str]] = None,
         bcc: Optional[List[str]] = None,
-        attachments: Optional[List[Dict[str, Any]]] = None
+        attachments: Optional[List[Any]] = None  # Type plus flexible
     ) -> bool:
         """
         Envoyer un email
@@ -73,39 +76,41 @@ class EmailService:
             subject: Sujet de l'email
             body: Corps de l'email (texte)
             html_body: Corps de l'email (HTML)
-            sender: ExpÃ©diteur (optionnel)
+            sender: Expéditeur (optionnel)
             cc: Copie carbone
-            bcc: Copie carbone cachÃ©e
-            attachments: PiÃ¨ces jointes
+            bcc: Copie carbone cachée
+            attachments: Pièces jointes
             
         Returns:
-            bool: True si l'envoi a rÃ©ussi
+            bool: True si l'envoi a réussi
             
         Raises:
-            EmailError: Si l'envoi Ã©choue
+            EmailError: Si l'envoi échoue
         """
+        # Normalisation des destinataires (en dehors du try pour éviter "possibly unbound")
+        if isinstance(to, str):
+            recipients = [to]
+        else:
+            recipients = to
+        
         try:
-            # Normalisation des destinataires
-            if isinstance(to, str):
-                recipients = [to]
-            else:
-                recipients = to
-            
             # En environnement de test, simuler l'envoi
             if settings.ENVIRONMENT == "testing":
                 logger.info(
-                    "Email simulÃ© en environnement de test",
+                    "Email simulé en environnement de test",
                     to=recipients,
                     subject=subject
                 )
                 return True
             
-            # CrÃ©ation du message
+            # Création du message (fastapi-mail v1.4+)
+            # Dans fastapi-mail v1.4+, on utilise 'body' pour le contenu HTML/plain
+            message_body = html_body if html_body else body
             message = MessageSchema(
                 subject=subject,
                 recipients=recipients,
-                body=body,
-                html=html_body,
+                body=message_body,
+                subtype=MessageType.html if html_body else MessageType.plain,
                 cc=cc or [],
                 bcc=bcc or [],
                 attachments=attachments or []
@@ -128,14 +133,15 @@ class EmailService:
                     subject=subject
                 )
             
-            # Log de l'email dans la base de donnÃ©es
+            # Log de l'email dans la base de données
             await self._log_email(
                 to=recipients,
                 subject=subject,
                 body=body,
                 html_body=html_body,
                 status="sent",
-                error_message=None
+                error_message=None,
+                sent_at=datetime.now(timezone.utc)
             )
             
             return True
@@ -144,22 +150,23 @@ class EmailService:
             error_msg = str(e)
             logger.error(
                 "Failed to send email",
-                to=recipients if 'recipients' in locals() else to,
+                to=recipients,
                 subject=subject,
                 error=error_msg
             )
             
-            # Log de l'erreur dans la base de donnÃ©es
+            # Log de l'erreur dans la base de données
             await self._log_email(
-                to=recipients if 'recipients' in locals() else to,
+                to=recipients,
                 subject=subject,
                 body=body,
                 html_body=html_body,
                 status="failed",
-                error_message=error_msg
+                error_message=error_msg,
+                sent_at=datetime.now(timezone.utc)
             )
             
-            raise EmailError(f"Ã‰chec de l'envoi de l'email: {error_msg}")
+            raise EmailError(f"Échec de l'envoi de l'email: {error_msg}")
     
     async def _send_smtp_direct(self, message: MessageSchema):
         """
@@ -179,13 +186,11 @@ class EmailService:
                 msg['Cc'] = ', '.join(message.cc)
             
             # Ajout du corps du message
-            if message.body:
-                text_part = MIMEText(message.body, 'plain', 'utf-8')
-                msg.attach(text_part)
-            
-            if message.html:
-                html_part = MIMEText(message.html, 'html', 'utf-8')
-                msg.attach(html_part)
+            # Dans fastapi-mail v1.4+, body contient le contenu et subtype indique le type
+            if message.body and isinstance(message.body, str):
+                message_type = 'html' if message.subtype == MessageType.html else 'plain'
+                part = MIMEText(message.body, message_type, 'utf-8')
+                msg.attach(part)
             
             # Connexion SMTP
             server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
@@ -405,7 +410,8 @@ L'Ã©quipe RH - SEEG
         body: str,
         html_body: Optional[str],
         status: str,
-        error_message: Optional[str]
+        error_message: Optional[str],
+        sent_at: datetime
     ):
         """
         Enregistrer l'email dans les logs
@@ -417,20 +423,25 @@ L'Ã©quipe RH - SEEG
             html_body: Corps HTML
             status: Statut de l'envoi
             error_message: Message d'erreur (si applicable)
+            sent_at: Date d'envoi
         """
         try:
+            # Adapter au modèle EmailLog existant
             email_log = EmailLog(
-                recipient_email=', '.join(to),
-                subject=subject,
-                body=body,
-                html_body=html_body,
-                status=status,
-                error_message=error_message,
-                sent_at=datetime.now(timezone.utc)
+                to=', '.join(to),  # type: ignore  # Champ 'to' dans le modèle
+                subject=subject,  # type: ignore
+                html=html_body if html_body else body,  # type: ignore  # Champ 'html' dans le modèle
+                category=status,  # type: ignore  # Utiliser 'category' pour stocker le statut
+                sent_at=sent_at,  # type: ignore
+                email_metadata={  # type: ignore
+                    "body_plain": body,
+                    "status": status,
+                    "error_message": error_message
+                } if error_message else {"body_plain": body, "status": status}
             )
             
             self.db.add(email_log)
-            #  PAS de commit ici
+            # ✅ PAS de commit ici - c'est la responsabilité du service appelant
             
         except Exception as e:
             logger.error("Failed to log email", error=str(e))
@@ -439,25 +450,25 @@ L'Ã©quipe RH - SEEG
         self,
         skip: int = 0,
         limit: int = 100,
-        status: Optional[str] = None
+        category: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        RÃ©cupÃ©rer les logs d'emails
+        Récupérer les logs d'emails
         
         Args:
-            skip: Nombre d'Ã©lÃ©ments Ã  ignorer
-            limit: Nombre maximum d'Ã©lÃ©ments Ã  retourner
-            status: Filtrer par statut
+            skip: Nombre d'éléments à ignorer
+            limit: Nombre maximum d'éléments à retourner
+            category: Filtrer par catégorie (status)
             
         Returns:
-            Dict contenant les logs et les mÃ©tadonnÃ©es de pagination
+            Dict contenant les logs et les métadonnées de pagination
         """
         query = select(EmailLog)
         count_query = select(func.count(EmailLog.id))
         
-        if status:
-            query = query.where(EmailLog.status == status)
-            count_query = count_query.where(EmailLog.status == status)
+        if category:
+            query = query.where(EmailLog.category == category)
+            count_query = count_query.where(EmailLog.category == category)
         
         query = query.order_by(desc(EmailLog.sent_at))
         query = query.offset(skip).limit(limit)
@@ -472,18 +483,18 @@ L'Ã©quipe RH - SEEG
             "items": [
                 {
                     "id": str(log.id),
-                    "recipient_email": log.recipient_email,
+                    "recipient_email": log.to,  # Champ 'to' dans le modèle
                     "subject": log.subject,
-                    "status": log.status,
+                    "status": log.category,  # Champ 'category' stocke le statut
                     "sent_at": log.sent_at,
-                    "error_message": log.error_message
+                    "error_message": log.email_metadata.get("error_message") if log.email_metadata else None
                 }
                 for log in logs
             ],
-            "total": total_count,
+            "total": total_count if total_count is not None else 0,
             "skip": skip,
             "limit": limit,
-            "has_more": skip + len(logs) < total_count
+            "has_more": skip + len(logs) < (total_count if total_count else 0)
         }
     
     # ========================================================================

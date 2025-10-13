@@ -49,7 +49,7 @@ async def get_job_offers(
     
     **Filtrage intelligent selon le type de candidat** :
     - **Candidat INTERNE** (employé SEEG avec matricule) : Voit TOUTES les offres
-    - **Candidat EXTERNE** (sans matricule) : Voit UNIQUEMENT les offres accessibles (`is_internal_only=false`)
+    - **Candidat EXTERNE** (sans matricule) : Voit UNIQUEMENT les offres accessibles (`offer_status='tous'` ou `'externe'`)
     - **Recruteur/Admin** : Voit TOUTES les offres
     
     **Pagination** : Utilisez `skip` et `limit` pour paginer les résultats
@@ -89,8 +89,9 @@ async def create_job_offer(
     - `question_paradigme` : Évalue la vision, les valeurs et la compatibilité culturelle
     
     **Accessibilité** :
-    - `is_internal_only=true` : Réservée aux candidats internes uniquement
-    - `is_internal_only=false` : Accessible à tous (internes + externes)
+    - `offer_status='interne'` : Réservée aux candidats internes uniquement
+    - `offer_status='externe'` : Réservée aux candidats externes uniquement
+    - `offer_status='tous'` : Accessible à tous (internes + externes)
     
     **Permissions** : Accessible uniquement aux recruteurs et administrateurs
     """
@@ -167,7 +168,7 @@ async def get_job_offer(
     
     **Permissions** : Accessible à tous les utilisateurs authentifiés
     
-    **Filtrage automatique** : Les candidats externes ne verront que les offres où `is_internal_only=false`
+    **Filtrage automatique** : Les candidats externes ne verront que les offres avec `offer_status='tous'` ou `'externe'`
     """
     try:
         job_service = JobOfferService(db)
@@ -211,7 +212,7 @@ async def update_job_offer(
       - `question_talent`  
       - `question_paradigme`
     - Le statut de l'offre (active, closed, etc.)
-    - L'accessibilité (`is_internal_only`)
+    - L'accessibilité (`offer_status`: 'tous', 'interne', 'externe')
     
     **Permissions** : Seul le recruteur propriétaire ou un administrateur peut modifier l'offre
     
