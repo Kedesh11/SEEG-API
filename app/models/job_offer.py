@@ -1,8 +1,8 @@
 """
 Modèle JobOffer basé sur le schéma Supabase
 """
-from sqlalchemy import Column, String, Text, Integer, DateTime, Boolean, ForeignKey, JSON
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Column, String, Text, Integer, DateTime, Boolean, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
@@ -21,11 +21,17 @@ class JobOffer(BaseModel):
     department = Column(String)
     salary_min = Column(Integer)
     salary_max = Column(Integer)
-    requirements = Column(JSON)  # Array of strings stored as JSON
-    benefits = Column(JSON)      # Array of strings stored as JSON
-    responsibilities = Column(JSON)  # Array of strings stored as JSON
+    requirements = Column(JSONB)  # Array of strings stored as JSONB (better performance)
+    benefits = Column(JSONB)      # Array of strings stored as JSONB
+    responsibilities = Column(JSONB)  # Array of strings stored as JSONB
     status = Column(String, default="active")
-    is_internal_only = Column(Boolean, default=False, nullable=False)  # True = Réservée aux candidats INTERNES uniquement, False = Accessible à TOUS (internes + externes)
+    
+    # Statut de visibilité de l'offre
+    # "tous" = Accessible à tous (internes + externes)
+    # "interne" = Réservée aux candidats internes SEEG uniquement
+    # "externe" = Réservée aux candidats externes uniquement
+    offer_status = Column(String, default="tous", nullable=False)
+    
     application_deadline = Column(DateTime(timezone=True))
     date_limite = Column(DateTime(timezone=True))
     reporting_line = Column(String)
@@ -35,10 +41,10 @@ class JobOffer(BaseModel):
     categorie_metier = Column(String)
     job_grade = Column(String)
     
-    # Questions MTP pour l'évaluation des candidats (stockées en JSON)
+    # Questions MTP pour l'évaluation des candidats (stockées en JSONB)
     # Format: {"questions_metier": ["Q1", "Q2", ...], "questions_talent": [...], "questions_paradigme": [...]}
     # Max: 7 questions métier (internes), 3 talent, 3 paradigme
-    questions_mtp = Column(JSON, nullable=True, comment="Questions MTP sous forme de tableau auto-incrémenté")
+    questions_mtp = Column(JSONB, nullable=True, comment="Questions MTP sous forme de JSON structuré")
     
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)  # type: ignore[assignment]
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)  # type: ignore[assignment]

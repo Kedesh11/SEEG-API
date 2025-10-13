@@ -12,7 +12,8 @@ from app.schemas.auth import (
     TokenResponse, PasswordResetRequest
 )
 from app.core.security.security import PasswordManager, TokenManager, create_password_reset_token, verify_password_reset_token
-from app.core.exceptions import UnauthorizedError, ValidationError, BusinessLogicError
+from app.core.exceptions import UnauthorizedError, ValidationError, BusinessLogicError, EmailError
+from app.core.config.config import settings
 from app.services.email import EmailService
 
 logger = structlog.get_logger(__name__)
@@ -357,20 +358,131 @@ class AuthService:
                 # Ne pas révéler l'existence ou non de l'email
                 safe_log("info", "Demande de reset pour email inconnu", email=email)
                 return True
+            
             token = create_password_reset_token(email)
-            reset_link = f"{''}/reset-password?token={token}"
-            # Envoyer l'email
+            reset_link = f"{settings.PUBLIC_APP_URL}/reset-password?token={token}"
+            
+            # Envoyer l'email avec template professionnel
             email_service = EmailService(self.db)
-            subject = "Réinitialisation de votre mot de passe"
-            body = f"Utilisez ce lien pour réinitialiser votre mot de passe: {reset_link}"
-            html = f"<p>Vous avez demandé une réinitialisation de mot de passe.</p><p>Cliquez sur ce lien: <a href=\"{reset_link}\">Réinitialiser</a></p>"
+            subject = "🔑 Réinitialisation de votre mot de passe - OneHCM SEEG"
+            
+            # Déterminer la salutation
+            salutation = "Bonjour"
+            user_sexe = user.sexe if user.sexe is not None else None
+            user_firstname = user.first_name if user.first_name is not None else None
+            user_lastname = user.last_name if user.last_name is not None else None
+            
+            if user_sexe == 'M':  # type: ignore[comparison-overlap]
+                salutation = f"Monsieur {user_firstname} {user_lastname}"
+            elif user_sexe == 'F':  # type: ignore[comparison-overlap]
+                salutation = f"Madame {user_firstname} {user_lastname}"
+            elif user_firstname and user_lastname:  # type: ignore[truthy-bool]
+                salutation = f"{user_firstname} {user_lastname}"
+            
+            # Email texte brut
+            body = f"""
+{salutation},
+
+Vous avez demandé la réinitialisation de votre mot de passe pour votre compte OneHCM - SEEG Talent Source.
+
+Pour créer un nouveau mot de passe, veuillez cliquer sur le lien ci-dessous :
+{reset_link}
+
+Ce lien est valide pendant 1 heure.
+
+Si vous n'avez pas demandé cette réinitialisation, ignorez cet email. Votre mot de passe actuel reste inchangé.
+
+Pour des raisons de sécurité :
+- Ne partagez jamais ce lien
+- Choisissez un mot de passe fort (8+ caractères, majuscules, minuscules, chiffres)
+
+Besoin d'aide ?
+Contact : support@seeg-talentsource.com
+
+Cordialement,
+L'équipe OneHCM - SEEG Talent Source
+{settings.PUBLIC_APP_URL}
+            """
+            
+            # Email HTML
+            html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+        .container {{ max-width: 600px; margin: 0 auto; padding: 20px; }}
+        .header {{ background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%); color: white; padding: 30px; text-align: center; border-radius: 8px 8px 0 0; }}
+        .content {{ background: #f9f9f9; padding: 30px; border-radius: 0 0 8px 8px; }}
+        .warning-box {{ background: #FFF3E0; border-left: 4px solid #FF9800; padding: 15px; margin: 20px 0; border-radius: 4px; }}
+        .security-box {{ background: #FFEBEE; border-left: 4px solid #F44336; padding: 15px; margin: 20px 0; border-radius: 4px; }}
+        .button {{ display: inline-block; background: #FF9800; color: white; padding: 14px 35px; text-decoration: none; border-radius: 6px; margin: 20px 0; font-weight: bold; font-size: 16px; }}
+        .footer {{ text-align: center; color: #666; font-size: 12px; margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; }}
+        ul {{ line-height: 2; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔑 Réinitialisation de mot de passe</h1>
+        </div>
+        <div class="content">
+            <p><strong>{salutation},</strong></p>
+            
+            <p>Vous avez demandé la réinitialisation de votre mot de passe pour votre compte <strong>OneHCM - SEEG Talent Source</strong>.</p>
+            
+            <p style="text-align: center;">
+                <a href="{reset_link}" class="button">Réinitialiser mon mot de passe</a>
+            </p>
+            
+            <div class="warning-box">
+                <p><strong>⏱️ Validité du lien</strong></p>
+                <p>Ce lien est valide pendant <strong>1 heure</strong>. Passé ce délai, vous devrez refaire une demande.</p>
+            </div>
+            
+            <div class="security-box">
+                <p><strong>🔒 Consignes de sécurité</strong></p>
+                <ul>
+                    <li>Ne partagez jamais ce lien</li>
+                    <li>Choisissez un mot de passe fort (8+ caractères)</li>
+                    <li>Utilisez des majuscules, minuscules, chiffres et caractères spéciaux</li>
+                </ul>
+            </div>
+            
+            <p><strong>Vous n'avez pas demandé cette réinitialisation ?</strong><br>
+            Ignorez cet email. Votre mot de passe actuel reste inchangé.</p>
+            
+            <p style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd;">
+            <strong>Besoin d'aide ?</strong><br>
+            Contact : <a href="mailto:support@seeg-talentsource.com">support@seeg-talentsource.com</a></p>
+            
+            <p>Cordialement,<br>
+            <strong>L'équipe OneHCM - SEEG Talent Source</strong><br>
+            <a href="{settings.PUBLIC_APP_URL}">{settings.PUBLIC_APP_URL}</a></p>
+        </div>
+        <div class="footer">
+            <p>&copy; 2025 SEEG - Société d'Énergie et d'Eau du Gabon</p>
+            <p>Email automatique - Ne pas répondre directement</p>
+        </div>
+    </div>
+</body>
+</html>
+            """
+            
             try:
                 await email_service.send_email(to=str(user.email), subject=subject, body=body, html_body=html)
+                safe_log("info", "Email de réinitialisation envoyé avec succès", email=email, user_id=str(user.id))
             except Exception as e:
-                # Log et continuer (la génération du token côté client peut suffire si l'email tombe en échec)
-                safe_log("error", "Echec envoi email reset", error=str(e))
-            safe_log("info", "Demande de réinitialisation de mot de passe", email=email, user_id=str(user.id))
+                # Log l'erreur et la propager
+                safe_log("error", "Echec envoi email reset", error=str(e), email=email)
+                raise EmailError(f"Impossible d'envoyer l'email de réinitialisation: {str(e)}")
+            
+            safe_log("info", "Demande de réinitialisation de mot de passe traitée", email=email, user_id=str(user.id))
             return True
+        except EmailError:
+            # Propager les erreurs d'email
+            raise
         except Exception as e:
             safe_log("error", "Erreur lors de la demande de réinitialisation", email=email, error=str(e))
             raise BusinessLogicError("Erreur lors de la demande de réinitialisation")

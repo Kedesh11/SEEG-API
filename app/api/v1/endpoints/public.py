@@ -29,7 +29,7 @@ async def get_public_jobs(
     Récupérer la liste des offres d'emploi publiques (sans authentification).
     
     **Filtres automatiques :**
-    - Uniquement les offres NON-INTERNES (is_internal_only = false)
+    - Offres avec offer_status = 'tous', 'externe' ou 'interne'
     - Uniquement les offres ACTIVES (status = 'active')
     
     **Filtres optionnels :**
@@ -42,8 +42,9 @@ async def get_public_jobs(
     """
     try:
         # Requête de base : offres publiques et actives
+        # Afficher uniquement les offres "tous" et "externe" (jamais "interne" car pas d'authentification)
         query = select(JobOffer).where(
-            JobOffer.is_internal_only == False,
+            JobOffer.offer_status.in_(["tous", "externe"]),
             JobOffer.status == "active"
         )
         
@@ -94,8 +95,9 @@ async def get_public_jobs_count(
     - total : Nombre total d'offres publiques actives
     """
     try:
+        # Compter les offres "tous" et "externe"
         query = select(JobOffer).where(
-            JobOffer.is_internal_only == False,
+            JobOffer.offer_status.in_(["tous", "externe"]),
             JobOffer.status == "active"
         )
         
@@ -128,7 +130,7 @@ async def get_public_job_details(
     Récupérer les détails complets d'une offre d'emploi publique (sans authentification).
     
     **Restrictions :**
-    - Uniquement les offres NON-INTERNES (is_internal_only = false)
+    - Offres avec offer_status = 'tous', 'externe' ou 'interne'
     - Uniquement les offres ACTIVES (status = 'active')
     
     **Retourne :**
@@ -138,9 +140,10 @@ async def get_public_job_details(
     """
     try:
         # Requête avec vérifications de sécurité
+        # Uniquement les offres "tous" et "externe"
         query = select(JobOffer).where(
             JobOffer.id == job_id,
-            JobOffer.is_internal_only == False,
+            JobOffer.offer_status.in_(["tous", "externe"]),
             JobOffer.status == "active"
         )
         

@@ -1,0 +1,10 @@
+{
+    "resource_group": "seeg-rg",
+    "app_service": "seeg-backend-api",
+    "container_registry": "seegregistry",
+    "location": "francecentral",
+    "app_service_plan": "seeg-plan",
+    "postgres_server": "seeg-postgres-server",
+    "postgres_resource_group": "seeg-backend-rg",
+    "allowed_ip": "154.119.215.150"
+}

@@ -26,16 +26,32 @@ class JobOfferService:
         NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
         """
         try:
-            job_offer = JobOffer(**job_data.dict())
+            # Convertir en dictionnaire et gérer explicitement les colonnes JSON
+            job_dict = job_data.dict(exclude_unset=True)
+            
+            # S'assurer que les champs JSON sont bien sérialisés
+            # SQLAlchemy/asyncpg gère automatiquement la conversion JSON
+            # Mais on s'assure que None reste None et non {}
+            if 'requirements' in job_dict and job_dict['requirements'] is None:
+                job_dict['requirements'] = None
+            if 'benefits' in job_dict and job_dict['benefits'] is None:
+                job_dict['benefits'] = None
+            if 'responsibilities' in job_dict and job_dict['responsibilities'] is None:
+                job_dict['responsibilities'] = None
+            if 'questions_mtp' in job_dict and job_dict['questions_mtp'] is None:
+                job_dict['questions_mtp'] = None
+            
+            job_offer = JobOffer(**job_dict)
             self.db.add(job_offer)
             # ✅ PAS de commit ici - c'est l'endpoint qui décide
             # ✅ PAS de refresh ici - sera fait après commit par l'endpoint
             
-            logger.info("Offre d'emploi préparée", title=job_offer.title)
+            logger.info("Offre d'emploi préparée", title=job_offer.title, 
+                       has_mtp=job_dict.get('questions_mtp') is not None)
             return job_offer
         except Exception as e:
-            logger.error("Erreur création offre d'emploi", error=str(e))
-            raise BusinessLogicError("Erreur lors de la création de l'offre d'emploi")
+            logger.error("Erreur création offre d'emploi", error=str(e), error_type=type(e).__name__)
+            raise BusinessLogicError(f"Erreur lors de la création de l'offre d'emploi: {str(e)}")
     
     async def get_job_offer(self, job_id: UUID) -> Optional[JobOffer]:
         """Récupérer une offre d'emploi par son ID"""
@@ -61,7 +77,7 @@ class JobOfferService:
         
         Logique de filtrage:
         - Candidat INTERNE (is_internal_candidate=true) : Voit TOUTES les offres
-        - Candidat EXTERNE (is_internal_candidate=false) : Voit UNIQUEMENT les offres accessibles (is_internal_only=false)
+        - Candidat EXTERNE (is_internal_candidate=false) : Voit UNIQUEMENT les offres accessibles (offer_status='tous' ou 'externe')
         - Recruteur/Admin : Voit TOUTES les offres
         """
         try:
@@ -78,8 +94,8 @@ class JobOfferService:
             # Filtrage INTERNE/EXTERNE selon le type de candidat
             if current_user and current_user.role == "candidate":
                 if not current_user.is_internal_candidate:
-                    # Candidat EXTERNE : uniquement les offres non-internes
-                    query = query.where(JobOffer.is_internal_only == False)
+                    # Candidat EXTERNE : uniquement les offres 'tous' ou 'externe'
+                    query = query.where(JobOffer.offer_status.in_(["tous", "externe"]))
                     logger.debug("Filtrage offres pour candidat externe", user_id=str(current_user.id))
                 else:
                     # Candidat INTERNE : toutes les offres
@@ -88,7 +104,7 @@ class JobOfferService:
             query = query.offset(skip).limit(limit).order_by(JobOffer.created_at.desc())
             
             result = await self.db.execute(query)
-            jobs = result.scalars().all()
+            jobs = list(result.scalars().all())
             
             logger.info("Offres récupérées", count=len(jobs), 
                        is_internal_user=current_user.is_internal_candidate if current_user and hasattr(current_user, 'is_internal_candidate') else None)
@@ -111,22 +127,39 @@ class JobOfferService:
             
             # Mettre à jour les champs fournis
             update_data = job_data.dict(exclude_unset=True)
+            
             if update_data:
+                # Gestion explicite des colonnes JSONB pour éviter les erreurs
+                # PostgreSQL gère automatiquement la conversion, mais on s'assure que None reste None
+                for json_field in ['requirements', 'benefits', 'responsibilities', 'questions_mtp']:
+                    if json_field in update_data and update_data[json_field] is None:
+                        update_data[json_field] = None
+                
+                # Mettre à jour en base
                 await self.db.execute(
                     update(JobOffer)
                     .where(JobOffer.id == job_id)
                     .values(**update_data)
                 )
-                # ✅ PAS de commit ici
+                # ✅ PAS de commit ici - c'est l'endpoint qui décide
+                
+                # IMPORTANT: Rafraîchir l'objet pour avoir les données à jour
+                # Note: le refresh complet sera fait après commit par l'endpoint
+                await self.db.refresh(job_offer)
             
-            logger.info("Offre d'emploi mise à jour", job_id=str(job_id))
+            logger.info("Offre d'emploi mise à jour", 
+                       job_id=str(job_id), 
+                       fields_updated=list(update_data.keys()))
             return job_offer
             
         except NotFoundError:
             raise
         except Exception as e:
-            logger.error("Erreur mise à jour offre d'emploi", error=str(e), job_id=str(job_id))
-            raise BusinessLogicError("Erreur lors de la mise à jour de l'offre d'emploi")
+            logger.error("Erreur mise à jour offre d'emploi", 
+                        error=str(e), 
+                        error_type=type(e).__name__,
+                        job_id=str(job_id))
+            raise BusinessLogicError(f"Erreur lors de la mise à jour de l'offre d'emploi: {str(e)}")
     
     async def delete_job_offer(self, job_id: UUID) -> bool:
         """
