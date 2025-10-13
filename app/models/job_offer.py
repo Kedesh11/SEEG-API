@@ -35,10 +35,10 @@ class JobOffer(BaseModel):
     categorie_metier = Column(String)
     job_grade = Column(String)
     
-    # Questions MTP pour l'évaluation des candidats
-    question_metier = Column(Text, nullable=True, comment="Question évaluant les compétences techniques et opérationnelles")
-    question_talent = Column(Text, nullable=True, comment="Question évaluant les aptitudes personnelles et le potentiel")
-    question_paradigme = Column(Text, nullable=True, comment="Question évaluant la vision, les valeurs et la compatibilité culturelle")
+    # Questions MTP pour l'évaluation des candidats (stockées en JSON)
+    # Format: {"questions_metier": ["Q1", "Q2", ...], "questions_talent": [...], "questions_paradigme": [...]}
+    # Max: 7 questions métier (internes), 3 talent, 3 paradigme
+    questions_mtp = Column(JSON, nullable=True, comment="Questions MTP sous forme de tableau auto-incrémenté")
     
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)  # type: ignore[assignment]
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)  # type: ignore[assignment]

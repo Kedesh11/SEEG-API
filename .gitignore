@@ -100,6 +100,7 @@ celerybeat.pid
 .env.local
 .env.production
 .env.*.local
+.env.azure
 *.env
 .venv
 env/
@@ -187,5 +188,20 @@ media/
 
 # Data
 data/
-# Container Registry Credentials
+
+# Scripts de debug temporaires
+check_*.py
+fix_*.py
+fix_*.sql
+import_*.py
+import_*.sql
+insert_*.sql
+generate_*.py
+execute_*.py
+create_tables_*.py
+*-log.txt
+live-*.txt
+
+# Documentation supprimée
 ACR-INFO.md
+COMMANDS.md

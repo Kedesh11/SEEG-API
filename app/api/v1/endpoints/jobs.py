@@ -13,6 +13,7 @@ from app.services.job import JobOfferService
 from app.core.dependencies import get_current_active_user, get_current_recruiter_user
 from app.models.user import User
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError
+from app.core.config.config import settings
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -99,19 +100,51 @@ async def create_job_offer(
         # Ajouter l'ID du recruteur
         job_data.recruiter_id = current_user.id
         
+        safe_log("debug", "Création offre", 
+                recruiter_id=str(current_user.id),
+                title=job_data.title,
+                location=job_data.location)
+        
         job_offer = await job_service.create_job_offer(job_data)
-        safe_log("info", "Offre d'emploi créée", job_id=str(job_offer.id), recruiter_id=str(current_user.id))
+        safe_log("debug", "Offre créée en mémoire", job_id=str(job_offer.id))
+        
+        # ✅ Commit explicite pour persister l'offre en base
+        await db.commit()
+        safe_log("debug", "Commit réussi")
+        
+        await db.refresh(job_offer)
+        safe_log("debug", "Refresh réussi")
+        
+        safe_log("info", "Offre d'emploi créée avec succès", 
+                job_id=str(job_offer.id), 
+                recruiter_id=str(current_user.id),
+                title=job_offer.title)
         return JobOfferResponse.from_orm(job_offer)
+        
     except ValidationError as e:
         safe_log("warning", "Erreur validation création offre", error=str(e))
+        await db.rollback()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        safe_log("error", "Erreur création offre d'emploi", error=str(e))
+        import traceback
+        error_details = traceback.format_exc()
+        safe_log("error", "Erreur création offre d'emploi", 
+                error=str(e),
+                error_type=type(e).__name__,
+                traceback=error_details,
+                recruiter_id=str(current_user.id))
         await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erreur lors de la création de l'offre d'emploi"
-        )
+        # En mode debug, retourner plus de détails
+        if settings.DEBUG:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Erreur: {type(e).__name__}: {str(e)}"
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Erreur lors de la création de l'offre d'emploi"
+            )
 
 @router.get(
     "/{job_id}",
@@ -202,6 +235,11 @@ async def update_job_offer(
             )
         
         updated_job = await job_service.update_job_offer(job_id, job_data)
+        
+        # ✅ Commit explicite pour persister les modifications
+        await db.commit()
+        await db.refresh(updated_job)
+        
         safe_log("info", "Offre d'emploi mise a jour", job_id=str(job_id), recruiter_id=str(current_user.id))
         return JobOfferResponse.from_orm(updated_job)
     except HTTPException:
@@ -242,6 +280,9 @@ async def delete_job_offer(
             )
         
         success = await job_service.delete_job_offer(job_id)
+        
+        # ✅ Commit explicite pour persister la suppression
+        await db.commit()
         
         if success:
             safe_log("info", "Offre d'emploi supprimée", job_id=str(job_id), recruiter_id=str(current_user.id))

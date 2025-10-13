@@ -42,17 +42,12 @@ class ApplicationBase(BaseModel):
         description="Numéro de téléphone du référent (obligatoire pour candidats externes)"
     )
     
-    # MTP Questions
-    mtp_answers: Optional[Dict[str, Any]] = None
-    mtp_metier_q1: Optional[str] = None
-    mtp_metier_q2: Optional[str] = None
-    mtp_metier_q3: Optional[str] = None
-    mtp_paradigme_q1: Optional[str] = None
-    mtp_paradigme_q2: Optional[str] = None
-    mtp_paradigme_q3: Optional[str] = None
-    mtp_talent_q1: Optional[str] = None
-    mtp_talent_q2: Optional[str] = None
-    mtp_talent_q3: Optional[str] = None
+    # Réponses MTP (format JSON auto-incrémenté)
+    # Format: {"reponses_metier": ["R1", "R2", ...], "reponses_talent": [...], "reponses_paradigme": [...]}
+    mtp_answers: Optional[Dict[str, List[str]]] = Field(
+        None,
+        description="Réponses MTP au format: {reponses_metier: [...], reponses_talent: [...], reponses_paradigme: [...]}"
+    )
 
     class Config:
         json_schema_extra = {
@@ -93,16 +88,8 @@ class ApplicationUpdate(BaseModel):
     ref_fullname: Optional[str] = Field(None, max_length=255)
     ref_mail: Optional[str] = Field(None, max_length=255)
     ref_contact: Optional[str] = Field(None, max_length=50)
-    mtp_answers: Optional[Dict[str, Any]] = None
-    mtp_metier_q1: Optional[str] = None
-    mtp_metier_q2: Optional[str] = None
-    mtp_metier_q3: Optional[str] = None
-    mtp_paradigme_q1: Optional[str] = None
-    mtp_paradigme_q2: Optional[str] = None
-    mtp_paradigme_q3: Optional[str] = None
-    mtp_talent_q1: Optional[str] = None
-    mtp_talent_q2: Optional[str] = None
-    mtp_talent_q3: Optional[str] = None
+    # Réponses MTP (format JSON auto-incrémenté)
+    mtp_answers: Optional[Dict[str, List[str]]] = None
 
     class Config:
         json_schema_extra = {

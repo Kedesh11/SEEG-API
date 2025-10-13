@@ -29,17 +29,10 @@ class Application(BaseModel):
     ref_mail = Column(String(255), nullable=True, comment="Adresse e-mail du référent")
     ref_contact = Column(String(50), nullable=True, comment="Numéro de téléphone du référent")
     
-    # MTP Questions
-    mtp_answers = Column(JSON)
-    mtp_metier_q1 = Column(Text)
-    mtp_metier_q2 = Column(Text)
-    mtp_metier_q3 = Column(Text)
-    mtp_paradigme_q1 = Column(Text)
-    mtp_paradigme_q2 = Column(Text)
-    mtp_paradigme_q3 = Column(Text)
-    mtp_talent_q1 = Column(Text)
-    mtp_talent_q2 = Column(Text)
-    mtp_talent_q3 = Column(Text)
+    # Réponses MTP du candidat (format JSON auto-incrémenté)
+    # Format: {"reponses_metier": ["R1", "R2", ...], "reponses_talent": [...], "reponses_paradigme": [...]}
+    # Le nombre de réponses doit correspondre au nombre de questions de l'offre
+    mtp_answers = Column(JSON, nullable=True, comment="Réponses MTP sous forme de tableau auto-incrémenté")
     
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)  # type: ignore[assignment]
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)  # type: ignore[assignment]
@@ -55,7 +48,7 @@ class Application(BaseModel):
     notifications = relationship("Notification", back_populates="application")
 
 class ApplicationDocument(BaseModel):
-    __tablename__ = "application_documents"
+    __tablename__ = "application_documents"  # type: ignore[assignment]
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     application_id = Column(UUID(as_uuid=True), ForeignKey("applications.id", ondelete="CASCADE"))
@@ -70,20 +63,20 @@ class ApplicationDocument(BaseModel):
     application = relationship("Application", back_populates="documents")
 
 class ApplicationDraft(BaseModel):
-    __tablename__ = "application_drafts"
+    __tablename__ = "application_drafts"  # type: ignore[assignment]
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     job_offer_id = Column(UUID(as_uuid=True), ForeignKey("job_offers.id", ondelete="CASCADE"), primary_key=True)
     form_data = Column(JSON)
     ui_state = Column(JSON)
-    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)  # type: ignore[assignment]
 
     # Relations
     user = relationship("User")
     job_offer = relationship("JobOffer", back_populates="application_drafts")
 
 class ApplicationHistory(BaseModel):
-    __tablename__ = "application_history"
+    __tablename__ = "application_history"  # type: ignore[assignment]
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     application_id = Column(UUID(as_uuid=True), ForeignKey("applications.id", ondelete="CASCADE"))
