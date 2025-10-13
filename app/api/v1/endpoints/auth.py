@@ -12,7 +12,7 @@ from uuid import UUID
 
 from app.db.database import get_db
 from app.schemas.auth import (
-    LoginRequest, CandidateSignupRequest, CreateUserRequest, TokenResponse, 
+    LoginRequest, CandidateSignupRequest, CreateUserRequest, TokenResponse, TokenResponseData,
     RefreshTokenRequest, PasswordResetRequest, PasswordResetConfirm, ChangePasswordRequest,
     MatriculeVerificationResponse
 )
@@ -39,11 +39,12 @@ def safe_log(level: str, message: str, **kwargs):
         print(f"{level.upper()}: {message} - {kwargs}")
 
 
-async def _login_core(email: str, password: str, db: AsyncSession) -> TokenResponse:
+async def _login_core(email: str, password: str, db: AsyncSession) -> TokenResponseData:
     """
     Logique centrale de connexion - GESTION EXPLICITE DES TRANSACTIONS.
     
     Architecture propre : commit/rollback gérés ici, pas dans le service.
+    Retourne les tokens + toutes les infos de l'utilisateur (sauf le mot de passe).
     """
     try:
         safe_log("debug", "🔵 Début _login_core", email=email)
@@ -137,6 +138,31 @@ async def _login_core(email: str, password: str, db: AsyncSession) -> TokenRespo
             safe_log("error", "❌ Erreur création tokens", error=str(e), error_type=type(e).__name__)
             raise
         
+        # Étape 6: Ajouter les informations utilisateur (sans le mot de passe)
+        user_data = {
+            "id": str(user.id),
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "role": user.role,
+            "phone": user.phone,
+            "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth is not None else None,
+            "sexe": user.sexe,
+            "matricule": user.matricule,
+            "email_verified": user.email_verified,
+            "last_login": user.last_login.isoformat() if user.last_login is not None else None,
+            "is_active": user.is_active,
+            "is_internal_candidate": user.is_internal_candidate,
+            "adresse": user.adresse,
+            "candidate_status": user.candidate_status,
+            "statut": user.statut,
+            "poste_actuel": user.poste_actuel,
+            "annees_experience": user.annees_experience,
+            "no_seeg_email": user.no_seeg_email,
+            "created_at": user.created_at.isoformat() if user.created_at is not None else None,
+            "updated_at": user.updated_at.isoformat() if user.updated_at is not None else None
+        }
+        
         safe_log(
             "info",
             "✅ Connexion réussie",
@@ -144,7 +170,14 @@ async def _login_core(email: str, password: str, db: AsyncSession) -> TokenRespo
             email=user.email,
             role=user.role,
         )
-        return tokens
+        
+        return TokenResponseData(
+            access_token=tokens.access_token,
+            refresh_token=tokens.refresh_token,
+            token_type=tokens.token_type,
+            expires_in=tokens.expires_in,
+            user=user_data
+        )
         
     except HTTPException:
         # HTTPException = erreurs métier, pas de rollback nécessaire
@@ -172,7 +205,7 @@ async def login_token_deprecated(
     return await _login_core(form_data.username, form_data.password, db)
 
 
-@router.post("/login", response_model=TokenResponse, summary="Connexion utilisateur (JSON ou form)", openapi_extra={
+@router.post("/login", response_model=TokenResponseData, summary="Connexion utilisateur (JSON ou form)", openapi_extra={
     "requestBody": {
         "content": {
             "application/json": {
@@ -186,7 +219,21 @@ async def login_token_deprecated(
     },
     "responses": {
         "200": {
-            "content": {"application/json": {"example": {"access_token": "<jwt>", "refresh_token": "<jwt>", "token_type": "bearer", "expires_in": 3600}}}
+            "content": {"application/json": {"example": {
+                "access_token": "<jwt>",
+                "refresh_token": "<jwt>",
+                "token_type": "bearer",
+                "expires_in": 3600,
+                "user": {
+                    "id": "uuid",
+                    "email": "candidate@example.com",
+                    "first_name": "Jean",
+                    "last_name": "Dupont",
+                    "role": "candidate",
+                    "statut": "actif",
+                    "matricule": 12345
+                }
+            }}}
         },
         "401": {"description": "Email ou mot de passe incorrect"},
         "429": {"description": "Trop de tentatives de connexion"}
@@ -215,7 +262,38 @@ async def login(
                     user = result.scalar_one_or_none()
                     if user:
                         auth_service = AuthService(db)
-                        return await auth_service.create_access_token(user)
+                        tokens = await auth_service.create_access_token(user)
+                        # Construire la réponse complète avec les infos utilisateur
+                        user_data = {
+                            "id": str(user.id),
+                            "email": user.email,
+                            "first_name": user.first_name,
+                            "last_name": user.last_name,
+                            "role": user.role,
+                            "phone": user.phone,
+                            "date_of_birth": user.date_of_birth.isoformat() if user.date_of_birth is not None else None,
+                            "sexe": user.sexe,
+                            "matricule": user.matricule,
+                            "email_verified": user.email_verified,
+                            "last_login": user.last_login.isoformat() if user.last_login is not None else None,
+                            "is_active": user.is_active,
+                            "is_internal_candidate": user.is_internal_candidate,
+                            "adresse": user.adresse,
+                            "candidate_status": user.candidate_status,
+                            "statut": user.statut,
+                            "poste_actuel": user.poste_actuel,
+                            "annees_experience": user.annees_experience,
+                            "no_seeg_email": user.no_seeg_email,
+                            "created_at": user.created_at.isoformat() if user.created_at is not None else None,
+                            "updated_at": user.updated_at.isoformat() if user.updated_at is not None else None
+                        }
+                        return TokenResponseData(
+                            access_token=tokens.access_token,
+                            refresh_token=tokens.refresh_token,
+                            token_type=tokens.token_type,
+                            expires_in=tokens.expires_in,
+                            user=user_data
+                        )
             except Exception:
                 # Ignore et poursuivre le flux normal (email/password)
                 pass

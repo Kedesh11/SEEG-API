@@ -123,6 +123,11 @@ class CreateUserRequest(BaseModel):
     last_name: str = Field(..., min_length=1, max_length=100, description="Nom")
     role: UserRole = Field(..., description="Rôle de l'utilisateur")
     phone: Optional[str] = Field(None, max_length=20, description="Numéro de téléphone")
+    
+    # Champs optionnels (non pertinents pour admin/recruteur mais requis par le modèle User)
+    date_of_birth: Optional[date] = Field(None, description="Date de naissance (optionnel pour admin/recruteur)")
+    sexe: Optional[str] = Field(None, description="Sexe: M ou F (optionnel pour admin/recruteur)")
+    candidate_status: Optional[str] = Field(None, description="Type de candidat (non applicable pour admin/recruteur)")
 
     # Validation de l'email
     @field_validator('email')
@@ -135,6 +140,14 @@ class CreateUserRequest(BaseModel):
     @classmethod
     def validate_password(cls, v):
         return Validators.validate_password(v, min_length=12)
+    
+    # Validation du sexe (optionnel)
+    @field_validator('sexe')
+    @classmethod
+    def validate_sexe(cls, v):
+        if v is not None and v not in ['M', 'F']:
+            raise ValueError("Le sexe doit être 'M' ou 'F'")
+        return v
 
     class Config:
         json_schema_extra = {

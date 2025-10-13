@@ -308,7 +308,7 @@ class AuthService:
             # Hasher le mot de passe
             hashed = self.password_manager.hash_password(user_data.password)
             
-            # Créer l'utilisateur
+            # Créer l'utilisateur avec valeurs par défaut pour champs optionnels
             user = User(
                 email=user_data.email,  # type: ignore
                 hashed_password=hashed,  # type: ignore
@@ -316,6 +316,12 @@ class AuthService:
                 last_name=user_data.last_name,  # type: ignore
                 phone=user_data.phone,  # type: ignore
                 role=user_data.role,  # type: ignore
+                # Champs optionnels avec valeurs par défaut pour recruteurs/admins
+                date_of_birth=user_data.date_of_birth,  # type: ignore
+                sexe=user_data.sexe,  # type: ignore
+                candidate_status=user_data.candidate_status,  # type: ignore
+                statut='actif',  # type: ignore  # Recruteurs/admins sont toujours actifs
+                no_seeg_email=False,  # type: ignore  # Par défaut, non applicable pour recruteurs
             )
             self.db.add(user)
             

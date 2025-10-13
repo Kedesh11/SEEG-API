@@ -802,15 +802,34 @@ function New-DockerImage {
         
         Write-Log -Message "Build de l'image dans le cloud (ACR Build)" -Level "INFO" -Context @{ Image = $imageFull }
         
-        az acr build `
+        # Temporairement ignorer les warnings non bloquants
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        
+        # Définir l'encodage UTF-8 pour éviter les erreurs d'encodage Azure CLI sur Windows
+        $env:PYTHONIOENCODING = 'utf-8'
+        
+        $buildOutput = az acr build `
             --registry $CONFIG.ContainerRegistry `
             --image "$($CONFIG.ImageName):${imageTag}" `
             --file $CONFIG.DockerfilePath `
-            . 2>&1 | Out-Null
+            --no-logs `
+            . 2>&1
+        
+        $ErrorActionPreference = $previousErrorAction
         
         if ($LASTEXITCODE -ne 0) {
+            Write-Host "    [ERREUR] Sortie du build:" -ForegroundColor Red
+            $buildOutput | Select-Object -Last 20 | ForEach-Object { Write-Host "      $_" -ForegroundColor Yellow }
             Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Echec ACR Build"
             throw "Echec du build ACR"
+        }
+        
+        # Afficher uniquement les dernières lignes importantes
+        $buildOutput | Select-Object -Last 5 | ForEach-Object { 
+            if ($_ -match "(Successfully|tagged|Build complete)") {
+                Write-Host "      $_" -ForegroundColor Gray
+            }
         }
         
         Write-ProgressBar -Activity "Build Azure" -Current 1 -Total 1 -Status "Build cloud termine avec succes"

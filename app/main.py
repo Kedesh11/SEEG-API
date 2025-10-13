@@ -387,6 +387,217 @@ app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["Webhooks"]
 app.include_router(monitoring_router, prefix="/monitoring", tags=["📊 Monitoring"])
 
 # ============================================================================
+# ENDPOINT TEMPORAIRE DE DEBUG - À SUPPRIMER APRÈS CORRECTION
+# ============================================================================
+
+@app.get("/debug/fix-alembic-azure", tags=["🔧 Debug"])
+async def fix_alembic_azure():
+    """Endpoint temporaire pour corriger la révision Alembic sur Azure"""
+    import asyncpg
+    from app.core.config.config import settings
+    
+    try:
+        # Connexion à la base de données
+        db_url = settings.DATABASE_URL.replace('postgresql+asyncpg://', 'postgresql://')
+        conn = await asyncpg.connect(db_url)
+        
+        # Vérifier la révision actuelle
+        current_rev = await conn.fetchval("SELECT version_num FROM alembic_version")
+        
+        result = {
+            "current_revision": current_rev,
+            "action": "none",
+            "message": "Révision déjà correcte"
+        }
+        
+        # Corriger si nécessaire
+        if current_rev == 'd150a8fca35c':
+            await conn.execute(
+                "UPDATE alembic_version SET version_num = '20251010_access_requests' WHERE version_num = 'd150a8fca35c'"
+            )
+            new_rev = await conn.fetchval("SELECT version_num FROM alembic_version")
+            result = {
+                "current_revision": current_rev,
+                "new_revision": new_rev,
+                "action": "updated",
+                "message": "✅ Révision Alembic corrigée avec succès"
+            }
+        
+        # Vérifier les colonnes de la table users
+        columns = await conn.fetch("""
+            SELECT column_name, data_type 
+            FROM information_schema.columns 
+            WHERE table_name = 'users'
+            ORDER BY ordinal_position
+        """)
+        
+        result["users_columns"] = [{"name": c["column_name"], "type": c["data_type"]} for c in columns]
+        result["has_adresse_column"] = any(c["column_name"] == "adresse" for c in columns)
+        
+        await conn.close()
+        
+        return result
+        
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "message": "❌ Erreur lors de la correction"
+        }
+
+@app.post("/debug/import-seeg-agents", tags=["🔧 Debug"])
+async def import_seeg_agents():
+    """Importe les agents SEEG depuis le CSV vers la base de données"""
+    import asyncpg
+    import csv
+    from pathlib import Path
+    from app.core.config.config import settings
+    
+    try:
+        db_url = settings.DATABASE_URL.replace('postgresql+asyncpg://', 'postgresql://')
+        conn = await asyncpg.connect(db_url)
+        
+        # Vérifier si la table existe
+        table_exists = await conn.fetchval("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'seeg_agents'
+            )
+        """)
+        
+        if not table_exists:
+            # Créer la table
+            await conn.execute("""
+                CREATE TABLE seeg_agents (
+                    matricule INTEGER PRIMARY KEY,
+                    nom VARCHAR(255),
+                    prenom VARCHAR(255),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+        
+        # Lire le CSV
+        csv_path = Path("app/data/seeg_agents.csv")
+        agents_imported = 0
+        agents_skipped = 0
+        errors = []
+        
+        # Compter avant
+        count_before = await conn.fetchval("SELECT COUNT(*) FROM seeg_agents")
+        
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                matricule = None
+                try:
+                    matricule = int(row['matricule'])
+                    nom = row['nom'].strip() if row['nom'] else ""
+                    prenom = row['prenom'].strip() if row['prenom'] else ""
+                    
+                    # Insérer avec ON CONFLICT et compter le résultat
+                    result = await conn.execute("""
+                        INSERT INTO seeg_agents (matricule, nom, prenom)
+                        VALUES ($1, $2, $3)
+                        ON CONFLICT (matricule) DO NOTHING
+                    """, matricule, nom, prenom)
+                    
+                    # Vérifier si l'insertion a réussi
+                    if result == "INSERT 0 1":
+                        agents_imported += 1
+                    else:
+                        agents_skipped += 1
+                except Exception as e:
+                    mat_str = str(matricule) if matricule is not None else "unknown"
+                    errors.append(f"{mat_str}: {str(e)}")
+                    agents_skipped += 1
+        
+        count_after = await conn.fetchval("SELECT COUNT(*) FROM seeg_agents")
+        await conn.close()
+        
+        return {
+            "message": "✅ Import terminé",
+            "table_existed": table_exists,
+            "count_before": count_before,
+            "count_after": count_after,
+            "agents_imported": agents_imported,
+            "agents_skipped": agents_skipped,
+            "errors": errors[:10] if errors else []
+        }
+        
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "message": "❌ Erreur lors de l'import"
+        }
+
+@app.post("/debug/apply-migration-20251010-auth", tags=["🔧 Debug"])
+async def apply_migration_auth_fields():
+    """Applique manuellement la migration 20251010_add_user_auth_fields"""
+    import asyncpg
+    from app.core.config.config import settings
+    
+    try:
+        db_url = settings.DATABASE_URL.replace('postgresql+asyncpg://', 'postgresql://')
+        conn = await asyncpg.connect(db_url)
+        
+        results = []
+        
+        # Ajout des colonnes manquantes
+        columns_to_add = [
+            ("adresse", "TEXT", "Adresse complete du candidat"),
+            ("candidate_status", "VARCHAR(10)", "Type de candidat: interne ou externe"),
+            ("statut", "VARCHAR(20) DEFAULT 'actif' NOT NULL", "Statut du compte"),
+            ("poste_actuel", "TEXT", "Poste actuel du candidat"),
+            ("annees_experience", "INTEGER", "Annees d experience professionnelle"),
+            ("no_seeg_email", "BOOLEAN DEFAULT false NOT NULL", "Candidat interne sans email seeg-gabon.com")
+        ]
+        
+        for col_name, col_type, col_comment in columns_to_add:
+            try:
+                # Vérifier si la colonne existe
+                exists = await conn.fetchval(f"""
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.columns 
+                        WHERE table_name='users' AND column_name='{col_name}'
+                    )
+                """)
+                
+                if not exists:
+                    # Échapper les apostrophes dans le commentaire
+                    safe_comment = col_comment.replace("'", "''")
+                    await conn.execute(f"""
+                        ALTER TABLE users ADD COLUMN {col_name} {col_type};
+                        COMMENT ON COLUMN users.{col_name} IS '{safe_comment}';
+                    """)
+                    results.append({"column": col_name, "status": "✅ Ajoutée"})
+                else:
+                    results.append({"column": col_name, "status": "ℹ️ Existe déjà"})
+            except Exception as e:
+                results.append({"column": col_name, "status": f"❌ Erreur: {str(e)}"})
+        
+        # Mettre à jour la révision Alembic
+        await conn.execute("UPDATE alembic_version SET version_num = '20251010_add_user_auth'")
+        
+        await conn.close()
+        
+        return {
+            "message": "✅ Migration appliquée",
+            "columns": results,
+            "new_revision": "20251010_add_user_auth"
+        }
+        
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "message": "❌ Erreur lors de l'application"
+        }
+
+# ============================================================================
 # GESTIONNAIRE D'ERREURS GLOBAL
 # ============================================================================
 
@@ -426,6 +637,58 @@ async def internal_error_handler(request, exc):
 # ============================================================================
 # ÉVÉNEMENTS DE L'APPLICATION
 # ============================================================================
+
+# ========================================
+# DEBUG: Migration MTP Questions
+# ========================================
+@app.post("/debug/apply-mtp-questions-migration")
+async def apply_mtp_questions_migration():
+    """Appliquer la migration MTP: ajouter questions_mtp a job_offers et supprimer anciennes colonnes de applications"""
+    from app.db.database import get_db
+    import sqlalchemy as sa
+    import traceback
+    
+    try:
+        async for db in get_db():
+            try:
+                # 1. Ajouter la colonne JSON MTP aux offres d'emploi
+                await db.execute(sa.text("ALTER TABLE job_offers ADD COLUMN IF NOT EXISTS questions_mtp JSONB;"))
+                await db.execute(sa.text("COMMENT ON COLUMN job_offers.questions_mtp IS 'Questions MTP sous forme de tableau auto-incremente (format: {questions_metier: [...], questions_talent: [...], questions_paradigme: [...]})';"))
+                
+                # 2. Supprimer les anciennes colonnes MTP individuelles de applications
+                old_columns = [
+                    'mtp_metier_q1', 'mtp_metier_q2', 'mtp_metier_q3',
+                    'mtp_talent_q1', 'mtp_talent_q2', 'mtp_talent_q3',
+                    'mtp_paradigme_q1', 'mtp_paradigme_q2', 'mtp_paradigme_q3'
+                ]
+                
+                columns_dropped = []
+                for col in old_columns:
+                    try:
+                        await db.execute(sa.text(f"ALTER TABLE applications DROP COLUMN IF EXISTS {col};"))
+                        columns_dropped.append(col)
+                    except Exception as col_error:
+                        # Continuer même si une colonne n'existe pas
+                        pass
+                
+                await db.commit()
+                
+                return {
+                    "success": True,
+                    "message": "Migration MTP appliquee avec succes",
+                    "job_offers_column_added": "questions_mtp (JSONB)",
+                    "applications_columns_dropped": columns_dropped
+                }
+            except Exception as e:
+                await db.rollback()
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "type": type(e).__name__,
+                    "traceback": traceback.format_exc()
+                }
+    except Exception as e:
+        return {"success": False, "error": f"Erreur globale: {str(e)}"}
 
 # ============================================================================
 # FONCTIONS UTILITAIRES
