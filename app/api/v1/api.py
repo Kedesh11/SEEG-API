@@ -3,7 +3,7 @@ API Router principal pour la version 1
 """
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, users, jobs
+from app.api.v1.endpoints import auth, users, jobs, public
 from app.api.v1.endpoints import webhooks
 
 api_router = APIRouter()
@@ -12,6 +12,7 @@ api_router = APIRouter()
 api_router.include_router(auth.router, prefix="/auth", tags=["🔐 Authentification"])
 api_router.include_router(users.router, prefix="/users", tags=["👥 Utilisateurs"])
 api_router.include_router(jobs.router, prefix="/jobs", tags=["💼 Offres d'emploi"])
+api_router.include_router(public.router, prefix="/public", tags=["🌐 Endpoints Publics (sans auth)"])
 api_router.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
 
 # Endpoint de statut de l'API
@@ -25,6 +26,7 @@ async def api_status():
             "auth": "/api/v1/auth",
             "users": "/api/v1/users", 
             "jobs": "/api/v1/jobs",
+            "public": "/api/v1/public (SANS authentification)",
             "webhooks": "/api/v1/webhooks"
         }
     }

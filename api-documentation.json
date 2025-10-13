@@ -1,0 +1,1180 @@
+{
+    "api": {
+        "name": "SEEG Backend API",
+        "version": "2.1.0",
+        "description": "API de gestion des ressources humaines pour la SEEG",
+        "baseUrl": "https://seeg-backend-api.azurewebsites.net",
+        "documentation": "https://seeg-backend-api.azurewebsites.net/docs"
+    },
+    "endpoints": {
+        "authentication": {
+            "basePath": "/api/v1/auth",
+            "endpoints": [
+                {
+                    "method": "POST",
+                    "path": "/login",
+                    "summary": "Connexion utilisateur",
+                    "auth": false,
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "email": "string (required)",
+                            "password": "string (required, min 8 caractères)"
+                        },
+                        "example": {
+                            "email": "user@example.com",
+                            "password": "SecurePass123!"
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Connexion réussie",
+                            "schema": {
+                                "access_token": "string (JWT)",
+                                "refresh_token": "string (JWT)",
+                                "token_type": "string (bearer)",
+                                "expires_in": "integer (secondes)",
+                                "user": {
+                                    "id": "uuid",
+                                    "email": "string",
+                                    "first_name": "string",
+                                    "last_name": "string",
+                                    "role": "string (admin|recruiter|observer|candidate)",
+                                    "phone": "string",
+                                    "date_of_birth": "date",
+                                    "sexe": "string (M|F)",
+                                    "matricule": "integer",
+                                    "email_verified": "boolean",
+                                    "last_login": "datetime",
+                                    "is_active": "boolean",
+                                    "is_internal_candidate": "boolean",
+                                    "adresse": "string",
+                                    "candidate_status": "string (interne|externe)",
+                                    "statut": "string (actif|en_attente|inactif|bloqué|archivé)",
+                                    "poste_actuel": "string",
+                                    "annees_experience": "integer",
+                                    "no_seeg_email": "boolean",
+                                    "created_at": "datetime",
+                                    "updated_at": "datetime"
+                                }
+                            }
+                        },
+                        "401": {
+                            "description": "Email ou mot de passe incorrect"
+                        },
+                        "403": {
+                            "description": "Compte en attente, bloqué, inactif ou archivé"
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/signup",
+                    "summary": "Inscription candidat (externe ou interne)",
+                    "auth": false,
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "email": "string (required)",
+                            "password": "string (required, min 12 caractères)",
+                            "first_name": "string (required)",
+                            "last_name": "string (required)",
+                            "phone": "string (required)",
+                            "date_of_birth": "date (required)",
+                            "sexe": "string (required, M|F)",
+                            "candidate_status": "string (required, interne|externe)",
+                            "matricule": "integer (required si interne)",
+                            "no_seeg_email": "boolean (required si interne)",
+                            "adresse": "string (optional)",
+                            "poste_actuel": "string (optional)",
+                            "annees_experience": "integer (optional)"
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Inscription réussie"
+                        },
+                        "400": {
+                            "description": "Données invalides"
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/verify-matricule",
+                    "summary": "Vérifier un matricule SEEG",
+                    "auth": false,
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "matricule": "integer (required)"
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Matricule valide",
+                            "schema": {
+                                "is_valid": "boolean",
+                                "agent": {
+                                    "matricule": "integer",
+                                    "nom": "string",
+                                    "prenom": "string"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/create-user",
+                    "summary": "Créer un utilisateur (admin/recruteur/observateur)",
+                    "auth": true,
+                    "roles": [
+                        "admin"
+                    ],
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "email": "string (required)",
+                            "password": "string (required)",
+                            "first_name": "string (required)",
+                            "last_name": "string (required)",
+                            "role": "string (required, admin|recruiter|observer)",
+                            "phone": "string (optional)",
+                            "date_of_birth": "date (optional)",
+                            "sexe": "string (optional, M|F)",
+                            "candidate_status": "string (optional)"
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Utilisateur créé"
+                        }
+                    }
+                },
+                {
+                    "method": "GET",
+                    "path": "/me",
+                    "summary": "Profil utilisateur connecté",
+                    "auth": true,
+                    "responses": {
+                        "200": {
+                            "description": "Profil utilisateur complet"
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/refresh",
+                    "summary": "Rafraîchir le token JWT",
+                    "auth": false,
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "refresh_token": "string (required)"
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Nouveau access token généré"
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/logout",
+                    "summary": "Déconnexion",
+                    "auth": true,
+                    "responses": {
+                        "200": {
+                            "description": "Déconnexion réussie"
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/forgot-password",
+                    "summary": "Demander réinitialisation mot de passe",
+                    "auth": false,
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "email": "string (required)"
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Email de réinitialisation envoyé"
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/reset-password",
+                    "summary": "Confirmer réinitialisation mot de passe",
+                    "auth": false,
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "token": "string (required)",
+                            "new_password": "string (required)"
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Mot de passe réinitialisé"
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/change-password",
+                    "summary": "Changer le mot de passe",
+                    "auth": true,
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "old_password": "string (required)",
+                            "new_password": "string (required)"
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Mot de passe changé"
+                        }
+                    }
+                }
+            ]
+        },
+        "accessRequests": {
+            "basePath": "/api/v1/access-requests",
+            "description": "Gestion des demandes d'accès pour candidats internes sans email SEEG",
+            "endpoints": [
+                {
+                    "method": "GET",
+                    "path": "/",
+                    "summary": "Lister toutes les demandes d'accès",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin",
+                        "observer"
+                    ],
+                    "queryParams": {
+                        "status": "string (optional, pending|approved|rejected)",
+                        "viewed": "boolean (optional)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Liste des demandes",
+                            "schema": {
+                                "requests": "array",
+                                "total": "integer",
+                                "pending_count": "integer",
+                                "unviewed_count": "integer"
+                            }
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/approve",
+                    "summary": "Approuver une demande d'accès",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin"
+                    ],
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "request_id": "uuid (required)"
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Demande approuvée, email envoyé au candidat"
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/reject",
+                    "summary": "Refuser une demande d'accès",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin"
+                    ],
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "request_id": "uuid (required)",
+                            "rejection_reason": "string (required, min 20 caractères)"
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Demande refusée, email avec motif envoyé"
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/mark-all-viewed",
+                    "summary": "Marquer toutes les demandes comme vues",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin",
+                        "observer"
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Demandes marquées comme vues"
+                        }
+                    }
+                },
+                {
+                    "method": "GET",
+                    "path": "/unviewed-count",
+                    "summary": "Nombre de demandes non vues (badge notification)",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin",
+                        "observer"
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Compteur de demandes non vues",
+                            "schema": {
+                                "unviewed_count": "integer"
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+        "jobs": {
+            "basePath": "/api/v1/jobs",
+            "description": "Gestion des offres d'emploi avec questions MTP flexibles",
+            "endpoints": [
+                {
+                    "method": "GET",
+                    "path": "/",
+                    "summary": "Lister les offres d'emploi (filtrées automatiquement)",
+                    "auth": true,
+                    "description": "Candidats externes voient uniquement offres non-internes. Candidats internes voient toutes les offres.",
+                    "queryParams": {
+                        "status": "string (optional, active|draft|closed|cancelled)",
+                        "is_internal_only": "boolean (optional)",
+                        "skip": "integer (optional, default 0)",
+                        "limit": "integer (optional, default 100)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Liste des offres",
+                            "schema": {
+                                "jobs": "array",
+                                "total": "integer"
+                            }
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/",
+                    "summary": "Créer une offre d'emploi avec questions MTP",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin"
+                    ],
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "title": "string (required)",
+                            "description": "string (required)",
+                            "location": "string (required)",
+                            "contract_type": "string (required, CDI|CDD|Stage|Alternance)",
+                            "status": "string (optional, default active)",
+                            "is_internal_only": "boolean (optional, default false)",
+                            "questions_mtp": {
+                                "type": "object",
+                                "description": "Questions MTP au format JSON flexible",
+                                "schema": {
+                                    "questions_metier": "array[string] (max 7 questions)",
+                                    "questions_talent": "array[string] (max 3 questions)",
+                                    "questions_paradigme": "array[string] (max 3 questions)"
+                                },
+                                "example": {
+                                    "questions_metier": [
+                                        "Décrivez votre expérience en Python",
+                                        "Quels frameworks maîtrisez-vous?"
+                                    ],
+                                    "questions_talent": [
+                                        "Comment travaillez-vous en équipe?"
+                                    ],
+                                    "questions_paradigme": [
+                                        "Quelle est votre vision du développement durable?"
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Offre créée avec succès",
+                            "schema": {
+                                "id": "uuid",
+                                "title": "string",
+                                "description": "string",
+                                "location": "string",
+                                "contract_type": "string",
+                                "status": "string",
+                                "is_internal_only": "boolean",
+                                "questions_mtp": "object",
+                                "recruiter_id": "uuid",
+                                "created_at": "datetime",
+                                "updated_at": "datetime"
+                            }
+                        }
+                    }
+                },
+                {
+                    "method": "GET",
+                    "path": "/{id}",
+                    "summary": "Détails d'une offre d'emploi",
+                    "auth": true,
+                    "pathParams": {
+                        "id": "uuid (required)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Détails de l'offre avec questions MTP"
+                        },
+                        "404": {
+                            "description": "Offre non trouvée"
+                        }
+                    }
+                },
+                {
+                    "method": "PUT",
+                    "path": "/{id}",
+                    "summary": "Modifier une offre d'emploi",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin"
+                    ],
+                    "pathParams": {
+                        "id": "uuid (required)"
+                    },
+                    "requestBody": {
+                        "type": "application/json",
+                        "description": "Tous les champs sont optionnels"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Offre modifiée"
+                        }
+                    }
+                },
+                {
+                    "method": "DELETE",
+                    "path": "/{id}",
+                    "summary": "Supprimer une offre d'emploi",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin"
+                    ],
+                    "pathParams": {
+                        "id": "uuid (required)"
+                    },
+                    "responses": {
+                        "204": {
+                            "description": "Offre supprimée"
+                        }
+                    }
+                },
+                {
+                    "method": "GET",
+                    "path": "/recruiter/{recruiter_id}",
+                    "summary": "Offres d'un recruteur spécifique",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin",
+                        "observer"
+                    ],
+                    "pathParams": {
+                        "recruiter_id": "uuid (required)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Liste des offres du recruteur"
+                        }
+                    }
+                }
+            ]
+        },
+        "applications": {
+            "basePath": "/api/v1/applications",
+            "description": "Gestion des candidatures avec réponses MTP",
+            "endpoints": [
+                {
+                    "method": "POST",
+                    "path": "/",
+                    "summary": "Soumettre une candidature avec réponses MTP",
+                    "auth": true,
+                    "roles": [
+                        "candidate"
+                    ],
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "job_offer_id": "uuid (required)",
+                            "reference_contacts": "string (optional)",
+                            "availability_start": "date (optional)",
+                            "has_been_manager": "boolean (optional, pour internes)",
+                            "ref_entreprise": "string (optional, pour externes)",
+                            "ref_fullname": "string (optional, pour externes)",
+                            "ref_mail": "string (optional, pour externes)",
+                            "ref_contact": "string (optional, pour externes)",
+                            "mtp_answers": {
+                                "type": "object",
+                                "description": "Réponses MTP au format JSON",
+                                "schema": {
+                                    "reponses_metier": "array[string]",
+                                    "reponses_talent": "array[string]",
+                                    "reponses_paradigme": "array[string]"
+                                },
+                                "example": {
+                                    "reponses_metier": [
+                                        "J'ai 5 ans d'expérience avec Python...",
+                                        "Je maîtrise Django, Flask, FastAPI..."
+                                    ],
+                                    "reponses_talent": [
+                                        "Je privilégie la communication ouverte..."
+                                    ],
+                                    "reponses_paradigme": [
+                                        "Je pense que le développement durable..."
+                                    ]
+                                }
+                            }
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Candidature soumise"
+                        }
+                    }
+                },
+                {
+                    "method": "GET",
+                    "path": "/",
+                    "summary": "Lister les candidatures",
+                    "auth": true,
+                    "description": "Candidats voient leurs propres candidatures. Recruteurs/Admin voient toutes.",
+                    "queryParams": {
+                        "status": "string (optional, pending|reviewed|shortlisted|rejected|accepted)",
+                        "job_offer_id": "uuid (optional)",
+                        "skip": "integer (optional)",
+                        "limit": "integer (optional)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Liste des candidatures"
+                        }
+                    }
+                },
+                {
+                    "method": "GET",
+                    "path": "/{id}",
+                    "summary": "Détails d'une candidature",
+                    "auth": true,
+                    "pathParams": {
+                        "id": "uuid (required)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Détails de la candidature avec réponses MTP"
+                        }
+                    }
+                },
+                {
+                    "method": "PUT",
+                    "path": "/{id}/status",
+                    "summary": "Changer le statut d'une candidature",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin"
+                    ],
+                    "pathParams": {
+                        "id": "uuid (required)"
+                    },
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "status": "string (required, pending|reviewed|shortlisted|rejected|accepted)",
+                            "notes": "string (optional)"
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Statut mis à jour"
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/{id}/documents",
+                    "summary": "Upload de documents PDF (CV, lettres, diplômes)",
+                    "auth": true,
+                    "roles": [
+                        "candidate"
+                    ],
+                    "pathParams": {
+                        "id": "uuid (required)"
+                    },
+                    "requestBody": {
+                        "type": "multipart/form-data",
+                        "schema": {
+                            "document_type": "string (required, cv|cover_letter|certificats|diplome)",
+                            "file": "file (required, PDF, max 10MB)"
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Document uploadé"
+                        }
+                    }
+                }
+            ]
+        },
+        "users": {
+            "basePath": "/api/v1/users",
+            "endpoints": [
+                {
+                    "method": "GET",
+                    "path": "/",
+                    "summary": "Lister les utilisateurs",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin",
+                        "observer"
+                    ],
+                    "queryParams": {
+                        "role": "string (optional, admin|recruiter|observer|candidate)",
+                        "statut": "string (optional, actif|en_attente|inactif|bloqué|archivé)",
+                        "skip": "integer (optional)",
+                        "limit": "integer (optional)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Liste des utilisateurs"
+                        }
+                    }
+                },
+                {
+                    "method": "GET",
+                    "path": "/{id}",
+                    "summary": "Détails d'un utilisateur",
+                    "auth": true,
+                    "pathParams": {
+                        "id": "uuid (required)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Profil utilisateur complet"
+                        }
+                    }
+                },
+                {
+                    "method": "PUT",
+                    "path": "/{id}",
+                    "summary": "Modifier un utilisateur",
+                    "auth": true,
+                    "roles": [
+                        "admin"
+                    ],
+                    "pathParams": {
+                        "id": "uuid (required)"
+                    },
+                    "requestBody": {
+                        "type": "application/json",
+                        "description": "Tous les champs sont optionnels"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Utilisateur modifié"
+                        }
+                    }
+                },
+                {
+                    "method": "DELETE",
+                    "path": "/{id}",
+                    "summary": "Supprimer un utilisateur",
+                    "auth": true,
+                    "roles": [
+                        "admin"
+                    ],
+                    "pathParams": {
+                        "id": "uuid (required)"
+                    },
+                    "responses": {
+                        "204": {
+                            "description": "Utilisateur supprimé"
+                        }
+                    }
+                }
+            ]
+        },
+        "evaluations": {
+            "basePath": "/api/v1/evaluations",
+            "description": "Évaluations protocoles MTP (Méthode de Travail Personnalisé)",
+            "endpoints": [
+                {
+                    "method": "POST",
+                    "path": "/protocol1",
+                    "summary": "Créer une évaluation Protocole 1",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin"
+                    ],
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "application_id": "uuid (required)",
+                            "score_metier": "integer (required, 0-100)",
+                            "score_talent": "integer (required, 0-100)",
+                            "score_paradigme": "integer (required, 0-100)",
+                            "comments": "string (optional)"
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Évaluation créée"
+                        }
+                    }
+                },
+                {
+                    "method": "POST",
+                    "path": "/protocol2",
+                    "summary": "Créer une évaluation Protocole 2",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin"
+                    ],
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "application_id": "uuid (required)",
+                            "technical_score": "integer (required, 0-100)",
+                            "behavioral_score": "integer (required, 0-100)",
+                            "recommendation": "string (required, hire|reject|maybe)",
+                            "comments": "string (optional)"
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Évaluation créée"
+                        }
+                    }
+                },
+                {
+                    "method": "GET",
+                    "path": "/application/{application_id}",
+                    "summary": "Évaluations d'une candidature",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin",
+                        "observer"
+                    ],
+                    "pathParams": {
+                        "application_id": "uuid (required)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Évaluations protocoles 1 et 2"
+                        }
+                    }
+                }
+            ]
+        },
+        "interviews": {
+            "basePath": "/api/v1/interviews",
+            "description": "Planification et gestion des entretiens",
+            "endpoints": [
+                {
+                    "method": "POST",
+                    "path": "/",
+                    "summary": "Créer un créneau d'entretien",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin"
+                    ],
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "application_id": "uuid (required)",
+                            "scheduled_at": "datetime (required)",
+                            "duration": "integer (required, minutes)",
+                            "location": "string (required)",
+                            "interview_type": "string (required, phone|video|in_person)",
+                            "notes": "string (optional)"
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Entretien créé"
+                        }
+                    }
+                },
+                {
+                    "method": "GET",
+                    "path": "/",
+                    "summary": "Lister les entretiens",
+                    "auth": true,
+                    "queryParams": {
+                        "status": "string (optional, scheduled|completed|cancelled)",
+                        "from_date": "date (optional)",
+                        "to_date": "date (optional)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Liste des entretiens"
+                        }
+                    }
+                },
+                {
+                    "method": "PUT",
+                    "path": "/{id}",
+                    "summary": "Modifier un entretien",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin"
+                    ],
+                    "pathParams": {
+                        "id": "uuid (required)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Entretien modifié"
+                        }
+                    }
+                },
+                {
+                    "method": "DELETE",
+                    "path": "/{id}",
+                    "summary": "Annuler un entretien",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin"
+                    ],
+                    "pathParams": {
+                        "id": "uuid (required)"
+                    },
+                    "responses": {
+                        "204": {
+                            "description": "Entretien annulé"
+                        }
+                    }
+                }
+            ]
+        },
+        "notifications": {
+            "basePath": "/api/v1/notifications",
+            "endpoints": [
+                {
+                    "method": "GET",
+                    "path": "/",
+                    "summary": "Lister les notifications de l'utilisateur",
+                    "auth": true,
+                    "queryParams": {
+                        "is_read": "boolean (optional)",
+                        "skip": "integer (optional)",
+                        "limit": "integer (optional)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Liste des notifications"
+                        }
+                    }
+                },
+                {
+                    "method": "PUT",
+                    "path": "/{id}/read",
+                    "summary": "Marquer une notification comme lue",
+                    "auth": true,
+                    "pathParams": {
+                        "id": "uuid (required)"
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Notification marquée comme lue"
+                        }
+                    }
+                },
+                {
+                    "method": "PUT",
+                    "path": "/mark-all-read",
+                    "summary": "Marquer toutes les notifications comme lues",
+                    "auth": true,
+                    "responses": {
+                        "200": {
+                            "description": "Toutes les notifications marquées"
+                        }
+                    }
+                }
+            ]
+        },
+        "emails": {
+            "basePath": "/api/v1/emails",
+            "endpoints": [
+                {
+                    "method": "POST",
+                    "path": "/send",
+                    "summary": "Envoyer un email",
+                    "auth": true,
+                    "roles": [
+                        "recruiter",
+                        "admin"
+                    ],
+                    "requestBody": {
+                        "type": "application/json",
+                        "schema": {
+                            "to": "string (required, email)",
+                            "subject": "string (required)",
+                            "body": "string (required)",
+                            "template": "string (optional)"
+                        }
+                    },
+                    "responses": {
+                        "200": {
+                            "description": "Email envoyé"
+                        }
+                    }
+                }
+            ]
+        },
+        "monitoring": {
+            "basePath": "/monitoring",
+            "endpoints": [
+                {
+                    "method": "GET",
+                    "path": "/health",
+                    "summary": "Health check de l'API",
+                    "auth": false,
+                    "responses": {
+                        "200": {
+                            "description": "API en bonne santé",
+                            "schema": {
+                                "status": "healthy",
+                                "version": "2.1.0",
+                                "timestamp": "datetime"
+                            }
+                        }
+                    }
+                },
+                {
+                    "method": "GET",
+                    "path": "/metrics",
+                    "summary": "Métriques Prometheus",
+                    "auth": true,
+                    "roles": [
+                        "admin"
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Métriques au format Prometheus"
+                        }
+                    }
+                },
+                {
+                    "method": "GET",
+                    "path": "/stats",
+                    "summary": "Statistiques applicatives",
+                    "auth": true,
+                    "roles": [
+                        "admin"
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Statistiques système et applicatives"
+                        }
+                    }
+                }
+            ]
+        },
+        "webhooks": {
+            "basePath": "/api/v1/webhooks",
+            "endpoints": [
+                {
+                    "method": "POST",
+                    "path": "/github",
+                    "summary": "Webhook GitHub pour CI/CD",
+                    "auth": false,
+                    "description": "Webhook automatique pour déclenchements CI/CD",
+                    "responses": {
+                        "200": {
+                            "description": "Webhook traité"
+                        }
+                    }
+                }
+            ]
+        },
+        "debug": {
+            "basePath": "/debug",
+            "description": "Endpoints de debug (désactiver en production)",
+            "endpoints": [
+                {
+                    "method": "POST",
+                    "path": "/apply-mtp-questions-migration",
+                    "summary": "Appliquer la migration MTP manuellement",
+                    "auth": false,
+                    "description": "Ajoute colonne questions_mtp et supprime anciennes colonnes MTP",
+                    "responses": {
+                        "200": {
+                            "description": "Migration appliquée",
+                            "schema": {
+                                "success": "boolean",
+                                "message": "string",
+                                "job_offers_column_added": "string",
+                                "applications_columns_dropped": "array[string]"
+                            }
+                        }
+                    }
+                }
+            ]
+        }
+    },
+    "schemas": {
+        "User": {
+            "id": "uuid",
+            "email": "string (unique)",
+            "first_name": "string",
+            "last_name": "string",
+            "phone": "string",
+            "date_of_birth": "date",
+            "sexe": "string (M|F)",
+            "matricule": "integer (unique, nullable)",
+            "role": "string (admin|recruiter|observer|candidate)",
+            "candidate_status": "string (interne|externe)",
+            "statut": "string (actif|en_attente|inactif|bloqué|archivé)",
+            "email_verified": "boolean",
+            "last_login": "datetime",
+            "is_active": "boolean",
+            "is_internal_candidate": "boolean",
+            "adresse": "string",
+            "poste_actuel": "string",
+            "annees_experience": "integer",
+            "no_seeg_email": "boolean",
+            "created_at": "datetime",
+            "updated_at": "datetime"
+        },
+        "JobOffer": {
+            "id": "uuid",
+            "recruiter_id": "uuid",
+            "title": "string",
+            "description": "string",
+            "location": "string",
+            "contract_type": "string (CDI|CDD|Stage|Alternance)",
+            "status": "string (active|draft|closed|cancelled)",
+            "is_internal_only": "boolean",
+            "questions_mtp": {
+                "questions_metier": "array[string] (max 7)",
+                "questions_talent": "array[string] (max 3)",
+                "questions_paradigme": "array[string] (max 3)"
+            },
+            "created_at": "datetime",
+            "updated_at": "datetime"
+        },
+        "Application": {
+            "id": "uuid",
+            "candidate_id": "uuid",
+            "job_offer_id": "uuid",
+            "status": "string (pending|reviewed|shortlisted|rejected|accepted)",
+            "reference_contacts": "string",
+            "availability_start": "datetime",
+            "has_been_manager": "boolean",
+            "ref_entreprise": "string",
+            "ref_fullname": "string",
+            "ref_mail": "string",
+            "ref_contact": "string",
+            "mtp_answers": {
+                "reponses_metier": "array[string]",
+                "reponses_talent": "array[string]",
+                "reponses_paradigme": "array[string]"
+            },
+            "created_at": "datetime",
+            "updated_at": "datetime"
+        },
+        "AccessRequest": {
+            "id": "uuid",
+            "user_id": "uuid",
+            "email": "string",
+            "first_name": "string",
+            "last_name": "string",
+            "phone": "string",
+            "matricule": "string",
+            "request_type": "string",
+            "status": "string (pending|approved|rejected)",
+            "rejection_reason": "string",
+            "viewed": "boolean",
+            "created_at": "datetime",
+            "reviewed_at": "datetime",
+            "reviewed_by": "uuid"
+        }
+    },
+    "authentication": {
+        "type": "Bearer JWT",
+        "header": "Authorization: Bearer <access_token>",
+        "tokenExpiration": {
+            "access_token": "30 minutes (1800 secondes)",
+            "refresh_token": "7 jours"
+        },
+        "refreshProcess": "Utiliser le refresh_token sur /api/v1/auth/refresh pour obtenir un nouveau access_token"
+    },
+    "errorCodes": {
+        "400": "Bad Request - Données invalides",
+        "401": "Unauthorized - Token manquant ou invalide",
+        "403": "Forbidden - Permissions insuffisantes",
+        "404": "Not Found - Ressource introuvable",
+        "409": "Conflict - Conflit (email déjà utilisé, etc.)",
+        "422": "Unprocessable Entity - Validation échouée",
+        "429": "Too Many Requests - Rate limit dépassé",
+        "500": "Internal Server Error - Erreur serveur"
+    },
+    "rateLimit": {
+        "status": "Temporairement désactivé (problème compatibilité slowapi)",
+        "targetConfig": {
+            "auth": "5/minute, 20/heure",
+            "signup": "3/minute, 10/heure",
+            "upload": "10/minute, 50/heure",
+            "default": "60/minute, 500/heure"
+        }
+    },
+    "features": {
+        "v2.1.0": {
+            "mtpFlexible": "Questions MTP au format JSON avec validation (max 7 métier, 3 talent, 3 paradigme)",
+            "enrichedLogin": "Login retourne toutes les infos utilisateur (TokenResponseData)",
+            "autoCreatorId": "ID du créateur automatiquement assigné lors de la création d'offres"
+        },
+        "v2.0.0": {
+            "accessRequests": "Système de demandes d'accès pour candidats internes sans email SEEG",
+            "multiLevelAuth": "3 types d'inscription (externe, interne avec/sans email SEEG)",
+            "statusSystem": "Système de statuts (actif, en_attente, inactif, bloqué, archivé)"
+        }
+    }
+}
