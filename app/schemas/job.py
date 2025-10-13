@@ -87,3 +87,68 @@ class JobOfferResponse(JobOfferBase):
     
     class Config:
         from_attributes = True
+
+
+# ============================================================================
+# SCHÉMAS PUBLICS (sans authentification)
+# ============================================================================
+
+class JobOfferPublicResponse(BaseModel):
+    """Schéma de réponse publique pour les offres (sans infos sensibles)"""
+    id: UUID
+    title: str
+    description: str
+    location: str
+    contract_type: str
+    department: Optional[str] = None
+    salary_min: Optional[int] = None
+    salary_max: Optional[int] = None
+    salary_note: Optional[str] = None
+    requirements: Optional[List[str]] = None
+    benefits: Optional[List[str]] = None
+    responsibilities: Optional[List[str]] = None
+    application_deadline: Optional[datetime] = None
+    date_limite: Optional[datetime] = None
+    start_date: Optional[datetime] = None
+    profile: Optional[str] = None
+    categorie_metier: Optional[str] = None
+    job_grade: Optional[str] = None
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+
+class JobOfferDetailPublicResponse(BaseModel):
+    """Schéma de réponse détaillée publique pour une offre (avec questions MTP)"""
+    id: UUID
+    title: str
+    description: str
+    location: str
+    contract_type: str
+    department: Optional[str] = None
+    salary_min: Optional[int] = None
+    salary_max: Optional[int] = None
+    salary_note: Optional[str] = None
+    requirements: Optional[List[str]] = None
+    benefits: Optional[List[str]] = None
+    responsibilities: Optional[List[str]] = None
+    application_deadline: Optional[datetime] = None
+    date_limite: Optional[datetime] = None
+    reporting_line: Optional[str] = None
+    start_date: Optional[datetime] = None
+    profile: Optional[str] = None
+    categorie_metier: Optional[str] = None
+    job_grade: Optional[str] = None
+    
+    # Questions MTP (si disponibles)
+    questions_mtp: Optional[Dict[str, List[str]]] = Field(
+        None,
+        description="Questions MTP au format JSON"
+    )
+    
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    
+    class Config:
+        from_attributes = True

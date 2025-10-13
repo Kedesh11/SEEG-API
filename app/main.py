@@ -2,7 +2,7 @@
 Point d'entrée principal de l'application One HCM SEEG
 """
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.responses import JSONResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ import structlog
 import os
 
 from app.core.config.config import settings
+from app.core.dependencies import get_current_user, get_current_admin_user
 from app.core.logging.logging import LoggingConfig
 # from app.core.rate_limit import limiter  # ⚠️ Désactivé temporairement - Problème avec slowapi
 from app.core.monitoring import app_insights
@@ -229,20 +230,24 @@ app.add_middleware(
 # 🏠 MODULE ACCUEIL
 # ============================================================================
 
-@app.get("/", tags=["🏠 Accueil"], summary="Point d'entrée de l'API")
-async def root():
-    """Point d'entrée principal de l'API One HCM SEEG"""
+@app.get("/", tags=["🏠 Accueil"], summary="Point d'entrée de l'API (Auth requise)")
+async def root(current_user = Depends(get_current_user)):
+    """Point d'entrée principal de l'API One HCM SEEG (authentification requise)"""
     return {
         "message": "API One HCM SEEG",
         "version": settings.APP_VERSION,
         "status": "active",
         "docs": "/docs",
-        "redoc": "/redoc"
+        "redoc": "/redoc",
+        "user": {
+            "email": current_user.email,
+            "role": current_user.role
+        }
     }
 
-@app.get("/health", tags=["🏠 Accueil"], summary="Vérifier l'état de santé de l'API")
-async def health_check():
-    """Vérifier que l'API et la base de données sont opérationnelles"""
+@app.get("/health", tags=["🏠 Accueil"], summary="Vérifier l'état de santé de l'API (Auth requise)")
+async def health_check(current_user = Depends(get_current_user)):
+    """Vérifier que l'API et la base de données sont opérationnelles (authentification requise)"""
     from datetime import datetime
     health_status = {
         "status": "ok",
@@ -264,9 +269,9 @@ async def health_check():
     
     return health_status
 
-@app.get("/monitoring/health", tags=["🏠 Accueil"], summary="Health check détaillé pour le monitoring")
-async def monitoring_health_check():
-    """Health check détaillé incluant toutes les dépendances"""
+@app.get("/monitoring/health", tags=["🏠 Accueil"], summary="Health check détaillé pour le monitoring (Auth requise)")
+async def monitoring_health_check(current_user = Depends(get_current_user)):
+    """Health check détaillé incluant toutes les dépendances (authentification requise)"""
     from datetime import datetime
     import psutil
     
@@ -321,9 +326,9 @@ async def monitoring_health_check():
     
     return health_details
 
-@app.get("/info", tags=["🏠 Accueil"], summary="Informations détaillées sur l'API")
-async def info():
-    """Obtenir des informations détaillées sur la configuration de l'API"""
+@app.get("/info", tags=["🏠 Accueil"], summary="Informations détaillées sur l'API (Auth requise)")
+async def info(current_user = Depends(get_current_user)):
+    """Obtenir des informations détaillées sur la configuration de l'API (authentification requise)"""
     return {
         "app_name": settings.APP_NAME,
         "app_version": settings.APP_VERSION,
@@ -367,7 +372,7 @@ async def info():
 # ============================================================================
 
 # Import des routes API
-from app.api.v1.endpoints import auth, users, jobs, applications, evaluations, notifications, interviews, emails, optimized, webhooks, access_requests
+from app.api.v1.endpoints import auth, users, jobs, applications, evaluations, notifications, interviews, emails, optimized, webhooks, access_requests, public
 from app.api.v1.endpoints.monitoring import router as monitoring_router
 
 # Inclusion des routes dans l'application
@@ -375,6 +380,7 @@ app.include_router(auth.router, prefix="/api/v1/auth", tags=["🔐 Authentificat
 app.include_router(access_requests.router, prefix="/api/v1/access-requests", tags=["🔐 Authentification", "👥 Gestion des Demandes d'Accès"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["👥 Utilisateurs"])
 app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["💼 Offres d'emploi (filtrage auto interne/externe)"])
+app.include_router(public.router, prefix="/api/v1/public", tags=["🌐 Endpoints Publics (SANS authentification)"])
 app.include_router(applications.router, prefix="/api/v1/applications", tags=["📝 Candidatures", "📄 Documents PDF"])
 app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["📊 Évaluations"])
 app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["🔔 Notifications"])
@@ -390,9 +396,9 @@ app.include_router(monitoring_router, prefix="/monitoring", tags=["📊 Monitori
 # ENDPOINT TEMPORAIRE DE DEBUG - À SUPPRIMER APRÈS CORRECTION
 # ============================================================================
 
-@app.get("/debug/fix-alembic-azure", tags=["🔧 Debug"])
-async def fix_alembic_azure():
-    """Endpoint temporaire pour corriger la révision Alembic sur Azure"""
+@app.get("/debug/fix-alembic-azure", tags=["🔧 Debug (Admin uniquement)"])
+async def fix_alembic_azure(current_user = Depends(get_current_admin_user)):
+    """Endpoint temporaire pour corriger la révision Alembic sur Azure (admin uniquement)"""
     import asyncpg
     from app.core.config.config import settings
     
@@ -446,9 +452,9 @@ async def fix_alembic_azure():
             "message": "❌ Erreur lors de la correction"
         }
 
-@app.post("/debug/import-seeg-agents", tags=["🔧 Debug"])
-async def import_seeg_agents():
-    """Importe les agents SEEG depuis le CSV vers la base de données"""
+@app.post("/debug/import-seeg-agents", tags=["🔧 Debug (Admin uniquement)"])
+async def import_seeg_agents(current_user = Depends(get_current_admin_user)):
+    """Importe les agents SEEG depuis le CSV vers la base de données (admin uniquement)"""
     import asyncpg
     import csv
     from pathlib import Path
@@ -533,9 +539,9 @@ async def import_seeg_agents():
             "message": "❌ Erreur lors de l'import"
         }
 
-@app.post("/debug/apply-migration-20251010-auth", tags=["🔧 Debug"])
-async def apply_migration_auth_fields():
-    """Applique manuellement la migration 20251010_add_user_auth_fields"""
+@app.post("/debug/apply-migration-20251010-auth", tags=["🔧 Debug (Admin uniquement)"])
+async def apply_migration_auth_fields(current_user = Depends(get_current_admin_user)):
+    """Applique manuellement la migration 20251010_add_user_auth_fields (admin uniquement)"""
     import asyncpg
     from app.core.config.config import settings
     
@@ -641,9 +647,9 @@ async def internal_error_handler(request, exc):
 # ========================================
 # DEBUG: Migration MTP Questions
 # ========================================
-@app.post("/debug/apply-mtp-questions-migration")
-async def apply_mtp_questions_migration():
-    """Appliquer la migration MTP: ajouter questions_mtp a job_offers et supprimer anciennes colonnes de applications"""
+@app.post("/debug/apply-mtp-questions-migration", tags=["🔧 Debug (Admin uniquement)"])
+async def apply_mtp_questions_migration(current_user = Depends(get_current_admin_user)):
+    """Appliquer la migration MTP: ajouter questions_mtp a job_offers et supprimer anciennes colonnes de applications (admin uniquement)"""
     from app.db.database import get_db
     import sqlalchemy as sa
     import traceback
