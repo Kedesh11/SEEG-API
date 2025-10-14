@@ -65,24 +65,17 @@ class EvaluationService:
             # Calcul du score total
             total_score = self._calculate_protocol1_total_score(evaluation_data)
             
-            # CrÃ©ation de l'Ã©valuation
-            evaluation = Protocol1Evaluation(
-                application_id=evaluation_data.application_id,
-                evaluator_id=evaluator_id,
-                documentary_score=evaluation_data.documentary_score,
-                documentary_notes=evaluation_data.documentary_notes,
-                mtp_adherence_score=evaluation_data.mtp_adherence_score,
-                mtp_adherence_notes=evaluation_data.mtp_adherence_notes,
-                interview_score=evaluation_data.interview_score,
-                interview_notes=evaluation_data.interview_notes,
-                overall_score=total_score,
-                recommendation=evaluation_data.recommendation,
-                additional_notes=evaluation_data.additional_notes,
-                evaluation_date=datetime.now(timezone.utc)
-            )
+            # CrÃ©ation de l'Ã©valuation avec les champs du schéma
+            eval_dict = evaluation_data.model_dump(exclude={'application_id', 'evaluator_id'})
+            eval_dict['application_id'] = evaluation_data.application_id
+            eval_dict['evaluator_id'] = evaluator_id
+            eval_dict['overall_score'] = total_score
+            
+            evaluation = Protocol1Evaluation(**eval_dict)
             
             self.db.add(evaluation)
             #  PAS de commit ici
+            await self.db.flush()
             await self.db.refresh(evaluation)
             
             logger.info(
@@ -136,12 +129,16 @@ class EvaluationService:
             update_data = evaluation_data.model_dump(exclude_unset=True)
             
             # Recalcul du score total si nÃ©cessaire
-            if any(field in update_data for field in ['documentary_score', 'mtp_adherence_score', 'interview_score']):
+            if any(field in update_data for field in ['documentary_score', 'mtp_score', 'interview_score']):
                 # RÃ©cupÃ©ration des valeurs actuelles
                 current_data = evaluation_data.model_dump()
-                for field in ['documentary_score', 'mtp_adherence_score', 'interview_score']:
-                    if field not in current_data:
-                        current_data[field] = getattr(evaluation, field)
+                # Ajouter application_id et evaluator_id depuis l'objet existant
+                current_data['application_id'] = evaluation.application_id
+                current_data['evaluator_id'] = evaluation.evaluator_id
+                
+                for field in ['documentary_score', 'mtp_score', 'interview_score']:
+                    if field not in current_data or current_data[field] is None:
+                        current_data[field] = getattr(evaluation, field, None)
                 
                 # CrÃ©ation d'un objet temporaire pour le calcul
                 temp_eval = Protocol1EvaluationCreate(**current_data)
@@ -227,7 +224,7 @@ class EvaluationService:
             select(Protocol1Evaluation)
             .options(selectinload(Protocol1Evaluation.evaluator))
             .where(Protocol1Evaluation.application_id == application_id)
-            .order_by(desc(Protocol1Evaluation.evaluation_date))
+            .order_by(desc(Protocol1Evaluation.created_at))
         )
         
         evaluations = result.scalars().all()
@@ -272,26 +269,17 @@ class EvaluationService:
             # Calcul du score total
             total_score = self._calculate_protocol2_total_score(evaluation_data)
             
-            # CrÃ©ation de l'Ã©valuation
-            evaluation = Protocol2Evaluation(
-                application_id=evaluation_data.application_id,
-                evaluator_id=evaluator_id,
-                technical_skills_score=evaluation_data.technical_skills_score,
-                technical_skills_notes=evaluation_data.technical_skills_notes,
-                soft_skills_score=evaluation_data.soft_skills_score,
-                soft_skills_notes=evaluation_data.soft_skills_notes,
-                cultural_fit_score=evaluation_data.cultural_fit_score,
-                cultural_fit_notes=evaluation_data.cultural_fit_notes,
-                leadership_potential_score=evaluation_data.leadership_potential_score,
-                leadership_potential_notes=evaluation_data.leadership_potential_notes,
-                overall_score=total_score,
-                recommendation=evaluation_data.recommendation,
-                additional_notes=evaluation_data.additional_notes,
-                evaluation_date=datetime.now(timezone.utc)
-            )
+            # CrÃ©ation de l'Ã©valuation avec les champs du schéma
+            eval_dict = evaluation_data.model_dump(exclude={'application_id', 'evaluator_id'})
+            eval_dict['application_id'] = evaluation_data.application_id
+            eval_dict['evaluator_id'] = evaluator_id
+            eval_dict['overall_score'] = total_score
+            
+            evaluation = Protocol2Evaluation(**eval_dict)
             
             self.db.add(evaluation)
             #  PAS de commit ici
+            await self.db.flush()
             await self.db.refresh(evaluation)
             
             logger.info(
@@ -311,6 +299,89 @@ class EvaluationService:
                 error=str(e),
                 application_id=evaluation_data.application_id,
                 evaluator_id=evaluator_id
+            )
+            raise
+    
+    async def update_protocol2_evaluation(
+        self,
+        evaluation_id: str,
+        evaluation_data: Protocol2EvaluationUpdate,
+        updated_by: str
+    ) -> Protocol2EvaluationResponse:
+        """
+        Mettre Ã  jour une Ã©valuation Protocol 2
+        
+        Args:
+            evaluation_id: ID de l'Ã©valuation
+            evaluation_data: DonnÃ©es de mise Ã  jour
+            updated_by: ID de l'utilisateur qui effectue la mise Ã  jour
+            
+        Returns:
+            Protocol2EvaluationResponse: Ã‰valuation mise Ã  jour
+        """
+        try:
+            # VÃ©rification de l'existence de l'Ã©valuation
+            result = await self.db.execute(
+                select(Protocol2Evaluation).where(Protocol2Evaluation.id == evaluation_id)
+            )
+            evaluation = result.scalar_one_or_none()
+            
+            if not evaluation:
+                raise NotFoundError(f"Ã‰valuation Protocol 2 avec l'ID {evaluation_id} non trouvÃ©e")
+            
+            # Mise Ã  jour des champs
+            update_data = evaluation_data.model_dump(exclude_unset=True)
+            
+            # Recalcul du score total si nÃ©cessaire
+            if any(field in update_data for field in ['qcm_role_score', 'qcm_codir_score']):
+                # RÃ©cupÃ©ration des valeurs actuelles
+                current_data = evaluation_data.model_dump()
+                # Ajouter application_id et evaluator_id depuis l'objet existant
+                current_data['application_id'] = evaluation.application_id
+                current_data['evaluator_id'] = evaluation.evaluator_id
+                
+                for field in ['qcm_role_score', 'qcm_codir_score']:
+                    if field not in current_data or current_data[field] is None:
+                        current_data[field] = getattr(evaluation, field, None)
+                
+                # CrÃ©ation d'un objet temporaire pour le calcul
+                temp_eval = Protocol2EvaluationCreate(**current_data)
+                update_data['overall_score'] = self._calculate_protocol2_total_score(temp_eval)
+            
+            if update_data:
+                update_data["updated_at"] = datetime.now(timezone.utc)
+                
+                await self.db.execute(
+                    update(Protocol2Evaluation)
+                    .where(Protocol2Evaluation.id == evaluation_id)
+                    .values(**update_data)
+                )
+                
+                #  PAS de commit ici
+                
+                # RÃ©cupÃ©ration de l'Ã©valuation mise Ã  jour
+                result = await self.db.execute(
+                    select(Protocol2Evaluation).where(Protocol2Evaluation.id == evaluation_id)
+                )
+                evaluation = result.scalar_one()
+                
+                logger.info(
+                    "Protocol 2 evaluation updated",
+                    evaluation_id=evaluation_id,
+                    updated_by=updated_by,
+                    updated_fields=list(update_data.keys())
+                )
+            
+            return Protocol2EvaluationResponse.model_validate(evaluation)
+            
+        except NotFoundError:
+            raise
+        except Exception as e:
+            logger.error(
+                "Failed to update Protocol 2 evaluation",
+                evaluation_id=evaluation_id,
+                error=str(e),
+                updated_by=updated_by
             )
             raise
     
@@ -359,7 +430,7 @@ class EvaluationService:
             select(Protocol2Evaluation)
             .options(selectinload(Protocol2Evaluation.evaluator))
             .where(Protocol2Evaluation.application_id == application_id)
-            .order_by(desc(Protocol2Evaluation.evaluation_date))
+            .order_by(desc(Protocol2Evaluation.created_at))
         )
         
         evaluations = result.scalars().all()
@@ -376,17 +447,22 @@ class EvaluationService:
         Returns:
             float: Score total calculÃ©
         """
-        # PondÃ©ration des scores (Ã  ajuster selon les besoins)
+        # PondÃ©ration des scores (Ã  ajuster selon les besoins)
         weights = {
             'documentary': 0.3,
-            'mtp_adherence': 0.4,
+            'mtp': 0.4,
             'interview': 0.3
         }
         
+        # Utiliser les vrais noms de champs du schéma
+        doc_score = float(evaluation_data.documentary_score or 0)
+        mtp_score = float(evaluation_data.mtp_score or 0)
+        interview_score = float(evaluation_data.interview_score or 0)
+        
         total_score = (
-            evaluation_data.documentary_score * weights['documentary'] +
-            evaluation_data.mtp_adherence_score * weights['mtp_adherence'] +
-            evaluation_data.interview_score * weights['interview']
+            doc_score * weights['documentary'] +
+            mtp_score * weights['mtp'] +
+            interview_score * weights['interview']
         )
         
         return round(total_score, 2)
@@ -401,19 +477,20 @@ class EvaluationService:
         Returns:
             float: Score total calculÃ©
         """
-        # PondÃ©ration des scores (Ã  ajuster selon les besoins)
+        # PondÃ©ration des scores (Ã  ajuster selon les besoins)
+        # Protocol 2 utilise qcm_role_score et qcm_codir_score
         weights = {
-            'technical_skills': 0.3,
-            'soft_skills': 0.25,
-            'cultural_fit': 0.25,
-            'leadership_potential': 0.2
+            'qcm_role': 0.5,
+            'qcm_codir': 0.5
         }
         
+        # Utiliser les vrais noms de champs du schéma
+        role_score = float(evaluation_data.qcm_role_score or 0)
+        codir_score = float(evaluation_data.qcm_codir_score or 0)
+        
         total_score = (
-            evaluation_data.technical_skills_score * weights['technical_skills'] +
-            evaluation_data.soft_skills_score * weights['soft_skills'] +
-            evaluation_data.cultural_fit_score * weights['cultural_fit'] +
-            evaluation_data.leadership_potential_score * weights['leadership_potential']
+            role_score * weights['qcm_role'] +
+            codir_score * weights['qcm_codir']
         )
         
         return round(total_score, 2)

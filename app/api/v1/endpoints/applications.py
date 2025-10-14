@@ -27,7 +27,7 @@ from app.schemas.application import (
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError, FileError
-from app.core.rate_limit import limiter, UPLOAD_LIMITS
+# from app.core.rate_limit import limiter, UPLOAD_LIMITS  # ⚠️ Désactivé temporairement
 
 router = APIRouter()
 
@@ -110,28 +110,72 @@ async def create_application(
     ⚠️ Si les limites sont dépassées, la candidature est automatiquement rejetée avec un message d'erreur détaillé.
     """
     try:
+        # 🔷 ÉTAPE 1: Initialisation
+        safe_log("info", "🚀 DÉBUT création candidature", 
+                 user_id=str(current_user.id),
+                 user_role=current_user.role,
+                 candidate_id=str(application_data.candidate_id),
+                 job_offer_id=str(application_data.job_offer_id),
+                 has_mtp_answers=application_data.mtp_answers is not None)
+        
         application_service = ApplicationService(db)
         email_service = EmailService(db)
         
-        # Création de la candidature avec validation des champs selon le type de candidat
+        # 🔷 ÉTAPE 2: Validation et création
+        safe_log("debug", "📝 Validation données candidature en cours...")
         application = await application_service.create_application(
             application_data, str(current_user.id)
         )
+        safe_log("info", "✅ Candidature créée en mémoire", 
+                 application_id=str(application.id),
+                 status=application.status)
         
-        # Envoi d'email de confirmation (en arrière-plan)
+        # 🔷 ÉTAPE 3: Flush et chargement des relations (AVANT commit)
+        safe_log("debug", "💾 Flush en base pour obtenir les IDs...")
+        await db.flush()
+        safe_log("debug", "📧 Chargement explicite des relations...")
+        await db.refresh(application, ["candidate", "job_offer"])
+        
+        # Maintenant on peut accéder aux relations en toute sécurité
+        candidate_email = application.candidate.email
+        candidate_name = f"{application.candidate.first_name} {application.candidate.last_name}"
+        job_title = application.job_offer.title
+        application_id = str(application.id)
+        safe_log("debug", "✅ Relations chargées",
+                 candidate_email=candidate_email,
+                 job_title=job_title)
+        
+        # 🔷 ÉTAPE 4: Persistence définitive en base de données
+        safe_log("debug", "💾 Commit transaction en cours...")
+        await db.commit()
+        safe_log("info", "✅ Transaction committée avec succès")
+        
+        safe_log("debug", "✅ Candidature persistée définitivement")
+        
+        # 🔷 ÉTAPE 5: Envoi email de confirmation (non-bloquant)
         try:
-            candidate_name = f"{application.candidate.firstname} {application.candidate.lastname}"
+            safe_log("debug", "📧 Envoi email confirmation en cours...")
             await email_service.send_application_confirmation(
-                candidate_email=application.candidate.email,
+                candidate_email=candidate_email,
                 candidate_name=candidate_name,
-                job_title=application.job_offer.title,
-                application_id=str(application.id)
+                job_title=job_title,
+                application_id=application_id
             )
+            safe_log("info", "✅ Email de confirmation envoyé", 
+                     recipient=candidate_email)
         except Exception as e:
-            # Log l'erreur mais ne fait pas échouer la création
-            safe_log("warning", "Erreur envoi email confirmation", error=str(e), application_id=str(application.id))
+            # Log détaillé de l'erreur email (non-bloquant)
+            safe_log("warning", "⚠️  Erreur envoi email confirmation (non-bloquant)", 
+                     error=str(e),
+                     error_type=type(e).__name__,
+                     application_id=application_id,
+                     recipient=candidate_email)
         
-        safe_log("info", "Candidature créée", application_id=str(application.id), candidate_id=str(current_user.id))
+        safe_log("info", "🎉 SUCCÈS création candidature complète", 
+                 application_id=str(application.id), 
+                 candidate_id=str(current_user.id),
+                 job_offer_id=str(application.job_offer_id),
+                 status=application.status)
         
         return ApplicationResponse(
             success=True,
@@ -140,14 +184,50 @@ async def create_application(
         )
         
     except ValidationError as e:
-        safe_log("warning", "Erreur validation crÃ©ation candidature", error=str(e), user_id=str(current_user.id))
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        error_msg = str(e)
+        safe_log("warning", "❌ VALIDATION ÉCHOUÉE - Création candidature", 
+                 error=error_msg,
+                 error_type="ValidationError",
+                 user_id=str(current_user.id),
+                 candidate_id=str(application_data.candidate_id),
+                 job_offer_id=str(application_data.job_offer_id),
+                 has_mtp=application_data.mtp_answers is not None)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=error_msg)
     except BusinessLogicError as e:
-        safe_log("warning", "Erreur logique mÃ©tier crÃ©ation candidature", error=str(e), user_id=str(current_user.id))
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(e))
+        error_msg = str(e)
+        safe_log("warning", "❌ ERREUR LOGIQUE MÉTIER - Création candidature", 
+                 error=error_msg,
+                 error_type="BusinessLogicError",
+                 user_id=str(current_user.id),
+                 candidate_id=str(application_data.candidate_id),
+                 job_offer_id=str(application_data.job_offer_id))
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error_msg)
     except Exception as e:
-        safe_log("error", "Erreur crÃ©ation candidature", error=str(e), user_id=str(current_user.id))
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
+        # Log détaillé avec type et traceback complet
+        import traceback
+        error_msg = f"{type(e).__name__}: {str(e)}"
+        error_traceback = traceback.format_exc()
+        safe_log("error", "🔥 ERREUR CRITIQUE - Création candidature", 
+                error=error_msg, 
+                error_type=type(e).__name__,
+                traceback=error_traceback,
+                user_id=str(current_user.id),
+                candidate_id=str(application_data.candidate_id),
+                job_offer_id=str(application_data.job_offer_id),
+                has_mtp=application_data.mtp_answers is not None,
+                mtp_count=len(application_data.mtp_answers) if application_data.mtp_answers else 0)
+        # En développement, retourner le détail complet pour debug
+        import os
+        if os.getenv("DEBUG", "false").lower() == "true" or os.getenv("ENVIRONMENT", "production") == "development":
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                detail=f"Erreur interne: {error_msg}"
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                detail="Erreur interne du serveur"
+            )
 
 
 @router.get("/", response_model=ApplicationListResponse, summary="Lister les candidatures (filtres/pagination)", openapi_extra={
@@ -213,16 +293,30 @@ async def get_application(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    RÃ©cupÃ©rer une candidature par son ID
+    Récupérer une candidature par son ID
     """
     try:
+        safe_log("info", "🔍 RECHERCHE candidature",
+                 application_id=application_id,
+                 user_id=str(current_user.id),
+                 user_role=current_user.role)
+        
         application_service = ApplicationService(db)
         application = await application_service.get_application_by_id(application_id)
         
         if not application:
+            safe_log("warning", "❌ CANDIDATURE INTROUVABLE",
+                     application_id=application_id,
+                     user_id=str(current_user.id))
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidature non trouvée")
         
-        safe_log("info", "Candidature récupérée", application_id=application_id, requester_id=str(current_user.id))
+        safe_log("info", "✅ SUCCÈS récupération candidature",
+                 application_id=application_id,
+                 requester_id=str(current_user.id),
+                 candidate_id=str(application.candidate_id),
+                 job_offer_id=str(application.job_offer_id),
+                 status=application.status)
+        
         return ApplicationResponse(
             success=True,
             message="Candidature récupérée avec succès",
@@ -230,16 +324,26 @@ async def get_application(
         )
         
     except NotFoundError as e:
-        safe_log("warning", "Candidature non trouvÃ©e", application_id=application_id)
+        safe_log("warning", "❌ NOT FOUND - Récupération candidature",
+                 application_id=application_id,
+                 user_id=str(current_user.id),
+                 error=str(e))
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
-        safe_log("error", "Erreur rÃ©cupÃ©ration candidature", application_id=application_id, error=str(e))
+        import traceback
+        error_traceback = traceback.format_exc()
+        safe_log("error", "🔥 ERREUR CRITIQUE - Récupération candidature",
+                 application_id=application_id,
+                 user_id=str(current_user.id),
+                 error=str(e),
+                 error_type=type(e).__name__,
+                 traceback=error_traceback)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
 
 
-@router.put("/{application_id}", response_model=ApplicationResponse, summary="Mettre Ã  jour une candidature", openapi_extra={
+@router.put("/{application_id}", response_model=ApplicationResponse, summary="Mettre à jour une candidature", openapi_extra={
     "requestBody": {"content": {"application/json": {"example": {"status": "reviewed"}}}},
-    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Candidature mise Ã  jour avec succÃ¨s", "data": {"id": "uuid", "status": "reviewed"}}}}}}
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Candidature mise à  jour avec succÃ¨s", "data": {"id": "uuid", "status": "reviewed"}}}}}}
 })
 async def update_application(
     application_id: str,
@@ -248,13 +352,36 @@ async def update_application(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Mettre Ã  jour une candidature
+    Mettre à jour une candidature
     """
     try:
-        application_service = ApplicationService(db)
-        application = await application_service.update_application(application_id, application_data)
+        # 🔷 ÉTAPE 1: Initialisation
+        safe_log("info", "🚀 DÉBUT mise à jour candidature",
+                 application_id=application_id,
+                 user_id=str(current_user.id),
+                 user_role=current_user.role,
+                 fields_to_update=list(application_data.dict(exclude_unset=True).keys()))
         
-        safe_log("info", "Candidature mise à jour", application_id=application_id, requester_id=str(current_user.id))
+        application_service = ApplicationService(db)
+        
+        # 🔷 ÉTAPE 2: Mise à jour
+        safe_log("debug", "📝 Application de la mise à jour...")
+        application = await application_service.update_application(application_id, application_data)
+        safe_log("info", "✅ Mise à jour appliquée en mémoire")
+        
+        # 🔷 ÉTAPE 3: Persistence
+        safe_log("debug", "💾 Commit transaction en cours...")
+        await db.commit()
+        safe_log("info", "✅ Transaction committée avec succès")
+        
+        await db.refresh(application)
+        safe_log("debug", "✅ Objet rafraîchi depuis la BDD")
+        
+        safe_log("info", "🎉 SUCCÈS mise à jour candidature", 
+                 application_id=application_id,
+                 requester_id=str(current_user.id),
+                 new_status=application.status)
+        
         return ApplicationResponse(
             success=True,
             message="Candidature mise à jour avec succès",
@@ -262,13 +389,27 @@ async def update_application(
         )
         
     except NotFoundError as e:
-        safe_log("warning", "Candidature non trouvÃ©e pour MAJ", application_id=application_id)
+        safe_log("warning", "❌ CANDIDATURE NON TROUVÉE - Mise à jour",
+                 application_id=application_id,
+                 user_id=str(current_user.id),
+                 error=str(e))
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ValidationError as e:
-        safe_log("warning", "Erreur validation MAJ candidature", application_id=application_id, error=str(e))
+        safe_log("warning", "❌ VALIDATION ÉCHOUÉE - Mise à jour candidature",
+                 application_id=application_id,
+                 user_id=str(current_user.id),
+                 error=str(e),
+                 fields=list(application_data.dict(exclude_unset=True).keys()))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
-        safe_log("error", "Erreur MAJ candidature", application_id=application_id, error=str(e))
+        import traceback
+        error_traceback = traceback.format_exc()
+        safe_log("error", "🔥 ERREUR CRITIQUE - Mise à jour candidature",
+                 application_id=application_id,
+                 user_id=str(current_user.id),
+                 error=str(e),
+                 error_type=type(e).__name__,
+                 traceback=error_traceback)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
 
 
@@ -304,7 +445,7 @@ async def delete_application(
         "429": {"description": "Trop d'uploads"}
     }
 })
-@limiter.limit(UPLOAD_LIMITS)
+# @limiter.limit(UPLOAD_LIMITS)  # ⚠️ Désactivé temporairement - rate limiter non configuré
 async def upload_document(
     request: Request,
     application_id: str,
@@ -318,44 +459,74 @@ async def upload_document(
     
     - **application_id**: ID de la candidature
     - **document_type**: Type de document (cover_letter, cv, certificats, diplome) - optionnel
-    - **file**: Fichier PDF Ã  uploader (max 10MB)
+    - **file**: Fichier PDF Ã  uploader (max 10MB)
     """
     try:
-        # Vérifier que le fichier est un PDF
+        # 🔷 ÉTAPE 1: Initialisation
+        safe_log("info", "🚀 DÉBUT upload document", 
+                 application_id=application_id,
+                 user_id=str(current_user.id),
+                 user_role=current_user.role,
+                 filename=file.filename,
+                 document_type=document_type)
+        
+        # 🔷 ÉTAPE 2: Validation extension fichier
+        safe_log("debug", "📝 Validation extension fichier...", filename=file.filename)
         if not file.filename or not file.filename.lower().endswith('.pdf'):
+            safe_log("warning", "❌ Extension invalide", filename=file.filename)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Seuls les fichiers PDF sont acceptés"
             )
+        safe_log("debug", "✅ Extension valide (.pdf)")
         
-        # Lire le contenu du fichier
+        # 🔷 ÉTAPE 3: Lecture contenu fichier
+        safe_log("debug", "📄 Lecture du contenu fichier...")
         file_content = await file.read()
+        file_size_kb = len(file_content) / 1024
+        safe_log("info", "✅ Fichier lu", size_kb=f"{file_size_kb:.2f}")
         
-        # Validation de la taille (10MB max)
+        # 🔷 ÉTAPE 4: Validation taille
         MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+        safe_log("debug", f"🔍 Validation taille (max 10MB)...")
         if len(file_content) > MAX_FILE_SIZE:
+            safe_log("warning", "❌ Fichier trop volumineux", 
+                     size_mb=f"{len(file_content) / (1024 * 1024):.2f}",
+                     max_mb="10")
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 detail=f"Le fichier est trop volumineux. Taille maximale: 10MB. Taille actuelle: {len(file_content) / (1024 * 1024):.2f}MB"
             )
+        safe_log("debug", "✅ Taille valide")
         
-        # VÃ©rifier que c'est bien un PDF (magic number)
+        # 🔷 ÉTAPE 5: Validation format PDF (magic number)
+        safe_log("debug", "🔍 Validation format PDF (magic number)...")
         if not file_content.startswith(b'%PDF'):
+            first_bytes = file_content[:20].hex() if len(file_content) >= 20 else file_content.hex()
+            safe_log("warning", "❌ Format PDF invalide", 
+                     first_bytes=first_bytes,
+                     expected="%PDF")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Le fichier n'est pas un PDF valide"
             )
+        safe_log("debug", "✅ Format PDF valide")
         
-        # Encoder en base64
+        # 🔷 ÉTAPE 6: Encodage base64
+        safe_log("debug", "🔐 Encodage en base64...")
         file_data_b64 = base64.b64encode(file_content).decode('utf-8')
+        b64_size_kb = len(file_data_b64) / 1024
+        safe_log("info", "✅ Encodage terminé", b64_size_kb=f"{b64_size_kb:.2f}")
         
-        # Valeur par dÃ©faut si non fourni
+        # 🔷 ÉTAPE 7: Préparation données
         resolved_type = (document_type or 'certificats')
-        
-        # Créer le document
         safe_filename = file.filename or "document.pdf"
         if not safe_filename.lower().endswith('.pdf'):
             safe_filename = f"{safe_filename}.pdf"
+        
+        safe_log("debug", "📋 Préparation document_data...",
+                 document_type=resolved_type,
+                 filename=safe_filename)
             
         document_data = ApplicationDocumentCreate(
             application_id=uuid.UUID(application_id),
@@ -365,16 +536,28 @@ async def upload_document(
             file_size=len(file_content),
             file_type="application/pdf"
         )
+        safe_log("debug", "✅ document_data créé")
         
+        # 🔷 ÉTAPE 8: Sauvegarde en base de données
+        safe_log("debug", "💾 Création document en BDD...")
         application_service = ApplicationService(db)
         document = await application_service.create_document(document_data)
+        safe_log("info", "✅ Document sauvegardé en BDD", document_id=str(document.id))
         
-        safe_log("info", "Document uploadé", 
+        # 🔷 ÉTAPE 9: Commit transaction
+        safe_log("debug", "💾 Commit transaction...")
+        await db.commit()
+        safe_log("debug", "✅ Transaction committée")
+        
+        await db.refresh(document)
+        safe_log("debug", "✅ Document rafraîchi")
+        
+        safe_log("info", "🎉 SUCCÈS upload document complet", 
                 application_id=application_id, 
+                document_id=str(document.id),
                 document_type=resolved_type,
-                file_size=len(file_content),
-                file_name=safe_filename,
-                user_id=str(current_user.id))
+                file_size_kb=f"{file_size_kb:.2f}",
+                file_name=safe_filename)
         
         return ApplicationDocumentResponse(
             success=True,
@@ -382,15 +565,45 @@ async def upload_document(
             data=convert_orm_to_schema(document, ApplicationDocument)  # type: ignore
         )
         
+    except HTTPException:
+        # Relancer les HTTPExceptions (déjà loguées)
+        raise
     except ValueError as e:
-        safe_log("warning", "Erreur validation upload document", application_id=application_id, error=str(e))
+        safe_log("warning", "❌ VALIDATION ÉCHOUÉE - Upload document", 
+                 application_id=application_id, 
+                 error=str(e),
+                 error_type="ValueError")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except NotFoundError as e:
-        safe_log("warning", "Candidature non trouvÃ©e pour upload", application_id=application_id)
+        safe_log("warning", "❌ CANDIDATURE NON TROUVÉE", 
+                 application_id=application_id,
+                 error=str(e))
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except Exception as e:
-        safe_log("error", "Erreur upload document", application_id=application_id, error=str(e))
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
+        # Log détaillé avec traceback
+        import traceback
+        error_msg = f"{type(e).__name__}: {str(e)}"
+        error_traceback = traceback.format_exc()
+        safe_log("error", "🔥 ERREUR CRITIQUE - Upload document", 
+                application_id=application_id, 
+                error=error_msg,
+                error_type=type(e).__name__,
+                traceback=error_traceback,
+                user_id=str(current_user.id),
+                filename=file.filename if file else "N/A")
+        
+        # En développement, retourner le détail complet
+        import os
+        if os.getenv("DEBUG", "false").lower() == "true" or os.getenv("ENVIRONMENT", "production") == "development":
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                detail=f"Erreur interne: {error_msg}"
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
+                detail="Erreur interne du serveur"
+            )
 
 
 @router.post("/{application_id}/documents/multiple", response_model=ApplicationDocumentListResponse, status_code=status.HTTP_201_CREATED, summary="Uploader plusieurs documents PDF", openapi_extra={
@@ -400,7 +613,7 @@ async def upload_document(
         "429": {"description": "Trop d'uploads"}
     }
 })
-@limiter.limit(UPLOAD_LIMITS)
+# @limiter.limit(UPLOAD_LIMITS)  # ⚠️ Désactivé temporairement - rate limiter non configuré
 async def upload_multiple_documents(
     request: Request,
     application_id: str,

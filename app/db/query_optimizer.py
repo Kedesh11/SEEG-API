@@ -66,15 +66,13 @@ class QueryOptimizer:
             Requête optimisée avec eager loading
         """
         # Charger toutes les relations nécessaires en une seule requête
+        from app.models.application import Application
         query = query.options(
-            selectinload('candidate').selectinload('candidate_profile'),
-            selectinload('job_offer').selectinload('recruiter'),
-            selectinload('documents'),
-            selectinload('history').selectinload('changed_by_user'),
-            selectinload('protocol1_evaluation').selectinload('evaluator'),
-            selectinload('protocol2_evaluation').selectinload('evaluator'),
-            selectinload('interview_slots'),
-            selectinload('notifications')
+            selectinload(Application.candidate).selectinload(User.candidate_profile),
+            selectinload(Application.job_offer).selectinload(JobOffer.recruiter),
+            selectinload(Application.documents),
+            selectinload(Application.history),
+            selectinload(Application.interview_slots)
         )
         return query
     
