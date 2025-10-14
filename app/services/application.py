@@ -16,11 +16,6 @@ from app.schemas.application import (
     ApplicationDraftUpdate, ApplicationHistoryCreate
 )
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError
-from app.core.constants.mtp_limits import (
-    get_mtp_limits,
-    get_candidate_type_label,
-    format_mtp_validation_message
-)
 
 logger = structlog.get_logger(__name__)
 
@@ -30,91 +25,91 @@ class ApplicationService:
     def __init__(self, db: AsyncSession):
         self.db = db
     
-    async def _validate_mtp_questions_count(
+    async def _validate_mtp_answers(
         self,
-        candidate_id: UUID,
+        job_offer_id: UUID,
         application_data: ApplicationCreate
     ) -> None:
         """
-        Valide le nombre de questions MTP selon le type de candidat.
+        Valide que les réponses MTP correspondent aux questions de l'offre.
         
-        Règles:
-        - Candidats INTERNES: 7 Métier, 3 Talent, 3 Paradigme (max 13 total)
-        - Candidats EXTERNES: 3 Métier, 3 Talent, 3 Paradigme (max 9 total)
+        Règle: Le candidat doit répondre à TOUTES les questions MTP de l'offre.
+        Le nombre de réponses doit correspondre exactement au nombre de questions.
         
         Args:
-            candidate_id: UUID du candidat
+            job_offer_id: UUID de l'offre d'emploi
             application_data: Données de la candidature
             
         Raises:
-            ValidationError: Si les limites MTP sont dépassées
+            ValidationError: Si le nombre de réponses ne correspond pas aux questions
         """
-        # Récupérer le profil du candidat pour connaître son type
-        user_result = await self.db.execute(
-            select(User).where(User.id == candidate_id)
+        from app.models.job_offer import JobOffer
+        
+        # Récupérer l'offre avec ses questions MTP
+        job_result = await self.db.execute(
+            select(JobOffer).where(JobOffer.id == job_offer_id)
         )
-        user = user_result.scalar_one_or_none()
+        job_offer = job_result.scalar_one_or_none()
         
-        if not user:
-            raise ValidationError("Candidat introuvable")
+        if job_offer is None:
+            raise ValidationError("Offre d'emploi introuvable")
         
-        # Déterminer le type de candidat (interne ou externe)
-        is_internal = bool(user.is_internal_candidate)
+        # Si l'offre n'a pas de questions MTP, pas de validation nécessaire
+        # Utiliser getattr pour éviter les warnings du type checker avec SQLAlchemy
+        questions_mtp = getattr(job_offer, 'questions_mtp', None)
+        if questions_mtp is None:
+            logger.info("Pas de questions MTP pour cette offre", job_offer_id=str(job_offer_id))
+            return
         
-        # Récupérer les limites applicables
-        limits = get_mtp_limits(is_internal)
-        candidate_type = get_candidate_type_label(is_internal)
+        # Si le candidat n'a pas fourni de réponses mais l'offre a des questions, erreur
+        if application_data.mtp_answers is None:
+            raise ValidationError("Les réponses MTP sont obligatoires pour cette offre")
         
-        # Compter les questions MTP fournies dans la candidature
-        metier_count = sum(1 for q in [
-            application_data.mtp_metier_q1,
-            application_data.mtp_metier_q2,
-            application_data.mtp_metier_q3
-        ] if q)
+        # Compter les questions et réponses pour chaque catégorie
+        questions = questions_mtp
+        answers = application_data.mtp_answers
         
-        talent_count = sum(1 for q in [
-            application_data.mtp_talent_q1,
-            application_data.mtp_talent_q2,
-            application_data.mtp_talent_q3
-        ] if q)
-        
-        paradigme_count = sum(1 for q in [
-            application_data.mtp_paradigme_q1,
-            application_data.mtp_paradigme_q2,
-            application_data.mtp_paradigme_q3
-        ] if q)
-        
-        # Vérifier les limites
         errors = []
-        if metier_count > limits.metier:
-            errors.append(f"Métier: {metier_count}/{limits.metier}")
-        if talent_count > limits.talent:
-            errors.append(f"Talent: {talent_count}/{limits.talent}")
-        if paradigme_count > limits.paradigme:
-            errors.append(f"Paradigme: {paradigme_count}/{limits.paradigme}")
+        
+        # Vérifier Métier
+        nb_questions_metier = len(questions.get('questions_metier', []))
+        nb_reponses_metier = len(answers.get('reponses_metier', []))
+        if nb_questions_metier != nb_reponses_metier:
+            errors.append(f"Métier: {nb_reponses_metier} réponse(s) fournie(s) pour {nb_questions_metier} question(s)")
+        
+        # Vérifier Talent
+        nb_questions_talent = len(questions.get('questions_talent', []))
+        nb_reponses_talent = len(answers.get('reponses_talent', []))
+        if nb_questions_talent != nb_reponses_talent:
+            errors.append(f"Talent: {nb_reponses_talent} réponse(s) fournie(s) pour {nb_questions_talent} question(s)")
+        
+        # Vérifier Paradigme
+        nb_questions_paradigme = len(questions.get('questions_paradigme', []))
+        nb_reponses_paradigme = len(answers.get('reponses_paradigme', []))
+        if nb_questions_paradigme != nb_reponses_paradigme:
+            errors.append(f"Paradigme: {nb_reponses_paradigme} réponse(s) fournie(s) pour {nb_questions_paradigme} question(s)")
         
         if errors:
-            error_message = format_mtp_validation_message(
-                is_internal, metier_count, talent_count, paradigme_count
-            )
+            error_message = "Le nombre de réponses MTP ne correspond pas aux questions de l'offre:\n" + "\n".join(f"  - {e}" for e in errors)
             logger.warning(
                 "Validation MTP échouée",
-                candidate_id=str(candidate_id),
-                candidate_type=candidate_type,
-                metier=metier_count,
-                talent=talent_count,
-                paradigme=paradigme_count,
-                errors=errors
+                job_offer_id=str(job_offer_id),
+                errors=errors,
+                nb_questions_metier=nb_questions_metier,
+                nb_reponses_metier=nb_reponses_metier,
+                nb_questions_talent=nb_questions_talent,
+                nb_reponses_talent=nb_reponses_talent,
+                nb_questions_paradigme=nb_questions_paradigme,
+                nb_reponses_paradigme=nb_reponses_paradigme
             )
             raise ValidationError(error_message)
         
         logger.info(
             "Validation MTP réussie",
-            candidate_id=str(candidate_id),
-            candidate_type=candidate_type,
-            metier=metier_count,
-            talent=talent_count,
-            paradigme=paradigme_count
+            job_offer_id=str(job_offer_id),
+            metier=f"{nb_reponses_metier}/{nb_questions_metier}",
+            talent=f"{nb_reponses_talent}/{nb_questions_talent}",
+            paradigme=f"{nb_reponses_paradigme}/{nb_questions_paradigme}"
         )
     
     async def create_application(self, application_data: ApplicationCreate, user_id: Optional[str] = None) -> Application:
@@ -149,16 +144,18 @@ class ApplicationService:
             if existing_application:
                 raise ValidationError("Une candidature existe déjà pour cette offre d'emploi")
             
-            # Valider le nombre de questions MTP selon le type de candidat
-            await self._validate_mtp_questions_count(
-                application_data.candidate_id,
+            # Valider que les réponses MTP correspondent aux questions de l'offre
+            # Si l'offre a des questions MTP, les réponses sont obligatoires
+            await self._validate_mtp_answers(
+                application_data.job_offer_id,
                 application_data
             )
             
             # Créer la candidature
             application = Application(**application_data.dict())
             self.db.add(application)
-            #  PAS de commit ici
+            # Flush pour obtenir l'ID et persister l'objet dans la session
+            await self.db.flush()
             await self.db.refresh(application)
             
             logger.info("Candidature créée", application_id=str(application.id), candidate_id=str(application.candidate_id))
@@ -166,8 +163,17 @@ class ApplicationService:
         except ValidationError:
             raise
         except Exception as e:
-            logger.error("Erreur création candidature", error=str(e))
-            raise BusinessLogicError("Erreur lors de la création de la candidature")
+            # Log détaillé avec traceback
+            import traceback
+            error_traceback = traceback.format_exc()
+            logger.error("Erreur création candidature", 
+                        error=str(e), 
+                        error_type=type(e).__name__,
+                        traceback=error_traceback,
+                        candidate_id=str(application_data.candidate_id),
+                        job_offer_id=str(application_data.job_offer_id))
+            # Retourner l'erreur originale pour un meilleur debugging
+            raise BusinessLogicError(f"Erreur lors de la création de la candidature: {type(e).__name__} - {str(e)}")
     
     async def get_application_by_id(self, application_id: str) -> Optional[Application]:
         """Récupérer une candidature par son ID avec cache"""
@@ -280,7 +286,8 @@ class ApplicationService:
             for field, value in update_data.items():
                 setattr(application, field, value)
             
-            #  PAS de commit ici
+            # Flush pour persister les modifications
+            await self.db.flush()
             await self.db.refresh(application)
             
             logger.info("Candidature mise à jour", application_id=application_id)
@@ -328,7 +335,9 @@ class ApplicationService:
             )
             
             self.db.add(document)
-            #  PAS de commit ici
+            #  PAS de commit ici - le endpoint fera le commit
+            # Flush pour obtenir l'ID et persister l'objet dans la session
+            await self.db.flush()
             await self.db.refresh(document)
             
             logger.info("Document créé", document_id=str(document.id), application_id=str(document.application_id))

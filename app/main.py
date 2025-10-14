@@ -372,7 +372,7 @@ async def info(current_user = Depends(get_current_user)):
 # ============================================================================
 
 # Import des routes API
-from app.api.v1.endpoints import auth, users, jobs, applications, evaluations, notifications, interviews, emails, optimized, webhooks, access_requests, public
+from app.api.v1.endpoints import auth, users, jobs, applications, evaluations, notifications, interviews, emails, optimized, webhooks, access_requests, public, migrations
 from app.api.v1.endpoints.monitoring import router as monitoring_router
 
 # Inclusion des routes dans l'application
@@ -388,6 +388,7 @@ app.include_router(optimized.router, prefix="/api/v1/optimized", tags=["⚡ Requ
 app.include_router(interviews.router, prefix="/api/v1/interviews", tags=["🎯 Entretiens"])
 app.include_router(emails.router, prefix="/api/v1/emails", tags=["📧 Emails"])
 app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["Webhooks"])
+app.include_router(migrations.router, prefix="/api/v1/migrations", tags=["🔧 Migrations BDD (Admin)"])
 
 # Routes de monitoring
 app.include_router(monitoring_router, prefix="/monitoring", tags=["📊 Monitoring"])

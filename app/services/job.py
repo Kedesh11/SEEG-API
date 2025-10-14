@@ -4,11 +4,13 @@ Service de gestion des offres d'emploi
 import structlog
 from typing import Optional, List, Dict, Any
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func
+from sqlalchemy import select, update, delete, func, and_, or_, desc
+from sqlalchemy.orm import selectinload
 from uuid import UUID
+from datetime import datetime
 
 from app.models.job_offer import JobOffer
-from app.models.application import Application
+from app.models.user import User
 from app.schemas.job import JobOfferCreate, JobOfferUpdate
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError
 
@@ -20,226 +22,299 @@ class JobOfferService:
     def __init__(self, db: AsyncSession):
         self.db = db
     
-    async def create_job_offer(self, job_data: JobOfferCreate) -> JobOffer:
-        """
-        Créer une nouvelle offre d'emploi - LOGIQUE MÉTIER PURE.
-        NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
-        """
-        try:
-            # Convertir en dictionnaire et gérer explicitement les colonnes JSON
-            job_dict = job_data.dict(exclude_unset=True)
-            
-            # S'assurer que les champs JSON sont bien sérialisés
-            # SQLAlchemy/asyncpg gère automatiquement la conversion JSON
-            # Mais on s'assure que None reste None et non {}
-            if 'requirements' in job_dict and job_dict['requirements'] is None:
-                job_dict['requirements'] = None
-            if 'benefits' in job_dict and job_dict['benefits'] is None:
-                job_dict['benefits'] = None
-            if 'responsibilities' in job_dict and job_dict['responsibilities'] is None:
-                job_dict['responsibilities'] = None
-            if 'questions_mtp' in job_dict and job_dict['questions_mtp'] is None:
-                job_dict['questions_mtp'] = None
-            
-            job_offer = JobOffer(**job_dict)
-            self.db.add(job_offer)
-            # ✅ PAS de commit ici - c'est l'endpoint qui décide
-            # ✅ PAS de refresh ici - sera fait après commit par l'endpoint
-            
-            logger.info("Offre d'emploi préparée", title=job_offer.title, 
-                       has_mtp=job_dict.get('questions_mtp') is not None)
-            return job_offer
-        except Exception as e:
-            logger.error("Erreur création offre d'emploi", error=str(e), error_type=type(e).__name__)
-            raise BusinessLogicError(f"Erreur lors de la création de l'offre d'emploi: {str(e)}")
-    
-    async def get_job_offer(self, job_id: UUID) -> Optional[JobOffer]:
-        """Récupérer une offre d'emploi par son ID"""
-        try:
-            result = await self.db.execute(
-                select(JobOffer).where(JobOffer.id == job_id)
-            )
-            return result.scalar_one_or_none()
-        except Exception as e:
-            logger.error("Erreur récupération offre d'emploi", error=str(e), job_id=str(job_id))
-            raise BusinessLogicError("Erreur lors de la récupération de l'offre d'emploi")
-    
     async def get_job_offers(
-        self, 
-        skip: int = 0, 
+        self,
+        skip: int = 0,
         limit: int = 100,
-        recruiter_id: Optional[UUID] = None,
         status: Optional[str] = None,
-        current_user: Optional[Any] = None  # Pour filtrage interne/externe
+        current_user: Optional[User] = None
     ) -> List[JobOffer]:
         """
-        Récupérer la liste des offres d'emploi avec filtrage interne/externe.
+        Récupérer les offres d'emploi avec filtrage automatique selon le type de candidat.
         
-        Logique de filtrage:
-        - Candidat INTERNE (is_internal_candidate=true) : Voit TOUTES les offres
-        - Candidat EXTERNE (is_internal_candidate=false) : Voit UNIQUEMENT les offres accessibles (offer_status='tous' ou 'externe')
-        - Recruteur/Admin : Voit TOUTES les offres
+        Args:
+            skip: Nombre d'éléments à ignorer
+            limit: Nombre d'éléments à retourner
+            status: Filtrer par statut
+            current_user: Utilisateur courant pour filtrage intelligent
+            
+        Returns:
+            Liste des offres d'emploi
         """
         try:
-            query = select(JobOffer)
+            query = select(JobOffer).options(
+                selectinload(JobOffer.recruiter)
+            )
             
-            # Filtrage par recruteur
-            if recruiter_id:
-                query = query.where(JobOffer.recruiter_id == recruiter_id)
-            
-            # Filtrage par statut
+            # Filtrer par statut si fourni
             if status:
                 query = query.where(JobOffer.status == status)
             
-            # Filtrage INTERNE/EXTERNE selon le type de candidat
-            if current_user and current_user.role == "candidate":
-                if not current_user.is_internal_candidate:
-                    # Candidat EXTERNE : uniquement les offres 'tous' ou 'externe'
-                    query = query.where(JobOffer.offer_status.in_(["tous", "externe"]))
-                    logger.debug("Filtrage offres pour candidat externe", user_id=str(current_user.id))
+            # Filtrage intelligent selon le type d'utilisateur
+            # Utiliser getattr pour éviter les warnings SQLAlchemy
+            if current_user and getattr(current_user, 'role', None) == "candidate":
+                # Candidat interne (employé SEEG avec matricule)
+                is_internal = getattr(current_user, 'is_internal_candidate', False)
+                if is_internal:
+                    # Voit toutes les offres (internes et externes)
+                    pass
                 else:
-                    # Candidat INTERNE : toutes les offres
-                    logger.debug("Affichage toutes offres pour candidat interne", user_id=str(current_user.id))
+                    # Candidat externe : voit seulement les offres 'tous' et 'externe'
+                    query = query.where(
+                        JobOffer.offer_status.in_(["tous", "externe"])
+                    )
             
-            query = query.offset(skip).limit(limit).order_by(JobOffer.created_at.desc())
+            # Tri par date de création décroissante
+            query = query.order_by(desc(JobOffer.created_at))
+            
+            # Pagination
+            query = query.offset(skip).limit(limit)
             
             result = await self.db.execute(query)
-            jobs = list(result.scalars().all())
+            job_offers = result.scalars().all()
             
-            logger.info("Offres récupérées", count=len(jobs), 
-                       is_internal_user=current_user.is_internal_candidate if current_user and hasattr(current_user, 'is_internal_candidate') else None)
-            return jobs
+            logger.info("Offres d'emploi récupérées", 
+                       count=len(job_offers),
+                       user_role=current_user.role if current_user else "anonymous")
+            
+            return list(job_offers)
             
         except Exception as e:
-            logger.error("Erreur récupération liste offres d'emploi", error=str(e))
-            raise BusinessLogicError("Erreur lors de la récupération des offres d'emploi")
+            logger.error("Erreur récupération offres d'emploi", error=str(e))
+            raise
     
-    async def update_job_offer(self, job_id: UUID, job_data: JobOfferUpdate) -> JobOffer:
+    async def get_job_offer_by_id(self, job_offer_id: UUID) -> JobOffer:
         """
-        Mettre à jour une offre d'emploi - LOGIQUE MÉTIER PURE.
-        NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
+        Récupérer une offre d'emploi par son ID.
+        
+        Args:
+            job_offer_id: UUID de l'offre d'emploi
+            
+        Returns:
+            Offre d'emploi
+            
+        Raises:
+            NotFoundError: Si l'offre n'existe pas
         """
         try:
-            # Vérifier que l'offre existe
-            job_offer = await self.get_job_offer(job_id)
+            query = select(JobOffer).where(JobOffer.id == job_offer_id).options(
+                selectinload(JobOffer.recruiter)
+            )
+            
+            result = await self.db.execute(query)
+            job_offer = result.scalar_one_or_none()
+            
             if not job_offer:
-                raise NotFoundError("Offre d'emploi non trouvée")
+                raise NotFoundError(f"Offre d'emploi {job_offer_id} introuvable")
+            
+            logger.info("Offre d'emploi récupérée", job_offer_id=str(job_offer_id))
+            
+            return job_offer
+            
+        except NotFoundError:
+            raise
+        except Exception as e:
+            logger.error("Erreur récupération offre d'emploi", 
+                        job_offer_id=str(job_offer_id),
+                        error=str(e))
+            raise
+    
+    async def create_job_offer(
+        self,
+        job_data: JobOfferCreate,
+        recruiter_id: UUID
+    ) -> JobOffer:
+        """
+        Créer une nouvelle offre d'emploi.
+        
+        Args:
+            job_data: Données de l'offre d'emploi
+            recruiter_id: UUID du recruteur
+            
+        Returns:
+            Offre d'emploi créée
+        """
+        try:
+            # Créer l'objet en mémoire
+            job_offer_dict = job_data.model_dump(exclude_unset=True)
+            job_offer_dict["recruiter_id"] = recruiter_id
+            
+            # Gérer les champs JSONB - s'assurer qu'ils sont None ou dict, jamais {}
+            for field in ["requirements", "benefits", "responsibilities", "questions_mtp"]:
+                if field in job_offer_dict:
+                    value = job_offer_dict[field]
+                    if value == {} or value == []:
+                        job_offer_dict[field] = None
+            
+            job_offer = JobOffer(**job_offer_dict)
+            
+            # Ajouter à la session
+            self.db.add(job_offer)
+            
+            # Flush pour obtenir l'ID avant le commit
+            await self.db.flush()
+            
+            logger.info("Offre d'emploi créée en mémoire", 
+                       job_offer_id=str(job_offer.id),
+                       title=job_offer.title,
+                       offer_status=job_offer.offer_status)
+            
+            return job_offer
+            
+        except Exception as e:
+            logger.error("Erreur création offre d'emploi", 
+                        error=str(e),
+                        error_type=type(e).__name__)
+            raise
+    
+    async def update_job_offer(
+        self,
+        job_offer_id: UUID,
+        job_data: JobOfferUpdate
+    ) -> JobOffer:
+        """
+        Mettre à jour une offre d'emploi.
+        
+        Args:
+            job_offer_id: UUID de l'offre d'emploi
+            job_data: Données de mise à jour
+            
+        Returns:
+            Offre d'emploi mise à jour
+            
+        Raises:
+            NotFoundError: Si l'offre n'existe pas
+        """
+        try:
+            # Récupérer l'offre existante
+            job_offer = await self.get_job_offer_by_id(job_offer_id)
             
             # Mettre à jour les champs fournis
-            update_data = job_data.dict(exclude_unset=True)
+            update_data = job_data.model_dump(exclude_unset=True)
             
-            if update_data:
-                # Gestion explicite des colonnes JSONB pour éviter les erreurs
-                # PostgreSQL gère automatiquement la conversion, mais on s'assure que None reste None
-                for json_field in ['requirements', 'benefits', 'responsibilities', 'questions_mtp']:
-                    if json_field in update_data and update_data[json_field] is None:
-                        update_data[json_field] = None
-                
-                # Mettre à jour en base
-                await self.db.execute(
-                    update(JobOffer)
-                    .where(JobOffer.id == job_id)
-                    .values(**update_data)
-                )
-                # ✅ PAS de commit ici - c'est l'endpoint qui décide
-                
-                # IMPORTANT: Rafraîchir l'objet pour avoir les données à jour
-                # Note: le refresh complet sera fait après commit par l'endpoint
-                await self.db.refresh(job_offer)
+            # Gérer les champs JSONB - s'assurer qu'ils sont None ou dict, jamais {}
+            for field in ["requirements", "benefits", "responsibilities", "questions_mtp"]:
+                if field in update_data:
+                    value = update_data[field]
+                    if value == {} or value == []:
+                        update_data[field] = None
+            
+            for field, value in update_data.items():
+                setattr(job_offer, field, value)
+            
+            # Mettre à jour la date de modification
+            job_offer.updated_at = datetime.utcnow()
+            
+            # Flush pour persister avant refresh
+            await self.db.flush()
+            
+            # Rafraîchir l'objet pour récupérer les valeurs actuelles
+            await self.db.refresh(job_offer)
             
             logger.info("Offre d'emploi mise à jour", 
-                       job_id=str(job_id), 
-                       fields_updated=list(update_data.keys()))
+                       job_offer_id=str(job_offer_id),
+                       updated_fields=list(update_data.keys()))
+            
             return job_offer
             
         except NotFoundError:
             raise
         except Exception as e:
             logger.error("Erreur mise à jour offre d'emploi", 
-                        error=str(e), 
-                        error_type=type(e).__name__,
-                        job_id=str(job_id))
-            raise BusinessLogicError(f"Erreur lors de la mise à jour de l'offre d'emploi: {str(e)}")
+                        job_offer_id=str(job_offer_id),
+                        error=str(e),
+                        error_type=type(e).__name__)
+            raise
     
-    async def delete_job_offer(self, job_id: UUID) -> bool:
+    async def delete_job_offer(self, job_offer_id: UUID) -> bool:
         """
-        Supprimer une offre d'emploi - LOGIQUE MÉTIER PURE.
-        NE FAIT PAS de commit - c'est la responsabilité de l'endpoint.
+        Supprimer une offre d'emploi.
+        
+        Args:
+            job_offer_id: UUID de l'offre d'emploi
+            
+        Returns:
+            True si suppression réussie
+            
+        Raises:
+            NotFoundError: Si l'offre n'existe pas
+            BusinessLogicError: Si l'offre a des candidatures associées
         """
         try:
             # Vérifier que l'offre existe
-            job_offer = await self.get_job_offer(job_id)
-            if not job_offer:
-                raise NotFoundError("Offre d'emploi non trouvée")
+            job_offer = await self.get_job_offer_by_id(job_offer_id)
             
-            await self.db.execute(
-                delete(JobOffer).where(JobOffer.id == job_id)
+            # Vérifier qu'il n'y a pas de candidatures associées
+            from app.models.application import Application
+            
+            applications_query = select(func.count(Application.id)).where(
+                Application.job_offer_id == job_offer_id
             )
-            # ✅ PAS de commit ici
+            result = await self.db.execute(applications_query)
+            applications_count = result.scalar_one()
             
-            logger.info("Offre d'emploi préparée pour suppression", job_id=str(job_id))
+            if applications_count > 0:
+                raise BusinessLogicError(
+                    f"Impossible de supprimer l'offre : {applications_count} candidature(s) associée(s)"
+                )
+            
+            # Supprimer l'offre
+            await self.db.delete(job_offer)
+            await self.db.flush()
+            
+            logger.info("Offre d'emploi supprimée", job_offer_id=str(job_offer_id))
+            
             return True
             
-        except NotFoundError:
+        except (NotFoundError, BusinessLogicError):
             raise
         except Exception as e:
-            logger.error("Erreur suppression offre d'emploi", error=str(e), job_id=str(job_id))
-            raise BusinessLogicError("Erreur lors de la suppression de l'offre d'emploi")
+            logger.error("Erreur suppression offre d'emploi", 
+                        job_offer_id=str(job_offer_id),
+                        error=str(e))
+            raise
     
-    async def get_job_offer_with_applications(self, job_id: UUID) -> Optional[Dict[str, Any]]:
-        """Récupérer une offre d'emploi avec ses candidatures"""
+    async def get_job_offers_count(
+        self,
+        status: Optional[str] = None,
+        current_user: Optional[User] = None
+    ) -> int:
+        """
+        Compter le nombre d'offres d'emploi.
+        
+        Args:
+            status: Filtrer par statut
+            current_user: Utilisateur courant pour filtrage intelligent
+            
+        Returns:
+            Nombre d'offres d'emploi
+        """
         try:
-            # Récupérer l'offre
-            job_offer = await self.get_job_offer(job_id)
-            if not job_offer:
-                return None
+            query = select(func.count(JobOffer.id))
             
-            # Récupérer les candidatures
-            result = await self.db.execute(
-                select(Application).where(Application.job_offer_id == job_id)
-            )
-            applications = result.scalars().all()
+            # Filtrer par statut si fourni
+            if status:
+                query = query.where(JobOffer.status == status)
             
-            return {
-                "job_offer": job_offer,
-                "applications": applications,
-                "application_count": len(applications)
-            }
+            # Filtrage intelligent selon le type d'utilisateur
+            # Utiliser getattr pour éviter les warnings SQLAlchemy
+            if current_user and getattr(current_user, 'role', None) == "candidate":
+                is_internal = getattr(current_user, 'is_internal_candidate', False)
+                if not is_internal:
+                    # Candidat externe : voit seulement les offres 'tous' et 'externe'
+                    query = query.where(
+                        JobOffer.offer_status.in_(["tous", "externe"])
+                    )
+            
+            result = await self.db.execute(query)
+            count = result.scalar_one()
+            
+            logger.info("Nombre d'offres d'emploi compté", 
+                       count=count,
+                       user_role=current_user.role if current_user else "anonymous")
+            
+            return count
+            
         except Exception as e:
-            logger.error("Erreur récupération offre avec candidatures", error=str(e), job_id=str(job_id))
-            raise BusinessLogicError("Erreur lors de la récupération de l'offre d'emploi")
-    
-    async def get_recruiter_statistics(self, recruiter_id: UUID) -> Dict[str, Any]:
-        """Récupérer les statistiques d'un recruteur"""
-        try:
-            # Nombre total d'offres
-            total_jobs_result = await self.db.execute(
-                select(func.count(JobOffer.id)).where(JobOffer.recruiter_id == recruiter_id)
-            )
-            total_jobs = total_jobs_result.scalar()
-            
-            # Nombre d'offres actives
-            active_jobs_result = await self.db.execute(
-                select(func.count(JobOffer.id)).where(
-                    JobOffer.recruiter_id == recruiter_id,
-                    JobOffer.status == "active"
-                )
-            )
-            active_jobs = active_jobs_result.scalar()
-            
-            # Nombre total de candidatures
-            total_applications_result = await self.db.execute(
-                select(func.count(Application.id))
-                .join(JobOffer, Application.job_offer_id == JobOffer.id)
-                .where(JobOffer.recruiter_id == recruiter_id)
-            )
-            total_applications = total_applications_result.scalar()
-            
-            return {
-                "total_jobs": total_jobs,
-                "active_jobs": active_jobs,
-                "total_applications": total_applications
-            }
-        except Exception as e:
-            logger.error("Erreur récupération statistiques recruteur", error=str(e), recruiter_id=str(recruiter_id))
-            raise BusinessLogicError("Erreur lors de la récupération des statistiques")
+            logger.error("Erreur comptage offres d'emploi", error=str(e))
+            raise

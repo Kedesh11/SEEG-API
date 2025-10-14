@@ -14,7 +14,7 @@ from app.core.security.security import TokenManager
 from app.core.logging.logging import security_logger
 from app.db.database import get_db
 from app.core.dependencies import get_current_user as core_get_current_user
-from app.schemas.base import ResponseSchema, PaginatedResponse
+from app.schemas.base import ResponseSchema, PaginatedResponse, PaginationSchema
 from app.schemas.user import UserResponse, UserUpdate, CandidateProfileResponse
 from app.services.user import UserService
 from app.services.auth import AuthService
@@ -63,12 +63,12 @@ async def update_current_user(
     current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Met Ã  jour les informations de l'utilisateur actuel."""
+    """Met Ã  jour les informations de l'utilisateur actuel."""
     try:
-        updated_user = await UserService.update_user(
-            db=db,
+        user_service = UserService(db)
+        updated_user = await user_service.update_user(
             user_id=current_user.id,
-            update_data=user_update
+            user_data=user_update
         )
         
         if not updated_user:
@@ -108,7 +108,7 @@ async def get_user_by_id(
     """RÃ©cupÃ¨re un utilisateur par son ID."""
     try:
         # VÃ©rifier les permissions
-        if current_user.id != user_id and not current_user.is_admin:
+        if current_user.id != user_id and current_user.role != "admin":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Permission insuffisante"
@@ -158,13 +158,13 @@ async def get_users(
 ):
     """RÃ©cupÃ¨re la liste des utilisateurs avec pagination, recherche et tri."""
     try:
-        if not current_user.is_admin:
+        if current_user.role != "admin":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Permission insuffisante"
             )
-        users = await UserService.get_users(
-            db=db,
+        user_service = UserService(db)
+        users = await user_service.get_users(
             skip=skip,
             limit=limit,
             role=role,
@@ -176,28 +176,26 @@ async def get_users(
         total = len(user_responses)
         pages = (total + limit - 1) // limit
         current_page = (skip // limit) + 1
-        paginated_response = PaginatedResponse(
-            items=user_responses,
-            total=total,
-            page=current_page,
-            size=limit,
-            pages=pages,
-            has_next=current_page < pages,
-            has_prev=current_page > 1
-        )
+        
         safe_log("info", "Liste utilisateurs rÃ©cupÃ©rÃ©e", requester_id=str(current_user.id), count=total)
-        return ResponseSchema(
+        return PaginatedResponse(
             success=True,
-            message="Utilisateurs rÃ©cupÃ©rÃ©s avec succÃ¨s",
-            data=paginated_response
+            message="Utilisateurs recupérés avec succès",
+            data=user_responses,
+            pagination=PaginationSchema(
+                page=current_page,
+                per_page=limit,
+                total=total,
+                pages=pages
+            )
         )
     except HTTPException:
         raise
     except Exception as e:
-        safe_log("error", "Erreur rÃ©cupÃ©ration liste utilisateurs", error=str(e))
+        safe_log("error", "Erreur récupération liste utilisateurs", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Erreur lors de la rÃ©cupÃ©ration des utilisateurs"
+            detail="Erreur lors de la récupération des utilisateurs"
         )
 
 
@@ -211,21 +209,22 @@ async def delete_user(
 ):
     """Supprime un utilisateur (suppression logique)."""
     try:
-        # VÃ©rifier les permissions
-        if current_user.id != user_id and not current_user.is_admin:
+        # Verifier les permissions
+        if current_user.id != user_id and current_user.role != "admin":
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Permission insuffisante"
             )
         
-        # EmpÃªcher l'auto-suppression pour les admins
-        if current_user.id == user_id and current_user.is_admin:
+        # Empécher l'auto-suppression pour les admins
+        if current_user.id == user_id and current_user.role == "admin":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Un administrateur ne peut pas se supprimer lui-mÃªme"
             )
         
-        success = await UserService.delete_user(db=db, user_id=user_id)
+        user_service = UserService(db)
+        success = await user_service.delete_user(user_id=user_id)
         
         if not success:
             raise HTTPException(
@@ -260,17 +259,18 @@ async def get_current_user_profile(
     current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """RÃ©cupÃ¨re le profil candidat de l'utilisateur actuel."""
+    """Récupérer le profil candidat de l'utilisateur actuel."""
     try:
-        if not current_user.is_candidate:
+        if current_user.role != "candidate":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Seuls les candidats ont un profil candidat"
             )
         
-        user_with_profile = await UserService.get_user_with_profile(db, str(current_user.id))
+        user_service = UserService(db)
+        candidate_profile = await user_service.get_candidate_profile(current_user.id)
         
-        if not user_with_profile or not user_with_profile.candidate_profile:
+        if not candidate_profile:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Profil candidat non trouvÃ©"
@@ -280,7 +280,7 @@ async def get_current_user_profile(
         return ResponseSchema(
             success=True,
             message="Profil candidat rÃ©cupÃ©rÃ© avec succÃ¨s",
-            data=CandidateProfileResponse.from_orm(user_with_profile.candidate_profile)
+            data=CandidateProfileResponse.from_orm(candidate_profile)
         )
         
     except HTTPException:
