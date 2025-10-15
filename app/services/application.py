@@ -2,7 +2,9 @@
 Service de gestion des candidatures
 """
 import structlog
+import json
 from typing import Optional, List, Dict, Any
+from app.utils.json_utils import JSONDataHandler
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, and_, desc
 from uuid import UUID
@@ -15,7 +17,7 @@ from app.schemas.application import (
     ApplicationDocumentUpdate, ApplicationDocumentWithData,
     ApplicationDraftUpdate, ApplicationHistoryCreate
 )
-from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError
+from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError, DatabaseError
 
 logger = structlog.get_logger(__name__)
 
@@ -44,6 +46,7 @@ class ApplicationService:
             ValidationError: Si le nombre de réponses ne correspond pas aux questions
         """
         from app.models.job_offer import JobOffer
+        logger = structlog.get_logger(__name__)
         
         # Récupérer l'offre avec ses questions MTP
         job_result = await self.db.execute(
@@ -71,21 +74,41 @@ class ApplicationService:
         
         errors = []
         
+        # Parser les données JSON de manière sécurisée
+        logger = structlog.get_logger(__name__)
+        
+        logger.debug("🔍 Validation MTP", questions_type=type(questions).__name__, answers_type=type(answers).__name__)
+        
+        # Utilisation de notre utilitaire JSON sécurisé
+        questions = JSONDataHandler.safe_parse_json(questions, {})
+        answers = JSONDataHandler.safe_parse_json(answers, {})
+        
+        logger.debug("🔍 Données parsées", questions_keys=list(questions.keys()) if isinstance(questions, dict) else "N/A", 
+                    answers_keys=list(answers.keys()) if isinstance(answers, dict) else "N/A")
+        
+        # S'assurer que les données parsées sont des dictionnaires
+        if not isinstance(questions, dict):
+            logger.warning("⚠️ Questions n'est pas un dictionnaire", questions_type=type(questions).__name__)
+            questions = {}
+        if not isinstance(answers, dict):
+            logger.warning("⚠️ Answers n'est pas un dictionnaire", answers_type=type(answers).__name__)
+            answers = {}
+        
         # Vérifier Métier
-        nb_questions_metier = len(questions.get('questions_metier', []))
-        nb_reponses_metier = len(answers.get('reponses_metier', []))
+        nb_questions_metier = len(JSONDataHandler.safe_get_list(questions.get('questions_metier'), []))
+        nb_reponses_metier = len(JSONDataHandler.safe_get_list(answers.get('reponses_metier'), []))
         if nb_questions_metier != nb_reponses_metier:
             errors.append(f"Métier: {nb_reponses_metier} réponse(s) fournie(s) pour {nb_questions_metier} question(s)")
         
         # Vérifier Talent
-        nb_questions_talent = len(questions.get('questions_talent', []))
-        nb_reponses_talent = len(answers.get('reponses_talent', []))
+        nb_questions_talent = len(JSONDataHandler.safe_get_list(questions.get('questions_talent'), []))
+        nb_reponses_talent = len(JSONDataHandler.safe_get_list(answers.get('reponses_talent'), []))
         if nb_questions_talent != nb_reponses_talent:
             errors.append(f"Talent: {nb_reponses_talent} réponse(s) fournie(s) pour {nb_questions_talent} question(s)")
         
         # Vérifier Paradigme
-        nb_questions_paradigme = len(questions.get('questions_paradigme', []))
-        nb_reponses_paradigme = len(answers.get('reponses_paradigme', []))
+        nb_questions_paradigme = len(JSONDataHandler.safe_get_list(questions.get('questions_paradigme'), []))
+        nb_reponses_paradigme = len(JSONDataHandler.safe_get_list(answers.get('reponses_paradigme'), []))
         if nb_questions_paradigme != nb_reponses_paradigme:
             errors.append(f"Paradigme: {nb_reponses_paradigme} réponse(s) fournie(s) pour {nb_questions_paradigme} question(s)")
         
@@ -215,11 +238,15 @@ class ApplicationService:
         @cache_key_wrapper("application:full", expire=300)  # Cache 5 minutes
         async def _get_full_application(app_id: str):
             try:
+                logger.debug("🔍 Récupération application complète", application_id=app_id)
                 application = await get_application_complete(self.db, app_id)
                 
                 if not application:
+                    logger.warning("⚠️ Application non trouvée", application_id=app_id)
                     raise NotFoundError("Candidature non trouvée")
                 
+                logger.debug("✅ Application récupérée", application_id=app_id, 
+                           mtp_answers_type=type(getattr(application, 'mtp_answers', None)).__name__)
                 return application
             except ValueError:
                 raise ValidationError("ID de candidature invalide")
@@ -484,34 +511,114 @@ class ApplicationService:
     
     # Méthodes pour les brouillons (inchangées)
     async def save_draft(self, draft_data: dict) -> ApplicationDraft:
-        """Sauvegarder un brouillon de candidature"""
+        """
+        Sauvegarder un brouillon de candidature
+        
+        Args:
+            draft_data: Données du brouillon à sauvegarder
+            
+        Returns:
+            ApplicationDraft: Brouillon sauvegardé
+            
+        Raises:
+            ValidationError: Si les données sont invalides
+            DatabaseError: Si erreur de base de données
+            BusinessLogicError: Pour toute autre erreur métier
+        """
         try:
+            logger.debug("🔍 Début sauvegarde brouillon", draft_data_keys=list(draft_data.keys()))
+            
+            # Validation des champs requis
+            required_fields = ["user_id", "job_offer_id"]
+            for field in required_fields:
+                if field not in draft_data:
+                    raise ValidationError(
+                        f"Champ requis manquant: {field}",
+                        field=field,
+                        details={"provided_fields": list(draft_data.keys())}
+                    )
+            
+            user_id = draft_data["user_id"]
+            job_offer_id = draft_data["job_offer_id"]
+            
+            logger.debug("🔍 Recherche brouillon existant", user_id=str(user_id), job_offer_id=str(job_offer_id))
+            
             # Vérifier si un brouillon existe déjà
             result = await self.db.execute(
                 select(ApplicationDraft).where(
-                    ApplicationDraft.user_id == draft_data["user_id"],
-                    ApplicationDraft.job_offer_id == draft_data["job_offer_id"]
+                    ApplicationDraft.user_id == user_id,
+                    ApplicationDraft.job_offer_id == job_offer_id
                 )
             )
             draft = result.scalar_one_or_none()
             
             if draft:
                 # Mettre à jour le brouillon existant
-                draft.form_data = draft_data.get("form_data")  # type: ignore
-                draft.ui_state = draft_data.get("ui_state")  # type: ignore
+                logger.debug("🔄 Mise à jour brouillon existant", user_id=str(user_id), job_offer_id=str(job_offer_id))
+                
+                # Utilisation de notre utilitaire JSON sécurisé
+                parsed_draft_data = JSONDataHandler.safe_parse_json(draft_data, {})
+                
+                draft.form_data = JSONDataHandler.safe_get_dict_value(parsed_draft_data, "form_data")  # type: ignore
+                draft.ui_state = JSONDataHandler.safe_get_dict_value(parsed_draft_data, "ui_state")  # type: ignore
+                
+                # Flush pour persister les modifications
+                await self.db.flush()
+                logger.debug("✅ Brouillon mis à jour et flushed")
+                
             else:
                 # Créer un nouveau brouillon
-                draft = ApplicationDraft(**draft_data)
+                logger.debug("🆕 Création nouveau brouillon", user_id=str(user_id), job_offer_id=str(job_offer_id))
+                
+                # Préparer les données pour la création
+                draft_create_data = {
+                    "user_id": user_id,
+                    "job_offer_id": job_offer_id,
+                    "form_data": JSONDataHandler.safe_get_dict_value(draft_data, "form_data"),
+                    "ui_state": JSONDataHandler.safe_get_dict_value(draft_data, "ui_state")
+                }
+                
+                draft = ApplicationDraft(**draft_create_data)
                 self.db.add(draft)
+                
+                # Flush pour persister l'objet dans la session
+                await self.db.flush()
+                logger.debug("✅ Nouveau brouillon créé et flushed")
             
-            #  PAS de commit ici
+            # Refresh pour obtenir les valeurs mises à jour de la DB
             await self.db.refresh(draft)
+            logger.debug("✅ Brouillon refreshed")
             
-            logger.info("Brouillon sauvegardé", user_id=str(draft.user_id), job_offer_id=str(draft.job_offer_id))
+            #  PAS de commit ici - le commit sera fait par l'endpoint
+            
+            logger.info("✅ Brouillon sauvegardé avec succès", 
+                       user_id=str(draft.user_id), 
+                       job_offer_id=str(draft.job_offer_id),
+                       has_form_data=draft.form_data is not None,
+                       has_ui_state=draft.ui_state is not None)
             return draft
+            
+        except ValidationError:
+            # Propager les erreurs de validation sans modification
+            logger.warning("⚠️ Erreur de validation brouillon", user_id=draft_data.get("user_id"), job_offer_id=draft_data.get("job_offer_id"))
+            raise
+            
         except Exception as e:
-            logger.error("Erreur sauvegarde brouillon", error=str(e))
-            raise BusinessLogicError("Erreur lors de la sauvegarde du brouillon")
+            # Logger avec détails complets pour debugging
+            logger.error(
+                "❌ Erreur inattendue sauvegarde brouillon", 
+                error_type=type(e).__name__,
+                error=str(e),
+                user_id=draft_data.get("user_id"),
+                job_offer_id=draft_data.get("job_offer_id"),
+                draft_data_keys=list(draft_data.keys()) if isinstance(draft_data, dict) else "N/A",
+                exc_info=True
+            )
+            raise DatabaseError(
+                "Erreur lors de la sauvegarde du brouillon",
+                operation="save_draft",
+                details={"error_type": type(e).__name__, "error_message": str(e)}
+            )
     
     async def get_draft(self, user_id: str, job_offer_id: str) -> Optional[ApplicationDraft]:
         """Récupérer un brouillon de candidature"""

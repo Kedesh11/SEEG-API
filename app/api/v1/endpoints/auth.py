@@ -409,6 +409,28 @@ async def signup_candidate(
             safe_log("error", "❌ Erreur lors du refresh", error=str(e), error_type=type(e).__name__)
             raise
         
+        # Étape 4.5: Envoyer email de bienvenue + notification (PATTERN UNIFIÉ)
+        try:
+            from app.services.notification_email_manager import NotificationEmailManager
+            notif_email_manager = NotificationEmailManager(db)
+            
+            result = await notif_email_manager.notify_and_email_registration(
+                user_id=user.id,
+                email=str(user.email),
+                first_name=str(user.first_name),
+                last_name=str(user.last_name),
+                sexe=str(user.sexe) if (user.sexe is not None and str(user.sexe)) else None
+            )
+            await db.commit()
+            
+            safe_log("info", "✅ Email + notification bienvenue envoyés", 
+                    user_id=str(user.id),
+                    email_sent=result["email_sent"],
+                    notification_sent=result["notification_sent"])
+        except Exception as e:
+            safe_log("warning", "⚠️ Erreur email/notification bienvenue", error=str(e))
+            # Ne pas bloquer l'inscription si email/notification échouent (fail-safe)
+        
         # Étape 5: Créer une demande d'accès si statut='en_attente'
         if hasattr(user, 'statut') and str(getattr(user, 'statut', '')) == 'en_attente':
             try:
@@ -889,6 +911,27 @@ async def reset_password(
         await db.commit()
         
         safe_log("info", "Mot de passe réinitialisé avec succès", user_id=str(user.id))
+        
+        # Envoyer email + notification de confirmation (non-bloquant)
+        try:
+            from app.services.notification_email_manager import NotificationEmailManager
+            notif_email_manager = NotificationEmailManager(db)
+            
+            result = await notif_email_manager.notify_and_email_password_changed(
+                user_id=user.id,
+                email=str(user.email),
+                first_name=str(user.first_name),
+                last_name=str(user.last_name)
+            )
+            await db.commit()
+            
+            safe_log("info", "✅ Email + notification changement password envoyés",
+                    user_id=str(user.id),
+                    email_sent=result["email_sent"],
+                    notification_sent=result["notification_sent"])
+        except Exception as e:
+            safe_log("warning", "⚠️ Erreur email/notification password change", 
+                    user_id=str(user.id), error=str(e))
         return {"success": True, "message": "Mot de passe réinitialisé"}
         
     except (ValidationError, PydanticValidationError) as e:

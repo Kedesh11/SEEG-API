@@ -11,6 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import Select
 import structlog
 
+# Import des modèles nécessaires
+from app.models.user import User
+from app.models.job_offer import JobOffer
+from app.models.application import Application
+from app.models.notification import Notification
+
 logger = structlog.get_logger(__name__)
 
 
@@ -30,8 +36,8 @@ class QueryOptimizer:
         """
         # Charger le profil candidat si nécessaire
         query = query.options(
-            selectinload('candidate_profile'),
-            selectinload('notifications').selectinload('application')
+            selectinload(User.candidate_profile),
+            selectinload(User.notifications).selectinload(Notification.application)
         )
         return query
     
@@ -48,9 +54,9 @@ class QueryOptimizer:
         """
         # Charger les relations nécessaires
         query = query.options(
-            selectinload('recruiter'),
-            selectinload('applications').selectinload('candidate'),
-            selectinload('application_drafts')
+            selectinload(JobOffer.recruiter),
+            selectinload(JobOffer.applications).selectinload(Application.candidate),
+            selectinload(JobOffer.application_drafts)
         )
         return query
     
@@ -88,8 +94,8 @@ class QueryOptimizer:
             Requête optimisée avec eager loading
         """
         query = query.options(
-            selectinload('user'),
-            selectinload('application').selectinload('job_offer')
+            selectinload(Notification.user),
+            selectinload(Notification.application).selectinload(Application.job_offer)
         )
         return query
     
@@ -129,7 +135,7 @@ class QueryOptimizer:
         result = await db.execute(paginated_query)
         items = result.scalars().all()
         
-        return items, total
+        return list(items), total
     
     @staticmethod
     async def bulk_create(
@@ -198,7 +204,12 @@ class QueryOptimizer:
                 .values(**group['values'])
             )
             result = await db.execute(stmt)
-            total_updated += result.rowcount
+            # SQLAlchemy async result doesn't have rowcount, we need to check differently
+            try:
+                total_updated += result.rowcount or 0  # type: ignore[attr-defined]
+            except AttributeError:
+                # For async results, we can't easily get rowcount
+                pass
         
         await db.commit()
         return total_updated
@@ -257,9 +268,3 @@ async def get_application_complete(db: AsyncSession, application_id: str):
     
     result = await db.execute(query)
     return result.scalar_one_or_none()
-
-
-# Import des modèles nécessaires
-from app.models.user import User
-from app.models.job_offer import JobOffer
-from app.models.application import Application
