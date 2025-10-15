@@ -402,6 +402,197 @@ class NotificationEmailManager:
         
         return result
     
+    # ==================== ENTRETIENS ====================
+    
+    async def notify_and_email_interview_scheduled(
+        self,
+        candidate_id: UUID,
+        candidate_email: str,
+        candidate_name: str,
+        application_id: UUID,
+        job_title: str,
+        interview_date: str,  # Format: "YYYY-MM-DD"
+        interview_time: str,  # Format: "HH:MM:SS"
+        interview_location: str,
+        interviewer_name: str,
+        notes: Optional[str] = None
+    ) -> dict:
+        """
+        Envoyer email + notification après planification d'entretien
+        
+        Args:
+            candidate_id: ID du candidat
+            candidate_email: Email du candidat
+            candidate_name: Nom du candidat
+            application_id: ID de la candidature
+            job_title: Titre du poste
+            interview_date: Date (YYYY-MM-DD)
+            interview_time: Heure (HH:MM:SS)
+            interview_location: Lieu
+            interviewer_name: Nom de l'interviewer
+            notes: Notes additionnelles
+            
+        Returns:
+            dict: Statut {email_sent: bool, notification_sent: bool}
+        """
+        result = {"email_sent": False, "notification_sent": False}
+        
+        # Formater la date et l'heure pour affichage
+        from datetime import datetime
+        try:
+            dt = datetime.strptime(f"{interview_date} {interview_time}", "%Y-%m-%d %H:%M:%S")
+            formatted_datetime = dt.strftime("%d/%m/%Y à %H:%M")
+            day_name = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"][dt.weekday()]
+        except Exception:
+            formatted_datetime = f"{interview_date} à {interview_time}"
+            day_name = ""
+        
+        # 1. Envoi email d'invitation détaillé
+        try:
+            logger.info("📧 Envoi email invitation entretien", 
+                       candidate_id=str(candidate_id), 
+                       application_id=str(application_id))
+            
+            subject = f"🎯 Invitation à un entretien - {job_title}"
+            
+            html_body = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+                line-height: 1.6; color: #333; background-color: #f5f5f5; }}
+        .container {{ max-width: 650px; margin: 20px auto; background: white; 
+                      border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }}
+        .header {{ background: linear-gradient(135deg, #1e3a8a 0%, #3b82f6 100%); 
+                   color: white; padding: 40px 30px; text-align: center; }}
+        .header h1 {{ margin: 0; font-size: 28px; font-weight: 600; }}
+        .content {{ padding: 40px 30px; }}
+        .interview-card {{ background: #f8fafc; border-left: 4px solid #3b82f6; 
+                           padding: 20px; margin: 25px 0; border-radius: 8px; }}
+        .interview-detail {{ margin: 12px 0; padding: 10px 0; }}
+        .interview-detail-label {{ font-weight: 600; color: #1e3a8a; 
+                                   display: inline-block; width: 140px; }}
+        .interview-detail-value {{ color: #334155; }}
+        .important-note {{ background: #fef3c7; border-left: 4px solid #f59e0b; 
+                           padding: 15px; margin: 20px 0; border-radius: 8px; }}
+        .instructions {{ background: #e0f2fe; padding: 20px; margin: 20px 0; 
+                        border-radius: 8px; border-left: 4px solid #0284c7; }}
+        .instructions h3 {{ margin-top: 0; color: #0c4a6e; }}
+        .instructions ul {{ margin: 10px 0; padding-left: 20px; }}
+        .instructions li {{ margin: 8px 0; color: #334155; }}
+        .footer {{ background: #f1f5f9; padding: 25px 30px; text-align: center; 
+                   color: #64748b; font-size: 13px; }}
+        .cta-button {{ display: inline-block; background: #3b82f6; color: white; 
+                       padding: 12px 30px; text-decoration: none; border-radius: 6px; 
+                       margin: 20px 0; font-weight: 600; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Invitation à un Entretien</h1>
+            <p style="margin: 10px 0 0 0; opacity: 0.9;">SEEG - Recrutement</p>
+        </div>
+        
+        <div class="content">
+            <p>Bonjour <strong>{candidate_name}</strong>,</p>
+            
+            <p>Nous avons le plaisir de vous informer que votre candidature pour le poste de 
+            <strong>{job_title}</strong> a retenu notre attention.</p>
+            
+            <p>Nous vous invitons à un entretien selon les modalités suivantes :</p>
+            
+            <div class="interview-card">
+                <div class="interview-detail">
+                    <span class="interview-detail-label">📅 Date :</span>
+                    <span class="interview-detail-value"><strong>{day_name} {formatted_datetime}</strong></span>
+                </div>
+                <div class="interview-detail">
+                    <span class="interview-detail-label">📍 Lieu :</span>
+                    <span class="interview-detail-value">{interview_location}</span>
+                </div>
+                <div class="interview-detail">
+                    <span class="interview-detail-label">👤 Interviewer :</span>
+                    <span class="interview-detail-value">{interviewer_name}</span>
+                </div>
+                <div class="interview-detail">
+                    <span class="interview-detail-label">⏱️ Durée estimée :</span>
+                    <span class="interview-detail-value">1 heure</span>
+                </div>
+                {f'''<div class="interview-detail">
+                    <span class="interview-detail-label">📝 Notes :</span>
+                    <span class="interview-detail-value">{notes}</span>
+                </div>''' if notes else ''}
+            </div>
+            
+            <div class="important-note">
+                <strong>⚠️ Important :</strong> Merci de confirmer votre présence en répondant à cet email 
+                dans les 48 heures. En cas d'empêchement, contactez-nous au plus vite pour reprogrammer.
+            </div>
+            
+            <div class="instructions">
+                <h3>📋 Instructions pour l'entretien :</h3>
+                <ul>
+                    <li>✅ Apportez une pièce d'identité valide</li>
+                    <li>✅ Arrivez 15 minutes en avance</li>
+                    <li>✅ Préparez des questions sur le poste et l'entreprise</li>
+                    <li>✅ Apportez vos documents originaux (diplômes, attestations)</li>
+                    <li>✅ Habillez-vous de manière professionnelle</li>
+                </ul>
+            </div>
+            
+            <p>Nous vous souhaitons bonne chance pour cet entretien !</p>
+            
+            <p>Cordialement,<br>
+            <strong>L'équipe Recrutement SEEG</strong><br>
+            Société d'Énergie et d'Eau du Gabon</p>
+        </div>
+        
+        <div class="footer">
+            <p>&copy; 2025 SEEG - Société d'Énergie et d'Eau du Gabon</p>
+            <p>Email automatique - Pour toute question, répondez directement à cet email</p>
+        </div>
+    </div>
+</body>
+</html>
+            """
+            
+            await self.email_service.send_email(
+                to=candidate_email,
+                subject=subject,
+                body=f"Invitation à un entretien pour {job_title} le {formatted_datetime}",
+                html_body=html_body
+            )
+            result["email_sent"] = True
+            logger.info("✅ Email invitation entretien envoyé", 
+                       candidate_email=candidate_email)
+        except Exception as e:
+            logger.warning("⚠️ Erreur envoi email invitation entretien", 
+                          candidate_email=candidate_email, error=str(e))
+        
+        # 2. Création notification
+        try:
+            logger.info("🔔 Création notification entretien", 
+                       candidate_id=str(candidate_id))
+            await self.notification_manager.notify_interview_scheduled(
+                user_id=candidate_id,
+                application_id=application_id,
+                interview_date=formatted_datetime,
+                interview_type="entretien",
+                job_title=job_title
+            )
+            await self.db.flush()
+            result["notification_sent"] = True
+            logger.info("✅ Notification entretien créée", 
+                       candidate_id=str(candidate_id))
+        except Exception as e:
+            logger.error("❌ Erreur notification entretien", 
+                        candidate_id=str(candidate_id), error=str(e), exc_info=True)
+        
+        return result
+    
     # ==================== MÉTHODES UTILITAIRES ====================
     
     def _get_current_datetime_formatted(self) -> str:

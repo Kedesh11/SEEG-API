@@ -115,11 +115,116 @@ async def create_interview_slot(
         result = await interview_service.create_interview_slot(
             slot_data, str(current_user.id)
         )
+        # Commit pour persister l'entretien
+        await db.commit()
+        
         safe_log("info", "CrÃ©neau d'entretien crÃ©Ã©", 
                 slot_id=str(result.id) if hasattr(result, 'id') else "unknown",
                 date=slot_data.date,
                 time=slot_data.time,
                 user_id=str(current_user.id))
+        
+        # 🔔 Envoyer email + notification au candidat (PATTERN UNIFIÉ)
+        try:
+            safe_log("debug", "🔍 Début envoi email + notification entretien", 
+                    application_id=str(slot_data.application_id))
+            
+            from uuid import UUID as UUID_Type
+            from app.services.notification_email_manager import NotificationEmailManager
+            from sqlalchemy import select
+            from sqlalchemy.orm import selectinload
+            from app.models.application import Application
+            
+            safe_log("debug", "🔍 Imports réussis")
+            
+            # Récupérer les détails de la candidature avec eager loading
+            stmt = (
+                select(Application)
+                .options(
+                    selectinload(Application.candidate),
+                    selectinload(Application.job_offer)
+                )
+                .where(Application.id == slot_data.application_id)
+            )
+            safe_log("debug", "🔍 Statement préparé")
+            
+            app_result = await db.execute(stmt)
+            application = app_result.scalar_one_or_none()
+            
+            safe_log("debug", "🔍 Application récupérée", 
+                    found=application is not None)
+            
+            if application:
+                # Les relations sont déjà chargées avec selectinload
+                safe_log("debug", "🔍 Extraction données candidat...")
+                candidate_email = application.candidate.email
+                candidate_full_name = f"{application.candidate.first_name} {application.candidate.last_name}"
+                job_title = application.job_offer.title
+                
+                safe_log("debug", "🔍 Données extraites", 
+                        candidate_email=str(candidate_email),
+                        candidate_name=candidate_full_name,
+                        job_title=str(job_title))
+                
+                # Nom de l'interviewer
+                interviewer_name = f"{current_user.first_name} {current_user.last_name}" if hasattr(current_user, 'first_name') else "L'équipe RH SEEG"
+                
+                safe_log("debug", "🔍 Création NotificationEmailManager...")
+                notif_email_manager = NotificationEmailManager(db)
+                safe_log("debug", "✅ NotificationEmailManager créé")
+                
+                # Convertir les types
+                safe_log("debug", "🔍 Conversion types UUID...")
+                candidate_id_uuid = application.candidate_id if isinstance(application.candidate_id, UUID_Type) else UUID_Type(str(application.candidate_id))
+                application_id_uuid = application.id if isinstance(application.id, UUID_Type) else UUID_Type(str(application.id))
+                
+                safe_log("debug", "🔍 Appel notify_and_email_interview_scheduled...",
+                        candidate_id=str(candidate_id_uuid),
+                        interview_date=slot_data.date,
+                        interview_time=slot_data.time)
+                
+                notification_result = await notif_email_manager.notify_and_email_interview_scheduled(
+                    candidate_id=candidate_id_uuid,
+                    candidate_email=str(candidate_email),
+                    candidate_name=candidate_full_name,
+                    application_id=application_id_uuid,
+                    job_title=str(job_title),
+                    interview_date=slot_data.date,
+                    interview_time=slot_data.time,
+                    interview_location=slot_data.location or "À confirmer",
+                    interviewer_name=interviewer_name,
+                    notes=slot_data.notes
+                )
+                
+                safe_log("debug", "🔍 Résultat notification_result", 
+                        email_sent=notification_result.get("email_sent"),
+                        notification_sent=notification_result.get("notification_sent"))
+                
+                safe_log("debug", "💾 Commit final...")
+                await db.commit()
+                safe_log("debug", "✅ Commit réussi")
+                
+                safe_log("info", "✅ Email + notification entretien envoyés",
+                        application_id=str(slot_data.application_id),
+                        email_sent=notification_result["email_sent"],
+                        notification_sent=notification_result["notification_sent"])
+            else:
+                safe_log("warning", "Application non trouvée pour notification",
+                        application_id=str(slot_data.application_id))
+        except Exception as e:
+            safe_log("error", "❌ ERREUR email/notification entretien", 
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    application_id=str(slot_data.application_id),
+                    exc_info=True)
+            import traceback
+            traceback.print_exc()  # Afficher la trace complète pour debugging
+            # TEMPORAIRE: Propager l'erreur pour debugging (normalement fail-safe)
+            raise HTTPException(
+                status_code=500,
+                detail=f"Erreur email/notification: {str(e)}"
+            )
+        
         return result
     except NotFoundError as e:
         safe_log("warning", "Candidature non trouvÃ©e pour crÃ©ation crÃ©neau", error=str(e))
