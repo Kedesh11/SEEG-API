@@ -26,7 +26,7 @@ from app.schemas.application import (
 )
 from app.core.dependencies import get_current_user
 from app.models.user import User
-from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError, FileError
+from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError, FileError, DatabaseError
 # from app.core.rate_limit import limiter, UPLOAD_LIMITS  # ⚠️ Désactivé temporairement
 
 router = APIRouter()
@@ -152,24 +152,34 @@ async def create_application(
         
         safe_log("debug", "✅ Candidature persistée définitivement")
         
-        # 🔷 ÉTAPE 5: Envoi email de confirmation (non-bloquant)
+        # 🔷 ÉTAPE 4.5: Email + Notification candidature (PATTERN UNIFIÉ)
         try:
-            safe_log("debug", "📧 Envoi email confirmation en cours...")
-            await email_service.send_application_confirmation(
+            from uuid import UUID as UUID_Type
+            from app.services.notification_email_manager import NotificationEmailManager
+            
+            notif_email_manager = NotificationEmailManager(db)
+            
+            # Convertir les types pour éviter les erreurs de type checking
+            candidate_id_uuid = application.candidate_id if isinstance(application.candidate_id, UUID_Type) else UUID_Type(str(application.candidate_id))
+            application_id_uuid = application.id if isinstance(application.id, UUID_Type) else UUID_Type(str(application.id))
+            
+            result = await notif_email_manager.notify_and_email_application_submitted(
+                user_id=candidate_id_uuid,
+                application_id=application_id_uuid,
                 candidate_email=candidate_email,
                 candidate_name=candidate_name,
-                job_title=job_title,
-                application_id=application_id
+                job_title=job_title
             )
-            safe_log("info", "✅ Email de confirmation envoyé", 
-                     recipient=candidate_email)
+            await db.commit()
+            
+            safe_log("info", "✅ Email + notification candidature envoyés", 
+                    application_id=application_id,
+                    email_sent=result["email_sent"],
+                    notification_sent=result["notification_sent"])
         except Exception as e:
-            # Log détaillé de l'erreur email (non-bloquant)
-            safe_log("warning", "⚠️  Erreur envoi email confirmation (non-bloquant)", 
-                     error=str(e),
-                     error_type=type(e).__name__,
-                     application_id=application_id,
-                     recipient=candidate_email)
+            safe_log("warning", "⚠️ Erreur email/notification candidature (non-bloquant)", 
+                    error=str(e), application_id=application_id)
+            # Ne pas bloquer la candidature si email/notification échouent (fail-safe)
         
         safe_log("info", "🎉 SUCCÈS création candidature complète", 
                  application_id=str(application.id), 
@@ -1012,12 +1022,18 @@ async def export_application_pdf(
     - Admin/Observer: Toutes les candidatures
     """
     try:
+        safe_log("info", "🚀 Début export PDF", application_id=application_id, user_id=str(current_user.id))
+        
         # 1. RÃ©cupÃ©rer la candidature avec toutes les relations
+        safe_log("info", "🔍 Récupération candidature avec relations", application_id=application_id)
         application_service = ApplicationService(db)
         application = await application_service.get_application_with_relations(application_id)
         
         if not application:
+            safe_log("warning", "❌ Candidature non trouvée", application_id=application_id)
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidature non trouvÃ©e")
+        
+        safe_log("info", "✅ Candidature récupérée", application_id=application_id, candidate_id=str(getattr(application, 'candidate_id', 'N/A')))
         
         # 2. Vérifier les permissions
         is_admin = hasattr(current_user, 'role') and str(current_user.role) in ['admin', 'observer']
@@ -1042,11 +1058,16 @@ async def export_application_pdf(
             )
         
         # 3. GÃ©nÃ©rer le PDF
+        safe_log("info", "🔧 Création service PDF", application_id=application_id, format=format, language=language)
         pdf_service = ApplicationPDFService(page_format=format, language=language)
+        
+        safe_log("info", "📄 Génération PDF en cours", application_id=application_id)
         pdf_content = await pdf_service.generate_application_pdf(
             application=application,
             include_documents=include_documents
         )
+        
+        safe_log("info", "✅ PDF généré", application_id=application_id, pdf_size=len(pdf_content))
         
         # 4. Construire le nom du fichier
         filename = ApplicationPDFService.get_filename(application)
@@ -1113,21 +1134,113 @@ async def upsert_draft_by_job_offer(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    """
+    Créer ou mettre à jour un brouillon de candidature
+    
+    Gestion d'erreurs robuste selon les meilleures pratiques :
+    - Validation des données
+    - Transaction avec commit/rollback approprié
+    - Logging structuré pour traçabilité
+    - Exceptions spécifiques selon le type d'erreur
+    """
+    # Récupérer l'ID utilisateur de manière sécurisée (éviter MissingGreenlet)
+    user_id = str(getattr(current_user, 'id', None))
+    job_offer_id_str = str(payload.job_offer_id)
+    
     try:
+        safe_log("info", "🚀 Début sauvegarde brouillon", 
+                user_id=user_id, 
+                job_offer_id=job_offer_id_str)
+        
         service = ApplicationService(db)
-        # Forcer l'user_id depuis le token, ignorer celui reÃ§u pour sÃ©curitÃ©
+        
+        # Forcer l'user_id depuis le token pour sécurité (principe de moindre privilège)
         data = {
-            "user_id": str(current_user.id),
-            "job_offer_id": str(payload.job_offer_id),
+            "user_id": user_id,
+            "job_offer_id": job_offer_id_str,
             "form_data": payload.form_data,
             "ui_state": payload.ui_state,
         }
+        
+        # Sauvegarder le brouillon
         draft = await service.save_draft(data)
-        return {"success": True, "message": "Brouillon enregistrÃ©", "data": draft}
+        
+        # Commit explicite pour persister les données (principe de transaction explicite)
+        await db.commit()
+        safe_log("info", "✅ Brouillon sauvegardé et commité", 
+                user_id=user_id, 
+                job_offer_id=job_offer_id_str)
+        
+        # Créer une notification brouillon (pas d'email nécessaire)
+        try:
+            from uuid import UUID as UUID_Type
+            from app.services.notification_email_manager import NotificationEmailManager
+            from sqlalchemy import select
+            from app.models.job_offer import JobOffer
+            
+            # Récupérer le titre de l'offre
+            stmt = select(JobOffer).where(JobOffer.id == payload.job_offer_id)
+            result = await db.execute(stmt)
+            job_offer = result.scalar_one_or_none()
+            
+            if job_offer:
+                notif_email_manager = NotificationEmailManager(db)
+                
+                # Convertir les types pour éviter les erreurs de type checking
+                user_id_uuid = current_user.id if isinstance(current_user.id, UUID_Type) else UUID_Type(str(current_user.id))
+                job_offer_id_uuid = payload.job_offer_id if isinstance(payload.job_offer_id, UUID_Type) else UUID_Type(str(payload.job_offer_id))
+                
+                result = await notif_email_manager.notify_application_draft_saved(
+                    user_id=user_id_uuid,
+                    job_offer_id=job_offer_id_uuid,
+                    job_title=str(job_offer.title)
+                )
+                await db.commit()
+                safe_log("debug", "✅ Notification brouillon créée", 
+                        notification_sent=result["notification_sent"])
+        except Exception as e:
+            safe_log("warning", "⚠️ Erreur notification brouillon", error=str(e))
+        
+        return {
+            "success": True, 
+            "message": "Brouillon enregistré avec succès", 
+            "data": draft
+        }
+        
     except ValidationError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
-        raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+        # Erreur de validation : rollback et retourner 400
+        await db.rollback()
+        safe_log("warning", "⚠️ Validation échouée sauvegarde brouillon", 
+                user_id=user_id, 
+                error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail=str(e)
+        )
+        
+    except DatabaseError as e:
+        # Erreur de base de données : rollback et retourner 500
+        await db.rollback()
+        safe_log("error", "❌ Erreur BD sauvegarde brouillon", 
+                user_id=user_id, 
+                error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erreur lors de la sauvegarde du brouillon"
+        )
+        
+    except Exception as e:
+        # Erreur inattendue : rollback et retourner 500
+        await db.rollback()
+        safe_log("error", "❌ Erreur inattendue sauvegarde brouillon", 
+                user_id=user_id, 
+                error_type=type(e).__name__,
+                error=str(e),
+                exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Une erreur interne s'est produite"
+        )
 
 
 @router.delete("/drafts", status_code=status.HTTP_204_NO_CONTENT, summary="Supprimer le brouillon par offre", openapi_extra={

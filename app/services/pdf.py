@@ -2,8 +2,11 @@
 Service de génération de PDF pour les candidatures
 """
 import io
+import os
+import json
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any, Dict, List
+from pathlib import Path
 from reportlab.lib.pagesizes import A4, LETTER
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
@@ -11,8 +14,12 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
 from reportlab.pdfgen import canvas
+import structlog
 
 from app.models.application import Application
+from app.utils.json_utils import JSONDataHandler
+
+logger = structlog.get_logger(__name__)
 
 
 class ApplicationPDFService:
@@ -38,7 +45,22 @@ class ApplicationPDFService:
         self.page_format = A4 if page_format == 'A4' else LETTER
         self.language = language
         self.styles = getSampleStyleSheet()
+        self._setup_styles()
+    
+    def _safe_json_parse(self, json_string: Any) -> List[Dict]:
+        """
+        Parse en toute sécurité une chaîne JSON en liste de dictionnaires
         
+        Args:
+            json_string: Chaîne JSON ou objet déjà parsé
+            
+        Returns:
+            Liste de dictionnaires ou liste vide
+        """
+        return JSONDataHandler.safe_get_dict_list(json_string)
+        
+    def _setup_styles(self):
+        """Configurer les styles personnalisés"""
         # Styles personnalisés
         self.styles.add(ParagraphStyle(
             name='SectionTitle',
@@ -78,7 +100,7 @@ class ApplicationPDFService:
     
     async def generate_application_pdf(
         self, 
-        application: Application,
+        application: Any,
         include_documents: bool = False
     ) -> bytes:
         """
@@ -91,66 +113,109 @@ class ApplicationPDFService:
         Returns:
             bytes: Contenu binaire du PDF
         """
-        # Créer un buffer en mémoire
-        buffer = io.BytesIO()
+        logger.info("🚀 Début génération PDF", application_id=getattr(application, 'id', 'N/A'))
         
-        # Créer le document PDF
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=self.page_format,
-            rightMargin=2*cm,
-            leftMargin=2*cm,
-            topMargin=2*cm,
-            bottomMargin=2*cm,
-            title=f"Candidature_{application.id}"
-        )
+        # Log des données d'entrée pour diagnostic
+        logger.debug("🔍 Données d'entrée PDF", 
+                    mtp_answers_type=type(getattr(application, 'mtp_answers', None)).__name__,
+                    candidate_id=str(getattr(application, 'candidate_id', 'N/A')),
+                    job_offer_id=str(getattr(application, 'job_offer_id', 'N/A')))
         
-        # Construire le contenu
-        story = []
+        try:
+            # Créer un buffer en mémoire
+            buffer = io.BytesIO()
         
-        # 1. En-tête
-        story.extend(self._build_header(application))
+            # Créer le document PDF
+            doc = SimpleDocTemplate(
+                buffer,
+                pagesize=self.page_format,
+                rightMargin=2*cm,
+                leftMargin=2*cm,
+                topMargin=2*cm,
+                bottomMargin=2*cm,
+                title=f"Candidature_{application.id}"
+            )
         
-        # 2. Informations personnelles
-        story.extend(self._build_personal_info(application))
+            # Construire le contenu
+            story = []
+            
+            logger.info("📝 Construction des sections PDF")
+            
+            # 1. En-tête
+            logger.info("🔧 Construction en-tête")
+            story.extend(self._build_header(application))
+            
+            # 2. Informations personnelles
+            logger.info("🔧 Construction infos personnelles")
+            try:
+                story.extend(self._build_personal_info(application))
+                logger.debug("✅ Infos personnelles construites avec succès")
+            except Exception as e:
+                logger.error("❌ Erreur construction infos personnelles", error=str(e))
+                raise
+            
+            # 3. Détails du poste
+            logger.info("🔧 Construction détails poste")
+            story.extend(self._build_job_details(application))
+            
+            # 4. Parcours professionnel
+            logger.info("🔧 Construction expérience professionnelle")
+            story.extend(self._build_professional_experience(application))
+            
+            # 5. Formation
+            logger.info("🔧 Construction formation")
+            story.extend(self._build_education(application))
+            
+            # 6. Compétences
+            logger.info("🔧 Construction compétences")
+            try:
+                story.extend(self._build_skills(application))
+                logger.debug("✅ Compétences construites avec succès")
+            except Exception as e:
+                logger.error("❌ Erreur construction compétences", error=str(e))
+                raise
+            
+            # 7. Réponses MTP
+            logger.info("🔧 Construction réponses MTP")
+            try:
+                story.extend(self._build_mtp_answers(application))
+                logger.debug("✅ Réponses MTP construites avec succès")
+            except Exception as e:
+                logger.error("❌ Erreur construction réponses MTP", error=str(e))
+                raise
+            
+            # 8. Motivation & Disponibilité
+            logger.info("🔧 Construction motivation")
+            story.extend(self._build_motivation(application))
+            
+            # 9. Documents joints
+            logger.info("🔧 Construction documents joints")
+            story.extend(self._build_documents_list(application))
+            
+            # 10. Entretien (si programmé)
+            logger.info("🔧 Construction infos entretien")
+            story.extend(self._build_interview_info(application))
+            
+            # 11. Pied de page
+            logger.info("🔧 Construction pied de page")
+            story.extend(self._build_footer(application))
         
-        # 3. Détails du poste
-        story.extend(self._build_job_details(application))
-        
-        # 4. Parcours professionnel
-        story.extend(self._build_professional_experience(application))
-        
-        # 5. Formation
-        story.extend(self._build_education(application))
-        
-        # 6. Compétences
-        story.extend(self._build_skills(application))
-        
-        # 7. Réponses MTP
-        story.extend(self._build_mtp_answers(application))
-        
-        # 8. Motivation & Disponibilité
-        story.extend(self._build_motivation(application))
-        
-        # 9. Documents joints
-        story.extend(self._build_documents_list(application))
-        
-        # 10. Entretien (si programmé)
-        story.extend(self._build_interview_info(application))
-        
-        # 11. Pied de page
-        story.extend(self._build_footer(application))
-        
-        # Générer le PDF
-        doc.build(story, onFirstPage=self._add_page_number, onLaterPages=self._add_page_number)
-        
-        # Récupérer le contenu
-        pdf_content = buffer.getvalue()
-        buffer.close()
-        
-        return pdf_content
+            # Générer le PDF
+            logger.info("📄 Génération finale du PDF")
+            doc.build(story, onFirstPage=self._add_page_number, onLaterPages=self._add_page_number)
+
+            # Récupérer le contenu
+            generated_pdf_bytes = buffer.getvalue()
+            buffer.close()
+
+            logger.info("✅ PDF généré avec succès", size_bytes=len(generated_pdf_bytes))
+            return generated_pdf_bytes
+            
+        except Exception as e:
+            logger.error("❌ Erreur lors de la génération PDF", error=str(e), error_type=type(e).__name__)
+            raise
     
-    def _build_header(self, application: Application) -> list:
+    def _build_header(self, application: Any) -> list:
         """Construire l'en-tête du document"""
         elements = []
         
@@ -183,15 +248,15 @@ class ApplicationPDFService:
         
         return elements
     
-    def _build_personal_info(self, application: Application) -> list:
+    def _build_personal_info(self, application: Any) -> list:
         """Construire la section informations personnelles"""
         elements = []
         
         elements.append(Paragraph("INFORMATIONS PERSONNELLES", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        user = application.users
-        profile = user.candidate_profiles if user and hasattr(user, 'candidate_profiles') else None
+        user = getattr(application, 'candidate', None)
+        profile = getattr(user, 'candidate_profile', None)
         
         if user:
             data = [
@@ -231,14 +296,14 @@ class ApplicationPDFService:
         
         return elements
     
-    def _build_job_details(self, application: Application) -> list:
+    def _build_job_details(self, application: Any) -> list:
         """Construire la section détails du poste"""
         elements = []
         
         elements.append(Paragraph("POSTE VISÉ", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        job_offer = application.job_offers
+        job_offer = getattr(application, 'job_offer', None)
         
         if job_offer:
             data = [
@@ -250,8 +315,17 @@ class ApplicationPDFService:
             if hasattr(job_offer, 'date_limite') and job_offer.date_limite:
                 data.append(["Date limite de dépôt", job_offer.date_limite.strftime("%d/%m/%Y") if hasattr(job_offer.date_limite, 'strftime') else str(job_offer.date_limite)])
             
-            data.append(["Date de candidature", application.created_at.strftime("%d/%m/%Y") if hasattr(application.created_at, 'strftime') else str(application.created_at)])
-            data.append(["Statut actuel", self.STATUS_LABELS.get(application.status, application.status)])
+            created_at = getattr(application, 'created_at', None)
+            created_at_text = str(created_at)
+            if created_at is not None and hasattr(created_at, 'strftime'):
+                try:
+                    created_at_text = created_at.strftime("%d/%m/%Y")  # type: ignore[call-arg]
+                except Exception:
+                    created_at_text = str(created_at)
+            data.append(["Date de candidature", created_at_text])
+            status_value = getattr(application, 'status', None)
+            status_text = self.STATUS_LABELS.get(status_value, status_value) if status_value is not None else 'N/A'
+            data.append(["Statut actuel", str(status_text)])
             
             table = Table(data, colWidths=[5*cm, 12*cm])
             table.setStyle(TableStyle([
@@ -269,72 +343,58 @@ class ApplicationPDFService:
         
         return elements
     
-    def _build_professional_experience(self, application: Application) -> list:
+    def _build_professional_experience(self, application: Any) -> list:
         """Construire la section expérience professionnelle"""
         elements = []
         
         elements.append(Paragraph("EXPÉRIENCE PROFESSIONNELLE", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        user = application.users
-        profile = user.candidate_profiles if user and hasattr(user, 'candidate_profiles') else None
+        user = getattr(application, 'candidate', None)
+        profile = getattr(user, 'candidate_profile', None)
         
-        if profile and hasattr(profile, 'experiences') and profile.experiences:
-            for exp in profile.experiences:
-                # Titre du poste
-                elements.append(Paragraph(f"<b>{exp.get('title', 'N/A')}</b>", self.styles['Normal']))
-                
-                # Entreprise et localisation
-                company_location = f"{exp.get('company', 'N/A')}"
-                if exp.get('location'):
-                    company_location += f" • {exp['location']}"
-                elements.append(Paragraph(company_location, self.styles['Normal']))
-                
-                # Dates
-                start = exp.get('start_date', '')
-                end = exp.get('end_date', 'En cours')
-                elements.append(Paragraph(f"{start} - {end}", self.styles['Normal']))
-                
-                # Description
-                if exp.get('description'):
-                    elements.append(Spacer(1, 0.2*cm))
-                    elements.append(Paragraph(exp['description'], self.styles['Normal']))
-                
-                elements.append(Spacer(1, 0.5*cm))
-        else:
+        # Affichage des années d'expérience
+        years_exp = getattr(profile, 'years_experience', None) if profile else None
+        if years_exp:
+            elements.append(Paragraph(f"<b>Années d'expérience:</b> {years_exp} ans", self.styles['Normal']))
+            elements.append(Spacer(1, 0.3*cm))
+        
+        # Affichage du poste actuel
+        current_pos = getattr(profile, 'current_position', None) if profile else None
+        if current_pos:
+            elements.append(Paragraph(f"<b>Poste actuel:</b> {current_pos}", self.styles['Normal']))
+            elements.append(Spacer(1, 0.3*cm))
+        
+        # Affichage du département actuel
+        current_dept = getattr(profile, 'current_department', None) if profile else None
+        if current_dept:
+            elements.append(Paragraph(f"<b>Département actuel:</b> {current_dept}", self.styles['Normal']))
+            elements.append(Spacer(1, 0.3*cm))
+        
+        if not any([years_exp, current_pos, current_dept]):
             elements.append(Paragraph("Aucune expérience professionnelle renseignée", self.styles['Normal']))
         
         elements.append(Spacer(1, 0.8*cm))
         
         return elements
     
-    def _build_education(self, application: Application) -> list:
+    def _build_education(self, application: Any) -> list:
         """Construire la section formation"""
         elements = []
         
         elements.append(Paragraph("FORMATION & ÉDUCATION", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        user = application.users
-        profile = user.candidate_profiles if user and hasattr(user, 'candidate_profiles') else None
+        user = getattr(application, 'candidate', None)
+        profile = getattr(user, 'candidate_profile', None)
         
-        if profile and hasattr(profile, 'educations') and profile.educations:
-            for edu in profile.educations:
-                # Diplôme et domaine
-                degree_field = f"<b>{edu.get('degree', 'N/A')}</b>"
-                if edu.get('field_of_study'):
-                    degree_field += f" en {edu['field_of_study']}"
-                elements.append(Paragraph(degree_field, self.styles['Normal']))
-                
-                # Institution
-                elements.append(Paragraph(edu.get('institution', 'N/A'), self.styles['Normal']))
-                
-                # Dates
-                start = edu.get('start_date', '')
-                end = edu.get('end_date', 'En cours')
-                elements.append(Paragraph(f"{start} - {end}", self.styles['Normal']))
-                
-                elements.append(Spacer(1, 0.5*cm))
+        if profile and hasattr(profile, 'education'):
+            education_text = getattr(profile, 'education', None)
+            if education_text:
+                elements.append(Paragraph(f"<b>Formation:</b> {education_text}", self.styles['Normal']))
+                elements.append(Spacer(1, 0.3*cm))
+            else:
+                elements.append(Paragraph("Aucune formation renseignée", self.styles['Normal']))
         else:
             elements.append(Paragraph("Aucune formation renseignée", self.styles['Normal']))
         
@@ -342,35 +402,55 @@ class ApplicationPDFService:
         
         return elements
     
-    def _build_skills(self, application: Application) -> list:
+    def _build_skills(self, application: Any) -> list:
         """Construire la section compétences"""
         elements = []
         
         elements.append(Paragraph("COMPÉTENCES", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        user = application.users
-        profile = user.candidate_profiles if user and hasattr(user, 'candidate_profiles') else None
+        user = getattr(application, 'candidate', None)
+        profile = getattr(user, 'candidate_profile', None)
         
-        if profile and hasattr(profile, 'skills') and profile.skills:
-            skill_data = []
-            for skill in profile.skills:
-                name = skill.get('name', 'N/A')
-                level = skill.get('level', 0)
-                
-                # Barre de progression (10 carrés)
-                progress_bar = '█' * int(level / 10) + '░' * (10 - int(level / 10))
-                skill_data.append([f"• {name}", f"{progress_bar} {level}%"])
+        if profile and hasattr(profile, 'skills'):
+            logger.debug("🔍 Traitement des compétences", profile_id=getattr(profile, 'id', 'N/A'))
+            skills_raw = getattr(profile, 'skills', None)
+            skills = JSONDataHandler.safe_get_dict_list(skills_raw)
+            logger.debug("🔍 Skills parsées", skills_count=len(skills))
             
-            if skill_data:
-                table = Table(skill_data, colWidths=[8*cm, 9*cm])
-                table.setStyle(TableStyle([
-                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-                    ('TOPPADDING', (0, 0), (-1, -1), 3),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-                ]))
+            if skills:
+                skill_data = []
+                for i, skill in enumerate(skills):
+                    try:
+                        name = JSONDataHandler.safe_get_dict_value(skill, 'name', 'N/A')
+                        level = JSONDataHandler.safe_get_dict_value(skill, 'level', 0)
+                        
+                        # Validation et conversion sécurisée du niveau
+                        if not isinstance(level, (int, float)):
+                            level = 0
+                        level = max(0, min(100, int(level)))  # Clamp entre 0 et 100
+                        
+                        # Barre de progression (10 carrés)
+                        progress_bar = '█' * int(level / 10) + '░' * (10 - int(level / 10))
+                        skill_data.append([f"• {name}", f"{progress_bar} {level}%"])
+                        
+                    except Exception as e:
+                        logger.warning("⚠️ Erreur traitement skill", index=i, error=str(e))
+                        continue
                 
-                elements.append(table)
+                if skill_data:
+                    try:
+                        table = Table(skill_data, colWidths=[8*cm, 9*cm])
+                        table.setStyle(TableStyle([
+                            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                            ('TOPPADDING', (0, 0), (-1, -1), 3),
+                            ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                        ]))
+                        
+                        elements.append(table)
+                    except Exception as e:
+                        logger.error("❌ Erreur création tableau compétences", error=str(e))
+                        elements.append(Paragraph("Erreur lors de l'affichage des compétences", self.styles['Normal']))
         else:
             elements.append(Paragraph("Aucune compétence renseignée", self.styles['Normal']))
         
@@ -378,36 +458,49 @@ class ApplicationPDFService:
         
         return elements
     
-    def _build_mtp_answers(self, application: Application) -> list:
+    def _build_mtp_answers(self, application: Any) -> list:
         """Construire la section réponses MTP"""
         elements = []
         
         elements.append(Paragraph("PROFIL MTP (Métier, Talent, Paradigme)", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        if application.mtp_answers:
-            mtp = application.mtp_answers
+        try:
+            mtp_raw = getattr(application, 'mtp_answers', None)
+            logger.debug("🔍 Traitement réponses MTP", mtp_type=type(mtp_raw).__name__)
             
-            # Métier
-            if mtp.get('metier'):
-                elements.append(Paragraph("<b>MÉTIER (Choix prioritaires)</b>", self.styles['Normal']))
-                for i, metier in enumerate(mtp['metier'][:3], 1):
-                    elements.append(Paragraph(f"{i}. {metier}", self.styles['Normal']))
-                elements.append(Spacer(1, 0.3*cm))
+            mtp_dict = JSONDataHandler.safe_parse_json(mtp_raw, {})
             
-            # Talent
-            if mtp.get('talent'):
-                elements.append(Paragraph("<b>TALENT (Atouts principaux)</b>", self.styles['Normal']))
-                for i, talent in enumerate(mtp['talent'][:3], 1):
-                    elements.append(Paragraph(f"{i}. {talent}", self.styles['Normal']))
-                elements.append(Spacer(1, 0.3*cm))
-            
-            # Paradigme
-            if mtp.get('paradigme'):
-                elements.append(Paragraph("<b>PARADIGME (Valeurs & approches)</b>", self.styles['Normal']))
-                for i, paradigme in enumerate(mtp['paradigme'][:3], 1):
-                    elements.append(Paragraph(f"{i}. {paradigme}", self.styles['Normal']))
-                elements.append(Spacer(1, 0.3*cm))
+            if mtp_dict and isinstance(mtp_dict, dict):
+                # Métier
+                metier_responses = JSONDataHandler.safe_get_list(mtp_dict.get('metier'), [])
+                if metier_responses:
+                    elements.append(Paragraph("<b>MÉTIER (Choix prioritaires)</b>", self.styles['Normal']))
+                    for i, metier in enumerate(metier_responses[:3], 1):
+                        elements.append(Paragraph(f"{i}. {str(metier)}", self.styles['Normal']))
+                    elements.append(Spacer(1, 0.3*cm))
+                
+                # Talent
+                talent_responses = JSONDataHandler.safe_get_list(mtp_dict.get('talent'), [])
+                if talent_responses:
+                    elements.append(Paragraph("<b>TALENT (Atouts principaux)</b>", self.styles['Normal']))
+                    for i, talent in enumerate(talent_responses[:3], 1):
+                        elements.append(Paragraph(f"{i}. {str(talent)}", self.styles['Normal']))
+                    elements.append(Spacer(1, 0.3*cm))
+                
+                # Paradigme
+                paradigme_responses = JSONDataHandler.safe_get_list(mtp_dict.get('paradigme'), [])
+                if paradigme_responses:
+                    elements.append(Paragraph("<b>PARADIGME (Valeurs & approches)</b>", self.styles['Normal']))
+                    for i, paradigme in enumerate(paradigme_responses[:3], 1):
+                        elements.append(Paragraph(f"{i}. {str(paradigme)}", self.styles['Normal']))
+                    elements.append(Spacer(1, 0.3*cm))
+            else:
+                logger.debug("🔍 Aucune réponse MTP valide trouvée")
+                
+        except Exception as e:
+            logger.error("❌ Erreur traitement réponses MTP", error=str(e))
+            elements.append(Paragraph("Erreur lors de l'affichage des réponses MTP", self.styles['Normal']))
         else:
             elements.append(Paragraph("Aucune réponse MTP renseignée", self.styles['Normal']))
         
@@ -415,14 +508,14 @@ class ApplicationPDFService:
         
         return elements
     
-    def _build_motivation(self, application: Application) -> list:
+    def _build_motivation(self, application: Any) -> list:
         """Construire la section motivation et disponibilité"""
         elements = []
         
         elements.append(Paragraph("LETTRE DE MOTIVATION", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        motivation_text = application.cover_letter or application.motivation
+        motivation_text = getattr(application, 'cover_letter', None) or getattr(application, 'motivation', None)
         if motivation_text:
             elements.append(Paragraph(motivation_text, self.styles['Normal']))
         else:
@@ -432,10 +525,12 @@ class ApplicationPDFService:
         
         # Disponibilité et références
         info_data = []
-        if application.availability_start:
-            info_data.append(["Disponibilité", application.availability_start.strftime("%d/%m/%Y") if hasattr(application.availability_start, 'strftime') else str(application.availability_start)])
-        if application.reference_contacts:
-            info_data.append(["Références", application.reference_contacts])
+        availability_start = getattr(application, 'availability_start', None)
+        if availability_start:
+            info_data.append(["Disponibilité", availability_start.strftime("%d/%m/%Y") if hasattr(availability_start, 'strftime') else str(availability_start)])
+        reference_contacts = getattr(application, 'reference_contacts', None)
+        if reference_contacts:
+            info_data.append(["Références", reference_contacts])
         
         if info_data:
             table = Table(info_data, colWidths=[5*cm, 12*cm])
@@ -452,7 +547,7 @@ class ApplicationPDFService:
         
         return elements
     
-    def _build_documents_list(self, application: Application) -> list:
+    def _build_documents_list(self, application: Any) -> list:
         """Construire la liste des documents joints"""
         elements = []
         
@@ -467,16 +562,17 @@ class ApplicationPDFService:
         
         return elements
     
-    def _build_interview_info(self, application: Application) -> list:
+    def _build_interview_info(self, application: Any) -> list:
         """Construire la section entretien (si programmé)"""
         elements = []
         
-        if application.status == 'entretien_programme' and application.interview_date:
+        interview_date = getattr(application, 'interview_date', None)
+        if getattr(application, 'status', None) == 'entretien_programme' and interview_date:
             elements.append(Paragraph("ENTRETIEN PROGRAMMÉ", self.styles['SectionTitle']))
             elements.append(Spacer(1, 0.3*cm))
             
             interview_data = [
-                ["📅 Date & Heure", application.interview_date.strftime("%d/%m/%Y à %H:%M") if hasattr(application.interview_date, 'strftime') else str(application.interview_date)],
+                ["📅 Date & Heure", interview_date.strftime("%d/%m/%Y à %H:%M") if hasattr(interview_date, 'strftime') else str(interview_date)],
                 ["📍 Lieu", "Libreville (à confirmer)"],
                 ["⏰ Durée", "1h00 (estimée)"],
             ]
@@ -502,7 +598,7 @@ class ApplicationPDFService:
         
         return elements
     
-    def _build_footer(self, application: Application) -> list:
+    def _build_footer(self, application: Any) -> list:
         """Construire le pied de page"""
         elements = []
         
@@ -539,7 +635,7 @@ class ApplicationPDFService:
         canvas.restoreState()
     
     @staticmethod
-    def get_filename(application: Application) -> str:
+    def get_filename(application: Any) -> str:
         """
         Générer un nom de fichier pour le PDF
         
@@ -549,19 +645,23 @@ class ApplicationPDFService:
         Returns:
             str: Nom de fichier formaté
         """
-        user = application.users
-        job_offer = application.job_offers
+        user = getattr(application, 'candidate', None)
+        job_offer = getattr(application, 'job_offer', None)
         
         parts = ["Candidature"]
         
         if user:
-            if user.last_name:
-                parts.append(user.last_name.replace(' ', '_'))
-            if user.first_name:
-                parts.append(user.first_name.replace(' ', '_'))
+            last_name = getattr(user, 'last_name', None)
+            first_name = getattr(user, 'first_name', None)
+            if last_name:
+                parts.append(str(last_name).replace(' ', '_'))
+            if first_name:
+                parts.append(str(first_name).replace(' ', '_'))
         
-        if job_offer and job_offer.title:
-            parts.append(job_offer.title.replace(' ', '_'))
+        if job_offer:
+            title = getattr(job_offer, 'title', None)
+            if title:
+                parts.append(str(title).replace(' ', '_'))
         
         return "_".join(parts) + ".pdf"
 

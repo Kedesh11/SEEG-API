@@ -37,24 +37,25 @@ class NotificationService:
             NotificationResponse: Notification crÃ©Ã©e
         """
         try:
-            notification = Notification(
-                user_id=notification_data.user_id,
-                title=notification_data.title,
-                message=notification_data.message,
-                notification_type=notification_data.notification_type,
-                is_read=notification_data.is_read,
-                metadata=notification_data.metadata
-            )
+            notification = Notification()
+            notification.user_id = notification_data.user_id  # type: ignore
+            notification.related_application_id = notification_data.related_application_id  # type: ignore
+            notification.title = notification_data.title  # type: ignore
+            notification.message = notification_data.message  # type: ignore
+            notification.type = notification_data.type  # type: ignore
+            notification.link = notification_data.link  # type: ignore
+            notification.read = notification_data.read  # type: ignore
             
             self.db.add(notification)
-            #  PAS de commit ici
+            #  PAS de commit ici - MAIS flush nécessaire avant refresh
+            await self.db.flush()
             await self.db.refresh(notification)
             
             logger.info(
                 "Notification created",
                 notification_id=str(notification.id),
-                user_id=notification_data.user_id,
-                type=notification_data.notification_type
+                user_id=str(notification_data.user_id),
+                type=notification_data.type
             )
             
             return NotificationResponse.model_validate(notification)
@@ -120,8 +121,8 @@ class NotificationService:
         count_query = select(func.count(Notification.id)).where(Notification.user_id == user_id)
         
         if unread_only:
-            query = query.where(Notification.is_read == False)
-            count_query = count_query.where(Notification.is_read == False)
+            query = query.where(Notification.read == False)
+            count_query = count_query.where(Notification.read == False)
         
         if q:
             like = f"%{q}%"
@@ -129,8 +130,8 @@ class NotificationService:
             count_query = count_query.where(or_(Notification.title.ilike(like), Notification.message.ilike(like)))
         
         if type:
-            query = query.where(Notification.notification_type == type)
-            count_query = count_query.where(Notification.notification_type == type)
+            query = query.where(Notification.type == type)
+            count_query = count_query.where(Notification.type == type)
         
         # Dates
         def parse_date(s: Optional[str]):
@@ -210,8 +211,7 @@ class NotificationService:
                 raise NotFoundError(f"Notification avec l'ID {notification_id} non trouvÃ©e")
             
             # Mise Ã  jour du statut
-            notification.is_read = True
-            notification.read_at = datetime.now(timezone.utc)
+            notification.read = True  # type: ignore
             notification.updated_at = datetime.now(timezone.utc)
             
             #  PAS de commit ici
@@ -249,16 +249,15 @@ class NotificationService:
             result = await self.db.execute(
                 update(Notification)
                 .where(
-                    and_(
-                        Notification.user_id == user_id,
-                        Notification.is_read == False
-                    )
+                and_(
+                    Notification.user_id == user_id,
+                    Notification.read == False
                 )
-                .values(
-                    is_read=True,
-                    read_at=datetime.now(timezone.utc),
-                    updated_at=datetime.now(timezone.utc)
-                )
+            )
+            .values(
+                read=True,
+                updated_at=datetime.now(timezone.utc)
+            )
             )
             
             #  PAS de commit ici
@@ -295,7 +294,7 @@ class NotificationService:
             select(func.count(Notification.id)).where(
                 and_(
                     Notification.user_id == user_id,
-                    Notification.is_read == False
+                    Notification.read == False
                 )
             )
         )
@@ -322,9 +321,9 @@ class NotificationService:
         
         # Statistiques par type
         type_result = await self.db.execute(
-            select(Notification.notification_type, func.count(Notification.id))
+            select(Notification.type, func.count(Notification.id))
             .where(Notification.user_id == user_id)
-            .group_by(Notification.notification_type)
+            .group_by(Notification.type)
         )
         type_stats = {row[0]: row[1] for row in type_result.fetchall()}
 
@@ -354,7 +353,7 @@ class NotificationService:
                 delete(Notification).where(
                     and_(
                         Notification.created_at < cutoff_date,
-                        Notification.is_read == True
+                        Notification.read == True
                     )
                 )
             )
