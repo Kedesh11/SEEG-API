@@ -82,7 +82,7 @@ class UserService:
             # Pagination
             query = query.offset(skip).limit(limit)
             result = await self.db.execute(query)
-            return result.scalars().all()
+            return list(result.scalars().all())
         except Exception as e:
             logger.error("Erreur récupération liste utilisateurs", error=str(e))
             raise BusinessLogicError("Erreur lors de la récupération des utilisateurs")
@@ -161,10 +161,9 @@ class UserService:
                 raise ValidationError("Un profil candidat existe déjà pour cet utilisateur")
             
             # Créer le profil
-            profile = CandidateProfile(
-                user_id=user_id,
-                **profile_data.dict()
-            )
+            profile_dict = profile_data.dict()
+            profile_dict['user_id'] = user_id
+            profile = CandidateProfile(**profile_dict)
             
             self.db.add(profile)
             # ✅ PAS de commit ici
@@ -190,12 +189,20 @@ class UserService:
             # Mettre à jour les champs fournis
             update_data = profile_data.dict(exclude_unset=True)
             if update_data:
+                # Convertir skills de List[str] vers JSON string si présent
+                if 'skills' in update_data and update_data['skills'] is not None:
+                    import json
+                    update_data['skills'] = json.dumps(update_data['skills'])
+                
                 await self.db.execute(
                     update(CandidateProfile)
                     .where(CandidateProfile.user_id == user_id)
                     .values(**update_data)
                 )
                 # ✅ PAS de commit ici
+                
+                # 🔄 Rafraîchir l'objet pour avoir les nouvelles valeurs
+                await self.db.refresh(profile)
             
             logger.info("Profil candidat mis à jour", user_id=str(user_id))
             return profile

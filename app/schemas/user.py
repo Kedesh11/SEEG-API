@@ -1,7 +1,7 @@
 """
 Schémas Pydantic pour les utilisateurs
 """
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
 from uuid import UUID
@@ -19,6 +19,12 @@ class UserBase(BaseModel):
     email_verified: Optional[bool] = False
     is_active: Optional[bool] = True
     is_internal_candidate: Optional[bool] = False  # True = interne, False = externe
+    adresse: Optional[str] = None
+    candidate_status: Optional[str] = None
+    statut: Optional[str] = "actif"
+    poste_actuel: Optional[str] = None
+    annees_experience: Optional[int] = None
+    no_seeg_email: Optional[bool] = False
 
 class UserCreate(UserBase):
     password: str
@@ -32,6 +38,13 @@ class UserUpdate(BaseModel):
     date_of_birth: Optional[datetime] = None
     sexe: Optional[str] = None
     matricule: Optional[int] = None
+    adresse: Optional[str] = None
+    candidate_status: Optional[str] = None
+    statut: Optional[str] = None
+    poste_actuel: Optional[str] = None
+    annees_experience: Optional[int] = None
+    no_seeg_email: Optional[bool] = None
+    is_internal_candidate: Optional[bool] = None
 
 class UserResponse(UserBase):
     id: UUID
@@ -41,9 +54,6 @@ class UserResponse(UserBase):
     
     class Config:
         from_attributes = True
-
-class UserWithProfile(UserResponse):
-    candidate_profile: Optional["CandidateProfileResponse"] = None
 
 class CandidateProfileBase(BaseModel):
     address: Optional[str] = None
@@ -86,5 +96,21 @@ class CandidateProfileResponse(CandidateProfileBase):
     created_at: datetime
     updated_at: datetime
     
+    @field_validator('skills', mode='before')
+    @classmethod
+    def parse_skills(cls, v):
+        """Convertir JSON string vers List[str] si nécessaire"""
+        if isinstance(v, str):
+            import json
+            try:
+                return json.loads(v)
+            except:
+                return []
+        return v
+    
     class Config:
         from_attributes = True
+
+class UserWithProfile(UserResponse):
+    """Utilisateur avec son profil candidat (si applicable)"""
+    candidate_profile: Optional[CandidateProfileResponse] = None

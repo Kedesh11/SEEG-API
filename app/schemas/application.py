@@ -49,21 +49,6 @@ class ApplicationBase(BaseModel):
         description="Réponses MTP au format: {reponses_metier: [...], reponses_talent: [...], reponses_paradigme: [...]}"
     )
 
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "status": "pending",
-                "reference_contacts": "Mme X (+241...), M. Y (+241...)",
-                "availability_start": "2025-10-01T00:00:00Z",
-                "mtp_answers": {"q1": "réponse"},
-                "has_been_manager": False,
-                "ref_entreprise": "Entreprise ABC",
-                "ref_fullname": "Jean Dupont",
-                "ref_mail": "jean.dupont@abc.com",
-                "ref_contact": "+241 01 02 03 04"
-            }
-        }
-
 
 class ApplicationCreate(ApplicationBase):
     candidate_id: UUID
@@ -335,7 +320,7 @@ class ApplicationResponse(BaseModel):
     """Réponse pour les endpoints d'application."""
     success: bool
     message: str
-    data: Optional[Application] = None
+    data: Optional[Any] = None  # Any pour permettre l'enrichissement avec candidate et job_offer
 
     class Config:
         json_schema_extra = {

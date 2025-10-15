@@ -15,13 +15,14 @@ from app.core.logging.logging import security_logger
 from app.db.database import get_db
 from app.core.dependencies import get_current_user as core_get_current_user
 from app.schemas.base import ResponseSchema, PaginatedResponse, PaginationSchema
-from app.schemas.user import UserResponse, UserUpdate, CandidateProfileResponse
+from app.schemas.user import UserResponse, UserUpdate, CandidateProfileResponse, CandidateProfileUpdate, UserWithProfile
 from app.services.user import UserService
 from app.services.auth import AuthService
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError
 import structlog
 
-router = APIRouter()
+router = APIRouter(
+    tags=["👥 Utilisateurs"],)
 security_scheme = HTTPBearer()
 
 logger = structlog.get_logger(__name__)
@@ -39,31 +40,68 @@ async def get_current_user(current_user = Depends(core_get_current_user)):
     return current_user
 
 
-@router.get("/me", response_model=ResponseSchema[UserResponse], summary="RÃ©cupÃ©rer mon profil utilisateur", openapi_extra={
-    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Informations utilisateur rÃ©cupÃ©rÃ©es", "data": {"id": "uuid", "email": "user@seeg.ga"}}}}}}
+@router.get("/me", response_model=ResponseSchema[UserWithProfile], summary="RÃ©cupÃ©rer mon profil utilisateur", openapi_extra={
+    "responses": {
+        "200": {
+            "description": "Informations complètes de l'utilisateur avec profil candidat",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": True,
+                        "message": "Informations utilisateur récupérées",
+                        "data": {'id': 'bf0c73bd-09e0-4aad-afaa-94b16901e916', 'email': 'candidate@example.com', 'first_name': 'Jean', 'last_name': 'Dupont', 'role': 'candidate', 'phone': '+24177012345', 'date_of_birth': '1990-05-15', 'sexe': 'M', 'matricule': 12345, 'email_verified': True, 'last_login': '2025-10-15T10:30:00Z', 'is_active': True, 'is_internal_candidate': True, 'adresse': 'Libreville, Gabon', 'candidate_status': 'actif', 'statut': 'actif', 'poste_actuel': 'Développeur Senior', 'annees_experience': 5, 'no_seeg_email': False, 'created_at': '2025-01-10T08:00:00Z', 'updated_at': '2025-10-15T10:30:00Z', 'candidate_profile': {'id': 'profile-uuid', 'user_id': 'bf0c73bd-09e0-4aad-afaa-94b16901e916', 'years_experience': 5, 'current_position': 'Développeur Senior', 'availability': 'Immédiate', 'skills': ['Python', 'FastAPI', 'React', 'PostgreSQL'], 'expected_salary_min': 800000, 'expected_salary_max': 1200000, 'address': 'Libreville, Gabon', 'linkedin_url': 'https://linkedin.com/in/jeandupont', 'portfolio_url': 'https://portfolio.jeandupont.com', 'created_at': '2025-01-10T08:00:00Z', 'updated_at': '2025-10-15T10:30:00Z'}}
+                    }
+                }
+            }
+        }
+    }
 })
 async def get_current_user_info(
-    current_user = Depends(get_current_user)
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
-    """RÃ©cupÃ¨re les informations de l'utilisateur actuel."""
-    safe_log("info", "Informations utilisateur rÃ©cupÃ©rÃ©es", user_id=str(current_user.id))
-    return ResponseSchema(
-        success=True,
-        message="Informations utilisateur rÃ©cupÃ©rÃ©es",
-        data=UserResponse.from_orm(current_user)
-    )
+    """RÃ©cupÃ¨re les informations complètes de l'utilisateur actuel avec son profil candidat."""
+    try:
+        user_service = UserService(db)
+        
+        # Récupérer le profil candidat si c'est un candidat
+        candidate_profile = None
+        if current_user.role == "candidate":  # type: ignore
+            candidate_profile = await user_service.get_candidate_profile(current_user.id)
+        
+        # Créer la réponse avec profil
+        user_dict = UserResponse.from_orm(current_user).dict()
+        user_dict["candidate_profile"] = CandidateProfileResponse.from_orm(candidate_profile) if candidate_profile else None
+        
+        safe_log("info", "Informations utilisateur rÃ©cupÃ©rÃ©es", 
+                user_id=str(current_user.id),
+                has_profile=candidate_profile is not None)
+        
+        return ResponseSchema(
+            success=True,
+            message="Informations utilisateur rÃ©cupÃ©rÃ©es",
+            data=user_dict
+        )
+    except Exception as e:
+        safe_log("error", "Erreur récupération infos utilisateur", 
+                user_id=str(current_user.id), 
+                error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erreur lors de la récupération du profil"
+        )
 
 
-@router.put("/me", response_model=ResponseSchema[UserResponse], summary="Mettre Ã  jour mon profil utilisateur", openapi_extra={
+@router.put("/me", response_model=ResponseSchema[UserWithProfile], summary="Mettre Ã  jour mon profil utilisateur", openapi_extra={
     "requestBody": {"content": {"application/json": {"example": {"first_name": "Jean"}}}},
-    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Profil mis Ã  jour avec succÃ¨s", "data": {"id": "uuid", "first_name": "Jean"}}}}}}
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Profil mis Ã  jour avec succÃ¨s", "data": {"id": "uuid", "first_name": "Jean", "candidate_profile": {}}}}}}}
 })
 async def update_current_user(
     user_update: UserUpdate,
     current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Met Ã  jour les informations de l'utilisateur actuel."""
+    """Met Ã  jour les informations de l'utilisateur actuel et retourne toutes les informations."""
     try:
         user_service = UserService(db)
         updated_user = await user_service.update_user(
@@ -77,11 +115,27 @@ async def update_current_user(
                 detail="Utilisateur non trouvÃ©"
             )
         
-        safe_log("info", "Profil utilisateur mis Ã  jour", user_id=str(current_user.id))
+        # ✅ COMMIT pour persister les changements
+        await db.commit()
+        await db.refresh(updated_user)
+        
+        # Récupérer le profil candidat si c'est un candidat
+        candidate_profile = None
+        if updated_user.role == "candidate":  # type: ignore
+            candidate_profile = await user_service.get_candidate_profile(updated_user.id)
+        
+        # Créer la réponse complète avec profil
+        user_dict = UserResponse.from_orm(updated_user).dict()
+        user_dict["candidate_profile"] = CandidateProfileResponse.from_orm(candidate_profile) if candidate_profile else None
+        
+        safe_log("info", "Profil utilisateur mis Ã  jour", 
+                user_id=str(current_user.id),
+                has_profile=candidate_profile is not None)
+        
         return ResponseSchema(
             success=True,
-            message="Profil mis Ã  jour avec succÃ¨s",
-            data=UserResponse.from_orm(updated_user)
+            message="Profil mis Ã  jour avec succÃ¨s",
+            data=user_dict
         )
         
     except HTTPException:
@@ -143,9 +197,50 @@ async def get_user_by_id(
         )
 
 
-@router.get("/", response_model=ResponseSchema[PaginatedResponse[UserResponse]], summary="Lister les utilisateurs (pagination, recherche, tri)", openapi_extra={
-    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Utilisateurs rÃ©cupÃ©rÃ©s avec succÃ¨s", "data": {"items": [], "total": 0, "page": 1, "size": 100, "pages": 0, "has_next": False, "has_prev": False}}}}}}
-})
+@router.get(
+    "/",
+    summary="Lister les utilisateurs (pagination, recherche, tri)",
+    openapi_extra={
+        "responses": {
+            "200": {
+                "description": "Liste paginée des utilisateurs",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            'success': True,
+                            'message': '5 utilisateur(s) récupéré(s)',
+                            'data': [
+                                {
+                                    'id': 'user-1-uuid',
+                                    'email': 'admin@seeg-gabon.com',
+                                    'first_name': 'Admin',
+                                    'last_name': 'SEEG',
+                                    'role': 'admin',
+                                    'matricule': 1001,
+                                    'statut': 'actif',
+                                    'is_active': True
+                                },
+                                {
+                                    'id': 'user-2-uuid',
+                                    'email': 'recruiter@seeg-gabon.com',
+                                    'first_name': 'Marie',
+                                    'last_name': 'RECRUTEUSE',
+                                    'role': 'recruiter',
+                                    'matricule': 1002,
+                                    'statut': 'actif',
+                                    'is_active': True
+                                }
+                            ],
+                            'total': 5,
+                            'page': 1,
+                            'per_page': 100
+                        }
+                    }
+                }
+            }
+        }
+    }
+)
 async def get_users(
     skip: int = Query(0, ge=0, description="Nombre d'Ã©lÃ©ments Ã  ignorer"),
     limit: int = Query(100, ge=1, le=1000, description="Nombre maximum d'Ã©lÃ©ments"),
@@ -174,21 +269,19 @@ async def get_users(
         )
         user_responses = [UserResponse.from_orm(user) for user in users]
         total = len(user_responses)
-        pages = (total + limit - 1) // limit
         current_page = (skip // limit) + 1
         
         safe_log("info", "Liste utilisateurs rÃ©cupÃ©rÃ©e", requester_id=str(current_user.id), count=total)
-        return PaginatedResponse(
-            success=True,
-            message="Utilisateurs recupérés avec succès",
-            data=user_responses,
-            pagination=PaginationSchema(
-                page=current_page,
-                per_page=limit,
-                total=total,
-                pages=pages
-            )
-        )
+        
+        # Format de réponse compatible avec ApplicationListResponse
+        return {
+            "success": True,
+            "message": f"{total} utilisateur(s) récupéré(s)",
+            "data": user_responses,
+            "total": total,
+            "page": current_page,
+            "per_page": limit
+        }
     except HTTPException:
         raise
     except Exception as e:
@@ -293,4 +386,134 @@ async def get_current_user_profile(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur lors de la rÃ©cupÃ©ration du profil candidat"
+        )
+
+
+@router.put("/me/profile", response_model=ResponseSchema[UserWithProfile], summary="Mettre à jour mon profil candidat", openapi_extra={
+    "requestBody": {"content": {"application/json": {"example": {"years_experience": 5, "current_position": "Développeur Senior"}}}},
+    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Profil candidat mis à jour avec succès", "data": {"id": "uuid", "candidate_profile": {"years_experience": 5}}}}}}}
+})
+async def update_current_user_profile(
+    profile_update: CandidateProfileUpdate,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Mettre à jour le profil candidat de l'utilisateur actuel.
+    
+    **Accessible uniquement aux candidats**
+    
+    Champs modifiables :
+    - years_experience : Années d'expérience
+    - current_position : Poste actuel
+    - current_department : Département actuel
+    - skills : Compétences (liste)
+    - education : Formation
+    - availability : Disponibilité
+    - expected_salary_min/max : Salaire attendu
+    - LinkedIn, Portfolio URLs
+    """
+    import time
+    start_time = time.time()
+    update_fields = []  # Initialiser pour éviter les warnings
+    
+    try:
+        # 📊 LOG: Début de requête
+        update_fields = list(profile_update.dict(exclude_unset=True).keys())
+        safe_log("info", "🚀 Début mise à jour profil candidat", 
+                user_id=str(current_user.id),
+                user_role=current_user.role,
+                fields_count=len(update_fields),
+                fields=update_fields)
+        
+        # 🔐 Vérification permissions
+        if current_user.role != "candidate":
+            safe_log("warning", "❌ Accès refusé - Utilisateur non candidat",
+                    user_id=str(current_user.id),
+                    user_role=current_user.role)
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Seuls les candidats peuvent modifier leur profil candidat"
+            )
+        
+        safe_log("debug", "✅ Permissions validées")
+        
+        # 🏗️ Création service
+        safe_log("debug", "🏗️ Création UserService...")
+        user_service = UserService(db)
+        
+        # 💾 Mise à jour (le profil doit exister - créé lors de la première candidature)
+        safe_log("debug", "💾 Appel update_candidate_profile...")
+        updated_profile = await user_service.update_candidate_profile(
+            user_id=current_user.id,
+            profile_data=profile_update
+        )
+        
+        if not updated_profile:
+            safe_log("error", "❌ Profil candidat introuvable",
+                    user_id=str(current_user.id))
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Profil candidat non trouvé. Veuillez d'abord postuler à une offre."
+            )
+        
+        safe_log("debug", "✅ Profil mis à jour en mémoire")
+        
+        # 💾 Commit
+        safe_log("debug", "💾 Commit transaction...")
+        await db.commit()
+        safe_log("debug", "✅ Commit réussi")
+        
+        # 🔄 Rafraîchir l'utilisateur pour avoir toutes les infos à jour
+        await db.refresh(current_user)
+        
+        # 📊 LOG: Performance
+        duration = time.time() - start_time
+        safe_log("info", "⏱️ Performance update_profile",
+                duration_seconds=round(duration, 3),
+                fields_updated=len(update_fields))
+        
+        safe_log("info", "✅ SUCCESS - Profil candidat mis à jour", 
+                user_id=str(current_user.id),
+                total_duration=round(duration, 3))
+        
+        # 🎯 Retourner l'utilisateur complet avec le profil candidat
+        user_dict = UserResponse.from_orm(current_user).dict()
+        user_dict["candidate_profile"] = CandidateProfileResponse.from_orm(updated_profile)
+        
+        return ResponseSchema(
+            success=True,
+            message="Profil candidat mis à jour avec succès",
+            data=user_dict
+        )
+        
+    except HTTPException as he:
+        # 🔴 LOG: Erreur HTTP
+        safe_log("warning", "⚠️ HTTPException dans update_profile",
+                user_id=str(current_user.id),
+                status_code=he.status_code,
+                detail=he.detail)
+        raise
+    except ValidationError as e:
+        # 🔴 LOG: Erreur validation
+        safe_log("warning", "⚠️ Erreur validation MAJ profil candidat", 
+                user_id=str(current_user.id),
+                error_type="ValidationError",
+                error=str(e),
+                fields=update_fields)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        # 🔴 LOG: Erreur critique
+        import traceback
+        safe_log("error", "❌ ERREUR CRITIQUE - update_profile", 
+                user_id=str(current_user.id),
+                error_type=type(e).__name__,
+                error_message=str(e),
+                traceback=traceback.format_exc(),
+                fields=update_fields,
+                duration_seconds=round(time.time() - start_time, 3))
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Erreur interne: {str(e)}"
         )

@@ -232,31 +232,27 @@ class ApplicationService:
         Récupérer une candidature avec toutes ses relations pour le PDF
         (users, candidate_profiles, job_offers)
         """
-        from app.core.cache import cache_key_wrapper
         from app.db.query_optimizer import get_application_complete
         
-        @cache_key_wrapper("application:full", expire=300)  # Cache 5 minutes
-        async def _get_full_application(app_id: str):
-            try:
-                logger.debug("🔍 Récupération application complète", application_id=app_id)
-                application = await get_application_complete(self.db, app_id)
-                
-                if not application:
-                    logger.warning("⚠️ Application non trouvée", application_id=app_id)
-                    raise NotFoundError("Candidature non trouvée")
-                
-                logger.debug("✅ Application récupérée", application_id=app_id, 
-                           mtp_answers_type=type(getattr(application, 'mtp_answers', None)).__name__)
-                return application
-            except ValueError:
-                raise ValidationError("ID de candidature invalide")
-            except NotFoundError:
-                raise
-            except Exception as e:
-                logger.error("Erreur récupération candidature complète", application_id=app_id, error=str(e))
-                raise BusinessLogicError("Erreur lors de la récupération de la candidature")
-        
-        return await _get_full_application(application_id)
+        # DÉSACTIVATION TEMPORAIRE DU CACHE pour voir les modifications en temps réel
+        try:
+            logger.debug("🔍 Récupération application complète (SANS CACHE)", application_id=application_id)
+            application = await get_application_complete(self.db, application_id)
+            
+            if not application:
+                logger.warning("⚠️ Application non trouvée", application_id=application_id)
+                raise NotFoundError("Candidature non trouvée")
+            
+            logger.debug("✅ Application récupérée", application_id=application_id, 
+                       mtp_answers_type=type(getattr(application, 'mtp_answers', None)).__name__)
+            return application
+        except ValueError:
+            raise ValidationError("ID de candidature invalide")
+        except NotFoundError:
+            raise
+        except Exception as e:
+            logger.error("Erreur récupération candidature complète", application_id=application_id, error=str(e))
+            raise BusinessLogicError("Erreur lors de la récupération de la candidature")
     
     async def get_applications(
         self, 

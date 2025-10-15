@@ -16,7 +16,7 @@ from app.schemas.auth import (
     RefreshTokenRequest, PasswordResetRequest, PasswordResetConfirm, ChangePasswordRequest,
     MatriculeVerificationResponse
 )
-from app.schemas.user import UserResponse
+from app.schemas.user import UserResponse, UserWithProfile
 from app.services.auth import AuthService
 from app.core.exceptions import UnauthorizedError
 from app.core.dependencies import get_current_active_user, get_current_admin_user, get_current_user
@@ -28,7 +28,8 @@ from app.core.exceptions import ValidationError
 from sqlalchemy import select
 
 logger = structlog.get_logger(__name__)
-router = APIRouter()
+router = APIRouter(
+    tags=["🔐 Authentification"],)
 
 
 def safe_log(level: str, message: str, **kwargs):
@@ -138,7 +139,22 @@ async def _login_core(email: str, password: str, db: AsyncSession) -> TokenRespo
             safe_log("error", "❌ Erreur création tokens", error=str(e), error_type=type(e).__name__)
             raise
         
-        # Étape 6: Ajouter les informations utilisateur (sans le mot de passe)
+        # Étape 6: Récupérer le profil candidat si c'est un candidat
+        candidate_profile = None
+        if user.role == "candidate":  # type: ignore
+            try:
+                from app.services.user import UserService
+                user_service = UserService(db)
+                candidate_profile = await user_service.get_candidate_profile(user.id)
+                safe_log("debug", "✅ Profil candidat récupéré", 
+                        user_id=str(user.id),
+                        has_profile=candidate_profile is not None)
+            except Exception as e:
+                safe_log("warning", "⚠️ Erreur récupération profil candidat lors du login",
+                        user_id=str(user.id),
+                        error=str(e))
+        
+        # Étape 7: Ajouter les informations utilisateur complètes (avec profil candidat)
         user_data = {
             "id": str(user.id),
             "email": user.email,
@@ -160,8 +176,14 @@ async def _login_core(email: str, password: str, db: AsyncSession) -> TokenRespo
             "annees_experience": user.annees_experience,
             "no_seeg_email": user.no_seeg_email,
             "created_at": user.created_at.isoformat() if user.created_at is not None else None,
-            "updated_at": user.updated_at.isoformat() if user.updated_at is not None else None
+            "updated_at": user.updated_at.isoformat() if user.updated_at is not None else None,
+            "candidate_profile": None
         }
+        
+        # Ajouter le profil candidat s'il existe
+        if candidate_profile:
+            from app.schemas.user import CandidateProfileResponse
+            user_data["candidate_profile"] = CandidateProfileResponse.from_orm(candidate_profile).dict()
         
         safe_log(
             "info",
@@ -224,15 +246,7 @@ async def login_token_deprecated(
                 "refresh_token": "<jwt>",
                 "token_type": "bearer",
                 "expires_in": 3600,
-                "user": {
-                    "id": "uuid",
-                    "email": "candidate@example.com",
-                    "first_name": "Jean",
-                    "last_name": "Dupont",
-                    "role": "candidate",
-                    "statut": "actif",
-                    "matricule": 12345
-                }
+                "user": {'id': 'bf0c73bd-09e0-4aad-afaa-94b16901e916', 'email': 'candidate@example.com', 'first_name': 'Jean', 'last_name': 'Dupont', 'role': 'candidate', 'phone': '+24177012345', 'date_of_birth': '1990-05-15', 'sexe': 'M', 'matricule': 12345, 'email_verified': True, 'last_login': '2025-10-15T10:30:00Z', 'is_active': True, 'is_internal_candidate': True, 'adresse': 'Libreville, Gabon', 'candidate_status': 'actif', 'statut': 'actif', 'poste_actuel': 'Développeur Senior', 'annees_experience': 5, 'no_seeg_email': False, 'created_at': '2025-01-10T08:00:00Z', 'updated_at': '2025-10-15T10:30:00Z', 'candidate_profile': {'id': 'profile-uuid', 'user_id': 'bf0c73bd-09e0-4aad-afaa-94b16901e916', 'years_experience': 5, 'current_position': 'Développeur Senior', 'availability': 'Immédiate', 'skills': ['Python', 'FastAPI', 'React', 'PostgreSQL'], 'expected_salary_min': 800000, 'expected_salary_max': 1200000, 'address': 'Libreville, Gabon', 'linkedin_url': 'https://linkedin.com/in/jeandupont', 'portfolio_url': 'https://portfolio.jeandupont.com', 'created_at': '2025-01-10T08:00:00Z', 'updated_at': '2025-10-15T10:30:00Z'}}
             }}}
         },
         "401": {"description": "Email ou mot de passe incorrect"},
@@ -326,7 +340,7 @@ async def login(
         )
 
 
-@router.post("/signup", response_model=UserResponse, summary="Inscription candidat", openapi_extra={
+@router.post("/signup", response_model=UserWithProfile, summary="Inscription candidat", openapi_extra={
     "requestBody": {"content": {"application/json": {"example": {
         "email": "jean.dupont@seeg-gabon.com",
         "password": "Password#2025!Secure",
@@ -510,20 +524,21 @@ async def signup_candidate(
             
             safe_log("info", "Candidat actif créé (accès immédiat)", user_id=str(user.id))
         
-        # Étape 6: Créer la réponse
+        # Étape 6: Créer la réponse complète avec profil candidat (null pour le moment)
         try:
-            safe_log("debug", "🔄 Création UserResponse...")
-            response = UserResponse.from_orm(user)
-            safe_log("debug", "✅ UserResponse créé")
+            safe_log("debug", "🔄 Création UserWithProfile...")
+            user_dict = UserResponse.from_orm(user).dict()
+            user_dict["candidate_profile"] = None  # Profil créé lors de la première candidature
+            safe_log("debug", "✅ UserWithProfile créé")
         except Exception as e:
-            safe_log("error", "❌ Erreur création UserResponse", error=str(e), error_type=type(e).__name__)
+            safe_log("error", "❌ Erreur création UserWithProfile", error=str(e), error_type=type(e).__name__)
             raise
         
         safe_log("info", "✅ Inscription candidat réussie", 
                 user_id=str(user.id), 
                 email=user.email,
                 statut=getattr(user, 'statut', 'actif'))
-        return response
+        return user_dict
         
     except HTTPException:
         raise

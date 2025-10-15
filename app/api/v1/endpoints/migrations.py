@@ -30,8 +30,16 @@ def safe_log(level: str, message: str, **kwargs):
 
 MIGRATIONS = [
     {
+        "revision": "20251014_local",
+        "down_revision": None,
+        "description": "Point de départ pour base de données locale existante",
+        "sql_commands": [
+            "SELECT 1;  -- Migration vide pour synchroniser les versions"
+        ]
+    },
+    {
         "revision": "20251010_mtp_questions",
-        "down_revision": "20251010_add_updated_at",
+        "down_revision": "20251014_local",
         "description": "Ajout colonne questions_mtp aux offres et nettoyage anciennes colonnes MTP",
         "sql_commands": [
             """
@@ -168,6 +176,139 @@ MIGRATIONS = [
             """
             COMMENT ON COLUMN applications.ref_contact IS 
             'Téléphone du référent (obligatoire candidats externes)';
+            """,
+        ]
+    },
+    {
+        "revision": "20251015_access_requests",
+        "down_revision": "20251013_app_fields",
+        "description": "Création de la table access_requests pour gérer les demandes d'accès",
+        "sql_commands": [
+            """
+            CREATE TABLE IF NOT EXISTS access_requests (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                email VARCHAR NOT NULL,
+                first_name VARCHAR,
+                last_name VARCHAR,
+                phone VARCHAR,
+                matricule VARCHAR,
+                request_type VARCHAR NOT NULL DEFAULT 'internal_no_seeg_email',
+                status VARCHAR NOT NULL DEFAULT 'pending',
+                rejection_reason TEXT,
+                viewed BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+                reviewed_at TIMESTAMP WITH TIME ZONE,
+                reviewed_by UUID REFERENCES users(id) ON DELETE SET NULL,
+                updated_at TIMESTAMP WITH TIME ZONE
+            );
+            """,
+            """
+            COMMENT ON TABLE access_requests IS 'Demandes d''accès des candidats internes nécessitant validation';
+            """,
+            """
+            COMMENT ON COLUMN access_requests.user_id IS 'Référence vers l''utilisateur demandeur';
+            """,
+            """
+            COMMENT ON COLUMN access_requests.status IS 'Statut de la demande: pending, approved, rejected';
+            """,
+            """
+            ALTER TABLE access_requests 
+                DROP CONSTRAINT IF EXISTS chk_access_requests_status;
+            """,
+            """
+            ALTER TABLE access_requests
+                ADD CONSTRAINT chk_access_requests_status 
+                CHECK (status IN ('pending', 'approved', 'rejected'));
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_access_requests_status ON access_requests(status);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_access_requests_user_id ON access_requests(user_id);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_access_requests_viewed ON access_requests(viewed);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_access_requests_status_viewed ON access_requests(status, viewed);
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_access_requests_created_at ON access_requests(created_at DESC);
+            """,
+        ]
+    },
+    {
+        "revision": "20251015_user_complete_fields",
+        "down_revision": "20251015_access_requests",
+        "description": "Vérification et ajout des champs utilisateur manquants (adresse, annees_experience, etc.)",
+        "sql_commands": [
+            """
+            -- Ajouter les colonnes manquantes à la table users si elles n'existent pas
+            DO $$
+            BEGIN
+                -- adresse
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'users' AND column_name = 'adresse'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN adresse TEXT;
+                    COMMENT ON COLUMN users.adresse IS 'Adresse complète du candidat';
+                END IF;
+                
+                -- candidate_status
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'users' AND column_name = 'candidate_status'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN candidate_status VARCHAR(50);
+                    COMMENT ON COLUMN users.candidate_status IS 'Statut du candidat dans le processus de recrutement';
+                END IF;
+                
+                -- statut
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'users' AND column_name = 'statut'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN statut VARCHAR(50) DEFAULT 'actif';
+                    COMMENT ON COLUMN users.statut IS 'Statut général du compte utilisateur';
+                END IF;
+                
+                -- poste_actuel
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'users' AND column_name = 'poste_actuel'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN poste_actuel TEXT;
+                    COMMENT ON COLUMN users.poste_actuel IS 'Poste actuel du candidat';
+                END IF;
+                
+                -- annees_experience
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'users' AND column_name = 'annees_experience'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN annees_experience INTEGER;
+                    COMMENT ON COLUMN users.annees_experience IS 'Années d''expérience professionnelle';
+                END IF;
+                
+                -- no_seeg_email
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'users' AND column_name = 'no_seeg_email'
+                ) THEN
+                    ALTER TABLE users ADD COLUMN no_seeg_email BOOLEAN DEFAULT FALSE;
+                    COMMENT ON COLUMN users.no_seeg_email IS 'Candidat interne sans email @seeg-gabon.com';
+                END IF;
+            END $$;
+            """,
+            """
+            -- Créer un index sur statut pour améliorer les performances
+            CREATE INDEX IF NOT EXISTS idx_users_statut ON users(statut);
+            """,
+            """
+            -- Créer un index sur candidate_status
+            CREATE INDEX IF NOT EXISTS idx_users_candidate_status ON users(candidate_status);
             """,
         ]
     }

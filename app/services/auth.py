@@ -264,8 +264,9 @@ class AuthService:
             
             # ✅ PAS de commit ici - c'est l'endpoint qui décide
             # ✅ PAS de refresh ici - sera fait après commit par l'endpoint
+            # ℹ️ Le profil candidat sera créé lors de la première candidature
             
-            safe_log("info", "Candidat préparé pour création", 
+            safe_log("info", "Utilisateur préparé pour création", 
                     email=user.email, 
                     candidate_status=user_data.candidate_status,
                     statut=statut,

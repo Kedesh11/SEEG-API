@@ -16,7 +16,8 @@ from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicErr
 from app.core.config.config import settings
 
 logger = structlog.get_logger(__name__)
-router = APIRouter()
+router = APIRouter(
+    tags=["💼 Offres d'emploi"],)
 
 
 def safe_log(level: str, message: str, **kwargs):

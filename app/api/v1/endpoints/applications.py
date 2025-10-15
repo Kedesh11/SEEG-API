@@ -4,6 +4,7 @@ Endpoints pour la gestion des candidatures
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile, File, Form, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 import base64
 import uuid
 import structlog
@@ -29,7 +30,8 @@ from app.models.user import User
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError, FileError, DatabaseError
 # from app.core.rate_limit import limiter, UPLOAD_LIMITS  # ⚠️ Désactivé temporairement
 
-router = APIRouter()
+router = APIRouter(
+    tags=["📝 Candidatures"],)
 
 
 def safe_log(level: str, message: str, **kwargs):
@@ -120,6 +122,37 @@ async def create_application(
         
         application_service = ApplicationService(db)
         email_service = EmailService(db)
+        
+        # 🔷 ÉTAPE 1.5: Créer le profil candidat s'il n'existe pas
+        from app.services.user import UserService
+        user_service = UserService(db)
+        
+        candidate_profile = await user_service.get_candidate_profile(application_data.candidate_id)
+        if not candidate_profile:
+            safe_log("info", "📝 Première candidature - Création profil candidat", 
+                    candidate_id=str(application_data.candidate_id))
+            from app.schemas.user import CandidateProfileCreate
+            from app.models.user import User
+            
+            # Récupérer les infos de l'utilisateur pour initialiser le profil
+            result = await db.execute(
+                select(User).where(User.id == application_data.candidate_id)
+            )
+            candidate = result.scalar_one_or_none()
+            
+            if candidate:
+                profile_data = CandidateProfileCreate(
+                    user_id=application_data.candidate_id,
+                    years_experience=candidate.annees_experience,  # type: ignore
+                    current_position=candidate.poste_actuel,  # type: ignore
+                    address=candidate.adresse  # type: ignore
+                )
+                await user_service.create_candidate_profile(
+                    user_id=application_data.candidate_id,
+                    profile_data=profile_data
+                )
+                safe_log("info", "✅ Profil candidat créé", 
+                        candidate_id=str(application_data.candidate_id))
         
         # 🔷 ÉTAPE 2: Validation et création
         safe_log("debug", "📝 Validation données candidature en cours...")
@@ -303,7 +336,8 @@ async def get_application(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Récupérer une candidature par son ID
+    Récupérer une candidature par son ID avec toutes les relations
+    (candidat, profil candidat, offre d'emploi, documents, historique, entretiens)
     """
     try:
         safe_log("info", "🔍 RECHERCHE candidature",
@@ -312,13 +346,20 @@ async def get_application(
                  user_role=current_user.role)
         
         application_service = ApplicationService(db)
-        application = await application_service.get_application_by_id(application_id)
+        # Utiliser get_application_with_relations pour charger toutes les relations
+        application = await application_service.get_application_with_relations(application_id)
         
         if not application:
             safe_log("warning", "❌ CANDIDATURE INTROUVABLE",
                      application_id=application_id,
                      user_id=str(current_user.id))
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Candidature non trouvée")
+        
+        # Forcer le chargement explicite des relations pour les admins/recruteurs
+        if current_user.role in ["admin", "recruiter"]:
+            safe_log("debug", "🔄 Refresh avec relations explicites...")
+            await db.refresh(application, ["candidate", "job_offer"])
+            safe_log("debug", "✅ Relations refreshées")
         
         safe_log("info", "✅ SUCCÈS récupération candidature",
                  application_id=application_id,
@@ -327,10 +368,34 @@ async def get_application(
                  job_offer_id=str(application.job_offer_id),
                  status=application.status)
         
+        # Utiliser la fonction utilitaire pour sérialiser avec relations
+        # (uniquement pour admins et recruteurs)
+        safe_log("debug", "🎯 Point de décision sérialisation",
+                user_role=current_user.role,
+                is_admin_or_recruiter=current_user.role in ["admin", "recruiter"])
+        
+        if current_user.role in ["admin", "recruiter"]:
+            safe_log("info", "🔥 ENTRÉE dans le bloc admin/recruiter - appel serializer")
+            from app.utils.application_serializer import serialize_application_with_relations
+            
+            app_dict = serialize_application_with_relations(
+                application,
+                include_candidate=True,
+                include_job_offer=True
+            )
+            safe_log("info", "🔥 Serializer terminé - vérification clés",
+                    has_candidate_key='candidate' in app_dict,
+                    has_job_offer_key='job_offer' in app_dict,
+                    keys=list(app_dict.keys())[:10])
+        else:
+            # Pour les candidats, ne pas inclure les relations (juste leurs propres données)
+            app_schema = convert_orm_to_schema(application, Application)
+            app_dict = app_schema.model_dump()
+        
         return ApplicationResponse(
             success=True,
             message="Candidature récupérée avec succès",
-            data=convert_orm_to_schema(application, Application)  # type: ignore
+            data=app_dict  # type: ignore
         )
         
     except NotFoundError as e:

@@ -29,7 +29,8 @@ from app.schemas.access_request import (
 )
 
 logger = structlog.get_logger(__name__)
-router = APIRouter()
+router = APIRouter(
+    tags=["🔑 Demandes d'accès"],)
 
 
 def safe_log(level: str, message: str, **kwargs):
@@ -47,11 +48,24 @@ def require_recruiter_or_admin(current_user: User) -> None:
     Raises:
         HTTPException: Si l'utilisateur n'a pas les permissions
     """
-    if current_user.role not in ['recruteur', 'admin']:
+    # Accepter les deux formats pour compatibilité : 'recruiter'
+    if current_user.role not in ['recruiter', 'admin']:
+        # 🔴 LOG: Accès refusé - logging de sécurité
+        safe_log("warning", "🚨 ACCÈS REFUSÉ - Access-requests",
+                user_id=str(current_user.id),
+                user_role=current_user.role,
+                user_email=current_user.email,
+                required_roles=['recruiter', 'admin'],
+                security_event="unauthorized_access_attempt")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Accès réservé aux recruteurs et administrateurs"
         )
+    
+    # ✅ LOG: Accès autorisé
+    safe_log("debug", "✅ Accès autorisé - Access-requests",
+            user_id=str(current_user.id),
+            user_role=current_user.role)
 
 
 @router.get(
@@ -82,14 +96,30 @@ async def list_access_requests(
     db: AsyncSession = Depends(get_db)
 ):
     """Lister toutes les demandes d'accès avec filtres."""
+    import time
+    start_time = time.time()
+    
     try:
+        # 📊 LOG: Début de requête
+        safe_log("info", "🔍 Début récupération access-requests",
+                user_id=str(current_user.id),
+                user_role=current_user.role,
+                status_filter=status_filter,
+                viewed_filter=viewed_filter,
+                skip=skip,
+                limit=limit)
+        
         # Vérifier les permissions
+        safe_log("debug", "🔐 Vérification permissions...")
         require_recruiter_or_admin(current_user)
+        safe_log("debug", "✅ Permissions OK")
         
         # Créer le service
+        safe_log("debug", "🏗️ Création AccessRequestService...")
         service = AccessRequestService(db)
         
         # Récupérer les demandes
+        safe_log("debug", "📋 Récupération demandes depuis DB...")
         requests, total, pending_count, unviewed_count = await service.get_all_requests(
             status_filter=status_filter,
             viewed_filter=viewed_filter,
@@ -97,10 +127,18 @@ async def list_access_requests(
             limit=limit
         )
         
+        safe_log("info", "✅ Demandes récupérées",
+                count=len(requests),
+                total=total,
+                pending_count=pending_count,
+                unviewed_count=unviewed_count)
+        
         # Commit (pour marquer comme vues si nécessaire)
+        safe_log("debug", "💾 Commit transaction...")
         await db.commit()
         
         # Convertir en schémas Pydantic
+        safe_log("debug", "🔄 Conversion vers schémas Pydantic...")
         request_data = [
             AccessRequestWithUser(
                 id=req.id,  # type: ignore
@@ -121,6 +159,19 @@ async def list_access_requests(
             for req in requests
         ]
         
+        # 📊 LOG: Performance
+        duration = time.time() - start_time
+        safe_log("info", "⏱️ Performance list_access_requests",
+                duration_seconds=round(duration, 3),
+                total_count=total,
+                returned_count=len(request_data))
+        
+        safe_log("info", "✅ SUCCESS - Access-requests retournées",
+                total=total,
+                returned=len(request_data),
+                pending=pending_count,
+                unviewed=unviewed_count)
+        
         return AccessRequestListResponse(
             success=True,
             message=f"{total} demande(s) d'accès trouvée(s)",
@@ -130,13 +181,29 @@ async def list_access_requests(
             unviewed_count=unviewed_count
         )
         
-    except HTTPException:
+    except HTTPException as he:
+        # 🔴 LOG: Erreur HTTP (permissions, etc.)
+        safe_log("warning", "⚠️ HTTPException dans list_access_requests",
+                user_id=str(current_user.id),
+                status_code=he.status_code,
+                detail=he.detail)
         raise
     except Exception as e:
-        safe_log("error", "Erreur liste demandes d'accès", error=str(e), user_id=str(current_user.id))
+        # 🔴 LOG: Erreur critique avec contexte complet
+        import traceback
+        safe_log("error", "❌ ERREUR CRITIQUE - list_access_requests",
+                user_id=str(current_user.id),
+                user_role=current_user.role,
+                error_type=type(e).__name__,
+                error_message=str(e),
+                traceback=traceback.format_exc(),
+                status_filter=status_filter,
+                viewed_filter=viewed_filter,
+                duration_seconds=round(time.time() - start_time, 3))
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Erreur lors de la récupération des demandes: {str(e)}"
+            detail=f"Erreur interne: {str(e)}"
         )
 
 
@@ -388,7 +455,7 @@ async def mark_all_as_viewed(
     """Marquer toutes les demandes pending comme vues."""
     try:
         # Vérifier les permissions (y compris observateur)
-        if current_user.role not in ['recruteur', 'admin', 'observateur']:
+        if current_user.role not in ['recruiter', 'admin', 'observer']:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Accès réservé aux recruteurs, administrateurs et observateurs"
@@ -442,7 +509,7 @@ async def get_unviewed_count(
     """Obtenir le nombre de demandes non vues (pour le badge)."""
     try:
         # Vérifier les permissions
-        if current_user.role not in ['recruteur', 'admin', 'observateur']:
+        if current_user.role not in ['recruiter', 'admin', 'observer']:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Accès réservé aux recruteurs, administrateurs et observateurs"

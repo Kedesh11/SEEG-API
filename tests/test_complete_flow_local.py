@@ -36,13 +36,13 @@ def test_complete_flow():
     # 2. Créer un recruteur via l'admin
     print("\n2️⃣  Création d'un recruteur via admin...")
     recruiter_data = {
-        "email": "recruteur.local@seeg.com",
-        "password": "Recruteur123!",
-        "first_name": "Marie",
-        "last_name": "Recruteuse",
+        "email": "recruteur23.local@seeg.com",
+        "password": "Recruteur1234!",
+        "first_name": "Marie Jeanne",
+        "last_name": "BABONGUI",
         "role": "recruiter",
         "sexe": "F",
-        "date_of_birth": "1985-05-15"
+        "date_of_birth": "1986-07-15"
     }
     
     response = requests.post(f"{BASE_URL}/auth/create-user", headers=admin_headers, json=recruiter_data)
@@ -55,7 +55,7 @@ def test_complete_flow():
     print("\n3️⃣  Connexion du recruteur...")
     login_data = {
         "username": recruiter_data["email"],
-        "password": "Recruteur123!"
+        "password": "Recruteur1234!"
     }
     
     response = requests.post(f"{BASE_URL}/auth/login", data=login_data)
@@ -260,8 +260,42 @@ def test_complete_flow():
             print(f"      - Ref entreprise: {app_data.get('ref_entreprise')}")
             print(f"      - MTP answers: {'✅ Présentes' if app_data.get('mtp_answers') else '❌ Manquantes'}")
         
+        # 10. TEST 4: Mise à jour du profil candidat (maintenant que le profil existe)
+        print("\n🔟 TEST 4: Mise à jour du profil candidat...")
+        profile_update = {
+            "years_experience": 8,
+            "current_position": "Senior Full Stack Developer",
+            "availability": "Immédiate",
+            "skills": ["React", "Node.js", "Python", "Docker"],
+            "expected_salary_min": 1000000,
+            "expected_salary_max": 1500000
+        }
+        
+        response = requests.put(f"{BASE_URL}/users/me/profile", headers=candidate_headers, json=profile_update)
+        if response.status_code == 200:
+            result = response.json()
+            profile_data = result.get("data")
+            print("   ✅ SUCCÈS: Profil candidat mis à jour!")
+            print(f"      👤 Expérience: {profile_data.get('years_experience')} ans")
+            print(f"      💼 Poste: {profile_data.get('current_position')}")
+            print(f"      📅 Disponibilité: {profile_data.get('availability')}")
+            print(f"      💰 Salaire: {profile_data.get('expected_salary_min')} - {profile_data.get('expected_salary_max')} FCFA")
+        else:
+            print(f"   ❌ ÉCHEC mise à jour profil: {response.status_code}")
+            try:
+                error = response.json()
+                print(f"      {json.dumps(error, indent=6, ensure_ascii=False)}")
+            except:
+                print(f"      {response.text}")
+            return False
+        
         print("\n" + "="*70)
         print("✅ TOUS LES TESTS SONT PASSÉS AVEC SUCCÈS!")
+        print("   1️⃣  Offre créée avec questions MTP")
+        print("   2️⃣  Candidature sans MTP rejetée (validation OK)")
+        print("   3️⃣  Candidature avec MTP incorrects rejetée (validation OK)")
+        print("   4️⃣  Candidature complète acceptée (profil créé auto)")
+        print("   5️⃣  Profil candidat mis à jour avec succès")
         print("="*70)
         return True
         
