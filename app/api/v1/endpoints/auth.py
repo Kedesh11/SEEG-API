@@ -507,11 +507,11 @@ async def signup_candidate(
                 
             except Exception as e:
                 safe_log("error", "❌ Erreur création AccessRequest", error=str(e))
-                await db.rollback()
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Erreur lors de la création de la demande d'accès"
-                )
+                import traceback
+                safe_log("error", "Traceback AccessRequest", traceback=traceback.format_exc())
+                # ⚠️ NE PAS ROLLBACK - Le user est déjà committé
+                # On continue quand même pour retourner le user créé
+                safe_log("warning", "⚠️ AccessRequest non créée, mais user créé avec succès")
         else:
             # Email 1 : Bienvenue (statut=actif)
             try:
@@ -536,9 +536,44 @@ async def signup_candidate(
             user_dict = UserResponse.from_orm(user).dict()
             user_dict["candidate_profile"] = None  # Profil créé lors de la première candidature
             safe_log("debug", "✅ UserWithProfile créé")
+        except PydanticValidationError as e:
+            safe_log("error", "❌ Erreur validation Pydantic UserWithProfile", error=str(e), error_type=type(e).__name__)
+            import traceback
+            safe_log("error", "Traceback Pydantic", traceback=traceback.format_exc())
+            # L'utilisateur est déjà créé et committé, retourner une réponse manuelle
+            safe_log("warning", "⚠️ Retour réponse manuelle (bypass Pydantic)")
+            user_dict = {
+                "id": str(user.id),
+                "email": str(user.email),
+                "first_name": str(user.first_name),
+                "last_name": str(user.last_name),
+                "role": str(user.role),
+                "phone": str(getattr(user, 'phone', None)) if getattr(user, 'phone', None) else None,
+                "date_of_birth": getattr(user, 'date_of_birth', None).isoformat() if getattr(user, 'date_of_birth', None) else None,  # type: ignore
+                "sexe": str(getattr(user, 'sexe', None)) if getattr(user, 'sexe', None) else None,
+                "matricule": int(getattr(user, 'matricule', None)) if getattr(user, 'matricule', None) else None,  # type: ignore
+                "email_verified": bool(getattr(user, 'email_verified', False)),
+                "is_active": bool(getattr(user, 'is_active', True)),
+                "is_internal_candidate": bool(getattr(user, 'is_internal_candidate', False)),
+                "adresse": str(getattr(user, 'adresse', None)) if getattr(user, 'adresse', None) else None,
+                "candidate_status": str(getattr(user, 'candidate_status', None)) if getattr(user, 'candidate_status', None) else None,
+                "statut": str(getattr(user, 'statut', 'actif')),
+                "poste_actuel": str(getattr(user, 'poste_actuel', None)) if getattr(user, 'poste_actuel', None) else None,
+                "annees_experience": int(getattr(user, 'annees_experience', None)) if getattr(user, 'annees_experience', None) else None,  # type: ignore
+                "no_seeg_email": bool(getattr(user, 'no_seeg_email', False)),
+                "created_at": getattr(user, 'created_at', None).isoformat() if getattr(user, 'created_at', None) else None,  # type: ignore
+                "updated_at": getattr(user, 'updated_at', None).isoformat() if getattr(user, 'updated_at', None) else None,  # type: ignore
+                "last_login": getattr(user, 'last_login', None).isoformat() if getattr(user, 'last_login', None) else None,  # type: ignore
+                "candidate_profile": None
+            }
         except Exception as e:
             safe_log("error", "❌ Erreur création UserWithProfile", error=str(e), error_type=type(e).__name__)
-            raise
+            import traceback
+            safe_log("error", "Traceback complet", traceback=traceback.format_exc())
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Utilisateur créé mais erreur lors de la génération de la réponse"
+            )
         
         safe_log("info", "✅ Inscription candidat réussie", 
                 user_id=str(user.id), 

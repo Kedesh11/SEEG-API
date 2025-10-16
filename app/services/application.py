@@ -138,21 +138,22 @@ class ApplicationService:
     
     async def create_application(self, application_data: ApplicationCreate, user_id: Optional[str] = None) -> Application:
         """
-        Créer une nouvelle candidature avec validation des questions MTP.
+        Créer une nouvelle candidature avec validation des questions MTP et documents.
         
         Le système valide automatiquement:
         1. Qu'il n'existe pas déjà une candidature pour cette offre
         2. Que le nombre de questions MTP respecte les limites du type de candidat
+        3. Upload automatique des documents fournis (si présents)
         
         Args:
-            application_data: Données de la candidature
+            application_data: Données de la candidature (avec documents optionnels)
             user_id: ID de l'utilisateur (optionnel)
             
         Returns:
-            Application: La candidature créée
+            Application: La candidature créée avec ses documents
             
         Raises:
-            ValidationError: Si validation échoue (doublon ou limites MTP dépassées)
+            ValidationError: Si validation échoue (doublon, limites MTP, documents invalides)
             BusinessLogicError: Si erreur lors de la création
         """
         try:
@@ -175,14 +176,102 @@ class ApplicationService:
                 application_data
             )
             
-            # Créer la candidature
-            application = Application(**application_data.dict())
+            # Extraire les documents avant de créer l'application
+            documents_to_upload = application_data.documents
+            
+            # Créer la candidature (sans les documents dans le dict)
+            application_dict = application_data.dict(exclude={'documents'})
+            application = Application(**application_dict)
             self.db.add(application)
             # Flush pour obtenir l'ID et persister l'objet dans la session
             await self.db.flush()
             await self.db.refresh(application)
             
-            logger.info("Candidature créée", application_id=str(application.id), candidate_id=str(application.candidate_id))
+            logger.info("Candidature créée", 
+                       application_id=str(application.id), 
+                       candidate_id=str(application.candidate_id),
+                       has_documents=documents_to_upload is not None and len(documents_to_upload) > 0)
+            
+            # Upload des documents si fournis
+            if documents_to_upload:
+                uploaded_count = 0
+                for doc_data in documents_to_upload:
+                    try:
+                        # Valider le document
+                        if not isinstance(doc_data, dict):
+                            logger.warning("Document invalide (pas un dict)", doc_data_type=type(doc_data).__name__)
+                            continue
+                        
+                        document_type = doc_data.get('document_type', 'certificats')
+                        file_name = doc_data.get('file_name', 'document.pdf')
+                        file_data_b64 = doc_data.get('file_data')
+                        
+                        if not file_data_b64:
+                            logger.warning("Document sans données (file_data manquant)", 
+                                         document_type=document_type, 
+                                         file_name=file_name)
+                            continue
+                        
+                        # Décoder pour obtenir la taille
+                        try:
+                            file_content = base64.b64decode(file_data_b64)
+                            file_size = len(file_content)
+                            
+                            # Validation PDF
+                            if not file_content.startswith(b'%PDF'):
+                                logger.warning("Document n'est pas un PDF valide", 
+                                             document_type=document_type,
+                                             file_name=file_name)
+                                continue
+                            
+                            # Validation taille (max 10MB)
+                            MAX_FILE_SIZE = 10 * 1024 * 1024
+                            if file_size > MAX_FILE_SIZE:
+                                logger.warning("Document trop volumineux", 
+                                             document_type=document_type,
+                                             file_name=file_name,
+                                             size_mb=f"{file_size / (1024 * 1024):.2f}")
+                                continue
+                            
+                        except Exception as decode_error:
+                            logger.warning("Erreur décodage base64", 
+                                         document_type=document_type,
+                                         file_name=file_name,
+                                         error=str(decode_error))
+                            continue
+                        
+                        # Créer le document
+                        document_create = ApplicationDocumentCreate(
+                            application_id=application.id,
+                            document_type=document_type,
+                            file_name=file_name,
+                            file_data=file_data_b64,
+                            file_size=file_size,
+                            file_type="application/pdf"
+                        )
+                        
+                        document = await self.create_document(document_create)
+                        uploaded_count += 1
+                        
+                        logger.info("Document uploadé", 
+                                   application_id=str(application.id),
+                                   document_id=str(document.id),
+                                   document_type=document_type,
+                                   file_name=file_name)
+                        
+                    except Exception as doc_error:
+                        logger.error("Erreur upload document individuel", 
+                                   application_id=str(application.id),
+                                   error=str(doc_error),
+                                   document_data=doc_data)
+                        # Continuer avec les autres documents
+                        continue
+                
+                logger.info("Documents uploadés avec la candidature", 
+                           application_id=str(application.id),
+                           total_uploaded=uploaded_count,
+                           total_provided=len(documents_to_upload))
+            
             return application
         except ValidationError:
             raise

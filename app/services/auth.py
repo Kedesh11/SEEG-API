@@ -227,13 +227,23 @@ class AuthService:
                 if existing_with_same_matricule is not None:
                     raise ValidationError("Un utilisateur avec ce matricule existe déjà")
             
-            # Validation métier: Si candidat interne sans no_seeg_email, l'email DOIT être @seeg-gabon.com
+            # Validation métier: Si candidat interne AVEC email SEEG déclaré, vérifier qu'il est @seeg-gabon.com
+            # ⚠️ Si no_seeg_email=True, on accepte n'importe quel email (sera en attente de validation)
             if (user_data.candidate_status == 'interne' 
                 and not user_data.no_seeg_email 
                 and not user_data.email.lower().endswith(self.SEEG_EMAIL_DOMAIN)):
                 raise ValidationError(
                     f"Les candidats internes doivent utiliser un email professionnel {self.SEEG_EMAIL_DOMAIN}. "
-                    "Si vous n'avez pas d'email professionnel SEEG, veuillez cocher la case correspondante."
+                    "Si vous n'avez pas d'email professionnel SEEG, veuillez cocher la case 'Je n'ai pas d'email SEEG'."
+                )
+            
+            # Validation métier: Si no_seeg_email=True mais email se termine par @seeg-gabon.com, c'est incohérent
+            if (user_data.candidate_status == 'interne'
+                and user_data.no_seeg_email
+                and user_data.email.lower().endswith(self.SEEG_EMAIL_DOMAIN)):
+                raise ValidationError(
+                    f"Incohérence détectée : vous avez coché 'Je n'ai pas d'email SEEG' mais votre email est {self.SEEG_EMAIL_DOMAIN}. "
+                    "Veuillez décocher cette case ou utiliser un autre email."
                 )
             
             # Hasher le mot de passe

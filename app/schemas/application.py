@@ -53,13 +53,59 @@ class ApplicationBase(BaseModel):
 class ApplicationCreate(ApplicationBase):
     candidate_id: UUID
     job_offer_id: UUID
+    # Documents OBLIGATOIRES à uploader avec la candidature
+    documents: List[Dict[str, Any]] = Field(
+        ...,
+        min_length=3,
+        description="Liste des documents OBLIGATOIRES (CV, lettre de motivation, diplôme). Format: [{document_type, file_name, file_data_base64}]"
+    )
+    
+    @validator('documents')
+    def validate_required_documents(cls, v):
+        """Valide que les 3 documents obligatoires sont présents."""
+        if not v or len(v) < 3:
+            raise ValueError("Les 3 documents sont obligatoires : CV, lettre de motivation et diplôme")
+        
+        # Vérifier les types de documents
+        doc_types = [doc.get('document_type') for doc in v if isinstance(doc, dict)]
+        required_types = {'cv', 'cover_letter', 'diplome'}
+        provided_types = set(doc_types)
+        
+        missing_types = required_types - provided_types
+        if missing_types:
+            missing_names = {
+                'cv': 'CV',
+                'cover_letter': 'Lettre de motivation',
+                'diplome': 'Diplôme'
+            }
+            missing_list = [missing_names[t] for t in missing_types]
+            raise ValueError(f"Documents manquants : {', '.join(missing_list)}")
+        
+        return v
 
     class Config:
         json_schema_extra = {
             "example": {
                 "candidate_id": "00000000-0000-0000-0000-000000000001",
                 "job_offer_id": "00000000-0000-0000-0000-0000000000AA",
-                "status": "pending"
+                "status": "pending",
+                "documents": [
+                    {
+                        "document_type": "cv",
+                        "file_name": "mon_cv.pdf",
+                        "file_data": "JVBERi0xLjQK... (base64)"
+                    },
+                    {
+                        "document_type": "cover_letter",
+                        "file_name": "lettre_motivation.pdf",
+                        "file_data": "JVBERi0xLjQK... (base64)"
+                    },
+                    {
+                        "document_type": "diplome",
+                        "file_name": "diplome.pdf",
+                        "file_data": "JVBERi0xLjQK... (base64)"
+                    }
+                ]
             }
         }
 

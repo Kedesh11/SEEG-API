@@ -54,7 +54,7 @@ def convert_orm_list_to_schema(orm_list: List, schema_class):
     return [schema_class.model_validate(item) for item in orm_list]
 
 
-@router.post("/", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED, summary="Créer une candidature", openapi_extra={
+@router.post("/", response_model=ApplicationResponse, status_code=status.HTTP_201_CREATED, summary="Créer une candidature complète (avec documents)", openapi_extra={
     "requestBody": {"content": {"application/json": {"example": {
         "candidate_id": "00000000-0000-0000-0000-000000000001",
         "job_offer_id": "00000000-0000-0000-0000-0000000000AA",
@@ -63,9 +63,21 @@ def convert_orm_list_to_schema(orm_list: List, schema_class):
         "ref_entreprise": "Entreprise ABC",
         "ref_fullname": "Jean Dupont",
         "ref_mail": "jean.dupont@abc.com",
-        "ref_contact": "+241 01 02 03 04"
+        "ref_contact": "+241 01 02 03 04",
+        "documents": [
+            {
+                "document_type": "cv",
+                "file_name": "mon_cv.pdf",
+                "file_data": "JVBERi0xLjQKJeLjz9MKMyAwIG9iago8PC9UeXBlIC9QYWdlCi9QYXJlbnQgMSAwIFIKL01lZGlhQm94IFswIDAgNjEyIDc5Ml0KPj4KZW5kb2JqCjQgMCBvYmoKPDwvVHlwZSAvRm9udAo+PgplbmRvYmoKMSAwIG9iago8PC9UeXBlIC9QYWdlcwovS2lkcyBbMyAwIFJdCi9Db3VudCAxCj4+CmVuZG9iagoyIDAgb2JqCjw8L1R5cGUgL0NhdGFsb2cKL1BhZ2VzIDEgMCBSCj4+CmVuZG9iagp4cmVmCjAgNQowMDAwMDAwMDAwIDY1NTM1IGYgCjAwMDAwMDAxMTYgMDAwMDAgbiAKMDAwMDAwMDE3MyAwMDAwMCBuIAowMDAwMDAwMDA5IDAwMDAwIG4gCjAwMDAwMDAwODcgMDAwMDAgbiAKdHJhaWxlcgo8PC9TaXplIDUKL1Jvb3QgMiAwIFIKPj4Kc3RhcnR4cmVmCjIyMgolJUVPRgo="
+            },
+            {
+                "document_type": "cover_letter",
+                "file_name": "lettre_motivation.pdf",
+                "file_data": "JVBERi0xLjQK... (base64)"
+            }
+        ]
     }}}},
-    "responses": {"201": {"content": {"application/json": {"example": {"success": True, "message": "Candidature créée avec succès", "data": {"id": "uuid"}}}}}}
+    "responses": {"201": {"content": {"application/json": {"example": {"success": True, "message": "Candidature créée avec succès (2 documents uploadés)", "data": {"id": "uuid"}}}}}}
 })
 async def create_application(
     application_data: ApplicationCreate,
@@ -73,7 +85,10 @@ async def create_application(
     db: AsyncSession = Depends(get_db)
 ):
     """
-    Créer une nouvelle candidature avec validation des champs selon le type de candidat
+    Créer une nouvelle candidature COMPLÈTE avec documents OBLIGATOIRES
+    
+    **🎯 FLOW UNIQUE ET ATOMIQUE**: Cette route permet de soumettre une candidature complète en une seule requête,
+    incluant toutes les informations ET les 3 documents obligatoires.
     
     **Champs de base:**
     - **candidate_id**: ID du candidat
@@ -81,6 +96,40 @@ async def create_application(
     - **reference_contacts**: Contacts de référence (optionnel)
     - **availability_start**: Date de disponibilité (optionnel)
     - **mtp_answers**: Réponses MTP (optionnel)
+    - **documents**: Liste des 3 documents OBLIGATOIRES (CV, lettre de motivation, diplôme)
+    
+    **📄 Documents OBLIGATOIRES (3 minimum):**
+    Le champ `documents` DOIT contenir exactement :
+    1. **CV** (`document_type: "cv"`)
+    2. **Lettre de motivation** (`document_type: "cover_letter"`)
+    3. **Diplôme** (`document_type: "diplome"`)
+    
+    Format JSON :
+    ```json
+    "documents": [
+        {
+            "document_type": "cv",
+            "file_name": "mon_cv.pdf",
+            "file_data": "JVBERi0xLjQK..." // Contenu PDF encodé en base64
+        },
+        {
+            "document_type": "cover_letter",
+            "file_name": "lettre_motivation.pdf",
+            "file_data": "JVBERi0xLjQK..."
+        },
+        {
+            "document_type": "diplome",
+            "file_name": "mon_diplome.pdf",
+            "file_data": "JVBERi0xLjQK..."
+        }
+    ]
+    ```
+    
+    **Validations automatiques :**
+    - Présence des 3 documents obligatoires
+    - Format PDF valide (magic number %PDF)
+    - Taille max 10MB par document
+    - Upload transactionnel : si la candidature échoue, aucun document n'est sauvegardé
     
     **Champs spécifiques aux candidats INTERNES (employés SEEG avec matricule):**
     - **has_been_manager**: Indique si le candidat a déjà occupé un poste de chef/manager (OBLIGATOIRE)
@@ -223,15 +272,33 @@ async def create_application(
                     error=str(e), application_id=application_id)
             # Ne pas bloquer la candidature si email/notification échouent (fail-safe)
         
+        # Compter les documents uploadés
+        documents_count = 0
+        if application_data.documents:
+            # Récupérer le nombre réel de documents créés
+            documents_result = await db.execute(
+                select(ApplicationDocument).where(
+                    ApplicationDocument.application_id == application.id  # type: ignore
+                )
+            )
+            documents_count = len(documents_result.scalars().all())
+        
         safe_log("info", "🎉 SUCCÈS création candidature complète", 
                  application_id=str(application.id), 
                  candidate_id=str(current_user.id),
                  job_offer_id=str(application.job_offer_id),
-                 status=application.status)
+                 status=application.status,
+                 documents_uploaded=documents_count)
+        
+        # Message dynamique selon les documents
+        if documents_count > 0:
+            message = f"Candidature créée avec succès ({documents_count} document(s) uploadé(s))"
+        else:
+            message = "Candidature créée avec succès"
         
         return ApplicationResponse(
             success=True,
-            message="Candidature créée avec succès",
+            message=message,
             data=convert_orm_to_schema(application, Application)  # type: ignore
         )
         
@@ -624,281 +691,7 @@ async def delete_application(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
 
 
-# Endpoints pour les documents PDF
-@router.post("/{application_id}/documents", response_model=ApplicationDocumentResponse, status_code=status.HTTP_201_CREATED, summary="Uploader un document PDF", openapi_extra={
-    "requestBody": {"content": {"multipart/form-data": {"schema": {"type": "object", "properties": {"document_type": {"type": "string"}, "file": {"type": "string", "format": "binary"}}}, "example": {"document_type": "cv"}}}},
-    "responses": {
-        "201": {"content": {"application/json": {"example": {"success": True, "message": "Document uploadÃ© avec succÃ¨s", "data": {"id": "uuid", "file_name": "cv.pdf"}}}}},
-        "429": {"description": "Trop d'uploads"}
-    }
-})
-# @limiter.limit(UPLOAD_LIMITS)  # ⚠️ Désactivé temporairement - rate limiter non configuré
-async def upload_document(
-    request: Request,
-    application_id: str,
-    document_type: Optional[str] = Form(None, description="Type de document: cover_letter, cv, certificats, diplome (optionnel)"),
-    file: UploadFile = File(..., description="Fichier PDF Ã  uploader"),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Uploader un document PDF pour une candidature
-    
-    - **application_id**: ID de la candidature
-    - **document_type**: Type de document (cover_letter, cv, certificats, diplome) - optionnel
-    - **file**: Fichier PDF Ã  uploader (max 10MB)
-    """
-    try:
-        # 🔷 ÉTAPE 1: Initialisation
-        safe_log("info", "🚀 DÉBUT upload document", 
-                 application_id=application_id,
-                 user_id=str(current_user.id),
-                 user_role=current_user.role,
-                 filename=file.filename,
-                 document_type=document_type)
-        
-        # 🔷 ÉTAPE 2: Validation extension fichier
-        safe_log("debug", "📝 Validation extension fichier...", filename=file.filename)
-        if not file.filename or not file.filename.lower().endswith('.pdf'):
-            safe_log("warning", "❌ Extension invalide", filename=file.filename)
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Seuls les fichiers PDF sont acceptés"
-            )
-        safe_log("debug", "✅ Extension valide (.pdf)")
-        
-        # 🔷 ÉTAPE 3: Lecture contenu fichier
-        safe_log("debug", "📄 Lecture du contenu fichier...")
-        file_content = await file.read()
-        file_size_kb = len(file_content) / 1024
-        safe_log("info", "✅ Fichier lu", size_kb=f"{file_size_kb:.2f}")
-        
-        # 🔷 ÉTAPE 4: Validation taille
-        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-        safe_log("debug", f"🔍 Validation taille (max 10MB)...")
-        if len(file_content) > MAX_FILE_SIZE:
-            safe_log("warning", "❌ Fichier trop volumineux", 
-                     size_mb=f"{len(file_content) / (1024 * 1024):.2f}",
-                     max_mb="10")
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"Le fichier est trop volumineux. Taille maximale: 10MB. Taille actuelle: {len(file_content) / (1024 * 1024):.2f}MB"
-            )
-        safe_log("debug", "✅ Taille valide")
-        
-        # 🔷 ÉTAPE 5: Validation format PDF (magic number)
-        safe_log("debug", "🔍 Validation format PDF (magic number)...")
-        if not file_content.startswith(b'%PDF'):
-            first_bytes = file_content[:20].hex() if len(file_content) >= 20 else file_content.hex()
-            safe_log("warning", "❌ Format PDF invalide", 
-                     first_bytes=first_bytes,
-                     expected="%PDF")
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Le fichier n'est pas un PDF valide"
-            )
-        safe_log("debug", "✅ Format PDF valide")
-        
-        # 🔷 ÉTAPE 6: Encodage base64
-        safe_log("debug", "🔐 Encodage en base64...")
-        file_data_b64 = base64.b64encode(file_content).decode('utf-8')
-        b64_size_kb = len(file_data_b64) / 1024
-        safe_log("info", "✅ Encodage terminé", b64_size_kb=f"{b64_size_kb:.2f}")
-        
-        # 🔷 ÉTAPE 7: Préparation données
-        resolved_type = (document_type or 'certificats')
-        safe_filename = file.filename or "document.pdf"
-        if not safe_filename.lower().endswith('.pdf'):
-            safe_filename = f"{safe_filename}.pdf"
-        
-        safe_log("debug", "📋 Préparation document_data...",
-                 document_type=resolved_type,
-                 filename=safe_filename)
-            
-        document_data = ApplicationDocumentCreate(
-            application_id=UUID(application_id),
-            document_type=resolved_type,
-            file_name=safe_filename,
-            file_data=file_data_b64,
-            file_size=len(file_content),
-            file_type="application/pdf"
-        )
-        safe_log("debug", "✅ document_data créé")
-        
-        # 🔷 ÉTAPE 8: Sauvegarde en base de données
-        safe_log("debug", "💾 Création document en BDD...")
-        application_service = ApplicationService(db)
-        document = await application_service.create_document(document_data)
-        safe_log("info", "✅ Document sauvegardé en BDD", document_id=str(document.id))
-        
-        # 🔷 ÉTAPE 9: Commit transaction
-        safe_log("debug", "💾 Commit transaction...")
-        await db.commit()
-        safe_log("debug", "✅ Transaction committée")
-        
-        await db.refresh(document)
-        safe_log("debug", "✅ Document rafraîchi")
-        
-        safe_log("info", "🎉 SUCCÈS upload document complet", 
-                application_id=application_id, 
-                document_id=str(document.id),
-                document_type=resolved_type,
-                file_size_kb=f"{file_size_kb:.2f}",
-                file_name=safe_filename)
-        
-        return ApplicationDocumentResponse(
-            success=True,
-            message="Document uploadé avec succès",
-            data=convert_orm_to_schema(document, ApplicationDocument)  # type: ignore
-        )
-        
-    except HTTPException:
-        # Relancer les HTTPExceptions (déjà loguées)
-        raise
-    except ValueError as e:
-        safe_log("warning", "❌ VALIDATION ÉCHOUÉE - Upload document", 
-                 application_id=application_id, 
-                 error=str(e),
-                 error_type="ValueError")
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except NotFoundError as e:
-        safe_log("warning", "❌ CANDIDATURE NON TROUVÉE", 
-                 application_id=application_id,
-                 error=str(e))
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except Exception as e:
-        # Log détaillé avec traceback
-        import traceback
-        error_msg = f"{type(e).__name__}: {str(e)}"
-        error_traceback = traceback.format_exc()
-        safe_log("error", "🔥 ERREUR CRITIQUE - Upload document", 
-                application_id=application_id, 
-                error=error_msg,
-                error_type=type(e).__name__,
-                traceback=error_traceback,
-                user_id=str(current_user.id),
-                filename=file.filename if file else "N/A")
-        
-        # En développement, retourner le détail complet
-        import os
-        if os.getenv("DEBUG", "false").lower() == "true" or os.getenv("ENVIRONMENT", "production") == "development":
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-                detail=f"Erreur interne: {error_msg}"
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-                detail="Erreur interne du serveur"
-            )
-
-
-@router.post("/{application_id}/documents/multiple", response_model=ApplicationDocumentListResponse, status_code=status.HTTP_201_CREATED, summary="Uploader plusieurs documents PDF", openapi_extra={
-    "requestBody": {"content": {"multipart/form-data": {"schema": {"type": "object", "properties": {"document_types": {"type": "array", "items": {"type": "string"}}, "files": {"type": "array", "items": {"type": "string", "format": "binary"}}}}, "example": {"document_types": ["cv", "certificats"]}}}},
-    "responses": {
-        "201": {"content": {"application/json": {"example": {"success": True, "message": "2 document(s) uploadÃ©(s) avec succÃ¨s", "data": [{"id": "uuid"}], "total": 2}}}},
-        "429": {"description": "Trop d'uploads"}
-    }
-})
-# @limiter.limit(UPLOAD_LIMITS)  # ⚠️ Désactivé temporairement - rate limiter non configuré
-async def upload_multiple_documents(
-    request: Request,
-    application_id: str,
-    files: List[UploadFile] = File(..., description="Fichiers PDF Ã  uploader"),
-    document_types: List[str] = Form(..., description="Types de documents correspondants"),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Uploader plusieurs documents PDF pour une candidature
-    
-    - **application_id**: ID de la candidature
-    - **files**: Liste des fichiers PDF Ã  uploader (max 10MB chacun)
-    - **document_types**: Liste des types de documents correspondants
-    """
-    try:
-        if len(files) != len(document_types):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Le nombre de fichiers doit correspondre au nombre de types de documents"
-            )
-        
-        MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-        application_service = ApplicationService(db)
-        documents = []
-        
-        for file, doc_type in zip(files, document_types):
-            # Vérifier que le fichier est un PDF
-            if not file.filename or not file.filename.lower().endswith('.pdf'):
-                filename = file.filename or "fichier_inconnu"
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Seuls les fichiers PDF sont acceptés. Fichier invalide: {filename}"
-                )
-            
-            # Lire le contenu du fichier
-            file_content = await file.read()
-            
-            # Validation de la taille
-            if len(file_content) > MAX_FILE_SIZE:
-                filename = file.filename or "fichier_inconnu"
-                raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail=f"Le fichier '{filename}' est trop volumineux. Taille maximale: 10MB. Taille actuelle: {len(file_content) / (1024 * 1024):.2f}MB"
-                )
-            
-            # Vérifier que c'est bien un PDF
-            if not file_content.startswith(b'%PDF'):
-                filename = file.filename or "fichier_inconnu"
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Le fichier n'est pas un PDF valide: {filename}"
-                )
-            
-            # Encoder en base64
-            file_data_b64 = base64.b64encode(file_content).decode('utf-8')
-            
-            # Créer le document
-            safe_filename = file.filename or "document.pdf"
-            if not safe_filename.lower().endswith('.pdf'):
-                safe_filename = f"{safe_filename}.pdf"
-                
-            document_data = ApplicationDocumentCreate(
-                application_id=UUID(application_id),
-                document_type=doc_type,
-                file_name=safe_filename,
-                file_data=file_data_b64,
-                file_size=len(file_content),
-                file_type="application/pdf"
-            )
-            
-            document = await application_service.create_document(document_data)
-            documents.append(document)
-        
-        safe_log("info", "Documents multiples uploadés",
-                application_id=application_id,
-                count=len(documents),
-                total_size=sum(d.file_size for d in documents),
-                user_id=str(current_user.id))
-        
-        return ApplicationDocumentListResponse(
-            success=True,
-            message=f"{len(documents)} document(s) uploadé(s) avec succès",
-            data=convert_orm_list_to_schema(documents, ApplicationDocument),  # type: ignore
-            total=len(documents)
-        )
-        
-    except ValueError as e:
-        safe_log("warning", "Erreur validation upload multiple", application_id=application_id, error=str(e))
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except NotFoundError as e:
-        safe_log("warning", "Candidature non trouvÃ©e pour upload multiple", application_id=application_id)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
-    except Exception as e:
-        safe_log("error", "Erreur upload documents multiples", application_id=application_id, error=str(e))
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
-
-
+# Endpoints pour les documents PDF (lecture seule)
 @router.get("/{application_id}/documents", response_model=ApplicationDocumentListResponse, summary="Lister les documents d'une candidature", openapi_extra={
     "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "0 document(s) trouvÃ©(s)", "data": [], "total": 0}}}}}
 })
