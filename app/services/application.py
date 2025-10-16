@@ -7,11 +7,14 @@ from typing import Optional, List, Dict, Any
 from app.utils.json_utils import JSONDataHandler
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update, delete, func, and_, desc
+from sqlalchemy.orm import selectinload, joinedload
 from uuid import UUID
 import base64
 
 from app.models.application import Application, ApplicationDocument, ApplicationDraft, ApplicationHistory
 from app.models.user import User
+from app.models.job_offer import JobOffer
+from app.models.candidate_profile import CandidateProfile
 from app.schemas.application import (
     ApplicationCreate, ApplicationUpdate, ApplicationDocumentCreate, 
     ApplicationDocumentUpdate, ApplicationDocumentWithData,
@@ -784,3 +787,253 @@ class ApplicationService:
                 "by_month": {},
                 "documents_by_type": {},
             }
+    
+    async def get_complete_application_details(
+        self,
+        application_id: UUID
+    ) -> Dict[str, Any]:
+        """
+        Récupérer les détails complets d'une candidature
+        
+        Inclut :
+        - Informations de la candidature
+        - Profil complet du candidat avec documents
+        - Détails de l'offre d'emploi avec questions MTP
+        - Réponses MTP du candidat
+        
+        Cette méthode respecte les principes SOLID :
+        - Single Responsibility : Récupère uniquement les détails complets
+        - Open/Closed : Extensible sans modification
+        - Liskov Substitution : Peut être utilisée partout où une méthode de récupération est attendue
+        - Interface Segregation : Interface claire et unique
+        - Dependency Inversion : Dépend d'abstractions (AsyncSession)
+        
+        Args:
+            application_id: UUID de la candidature
+            
+        Returns:
+            Dict contenant toutes les informations complètes
+            
+        Raises:
+            NotFoundError: Si la candidature n'existe pas
+            DatabaseError: En cas d'erreur de base de données
+        """
+        try:
+            logger.info(
+                "Récupération détails complets candidature",
+                application_id=str(application_id)
+            )
+            
+            # Récupérer la candidature avec toutes les relations chargées (eager loading)
+            # Principe : Éviter le problème N+1 queries
+            stmt = (
+                select(Application)
+                .options(
+                    joinedload(Application.candidate),  # Charger l'utilisateur
+                    selectinload(Application.documents),  # Charger les documents
+                )
+                .where(Application.id == application_id)
+            )
+            
+            result = await self.db.execute(stmt)
+            application = result.unique().scalar_one_or_none()
+            
+            if not application:
+                logger.warning(
+                    "Candidature non trouvée",
+                    application_id=str(application_id)
+                )
+                raise NotFoundError(
+                    "Candidature non trouvée",
+                    resource="Application",
+                    resource_id=str(application_id)
+                )
+            
+            # Récupérer le profil candidat
+            candidate_profile_stmt = (
+                select(CandidateProfile)
+                .where(CandidateProfile.user_id == application.candidate_id)
+            )
+            candidate_profile_result = await self.db.execute(candidate_profile_stmt)
+            candidate_profile = candidate_profile_result.scalar_one_or_none()
+            
+            # Récupérer l'offre d'emploi
+            job_offer_stmt = (
+                select(JobOffer)
+                .where(JobOffer.id == application.job_offer_id)
+            )
+            job_offer_result = await self.db.execute(job_offer_stmt)
+            job_offer = job_offer_result.scalar_one_or_none()
+            
+            if not job_offer:
+                logger.warning(
+                    "Offre d'emploi non trouvée",
+                    job_offer_id=str(application.job_offer_id)
+                )
+                raise NotFoundError(
+                    "Offre d'emploi associée non trouvée",
+                    resource="JobOffer",
+                    resource_id=str(application.job_offer_id)
+                )
+            
+            # Construire les détails du candidat
+            # Parser les skills et languages si ce sont des chaînes JSON
+            skills_value = getattr(candidate_profile, 'skills', None) if candidate_profile else None
+            if skills_value and isinstance(skills_value, str):
+                try:
+                    skills_value = json.loads(skills_value)
+                except:
+                    skills_value = []
+            elif not skills_value:
+                skills_value = []
+            
+            # Note: CandidateProfile n'a pas de champ languages dans la DB actuelle
+            # On le récupère depuis le modèle User si disponible
+            
+            candidate_data = {
+                "user_id": str(application.candidate.id),
+                "email": application.candidate.email,
+                "firstname": application.candidate.first_name,
+                "lastname": application.candidate.last_name,
+                "phone": application.candidate.phone,
+                "address": getattr(candidate_profile, 'address', None) if candidate_profile else None,
+                "city": None,  # Pas dans le modèle actuel
+                "country": None,  # Pas dans le modèle actuel
+                "birth_date": getattr(candidate_profile, 'birth_date', None) if candidate_profile else None,
+                "nationality": None,  # Pas dans le modèle actuel
+                "current_job_title": getattr(candidate_profile, 'current_position', None) if candidate_profile else None,
+                "years_of_experience": getattr(candidate_profile, 'years_experience', None) if candidate_profile else None,
+                "education_level": getattr(candidate_profile, 'education', None) if candidate_profile else None,
+                "skills": skills_value,
+                "languages": [],  # Pas dans le modèle actuel
+                "documents": []
+            }
+            
+            # Ajouter les documents téléversés
+            for doc in application.documents:
+                candidate_data["documents"].append({
+                    "id": str(doc.id),
+                    "document_type": doc.document_type,
+                    "file_name": doc.file_name,
+                    "file_path": f"/api/v1/applications/{application_id}/documents/{doc.id}/download",
+                    "file_size": doc.file_size,
+                    "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None
+                })
+            
+            # Construire les détails de l'offre
+            # Construire salary_range à partir de salary_min et salary_max
+            salary_min = getattr(job_offer, 'salary_min', None)
+            salary_max = getattr(job_offer, 'salary_max', None)
+            salary_range = None
+            if salary_min and salary_max:
+                salary_range = f"{salary_min} - {salary_max} FCFA"
+            elif salary_min:
+                salary_range = f"À partir de {salary_min} FCFA"
+            elif salary_max:
+                salary_range = f"Jusqu'à {salary_max} FCFA"
+            
+            # Utiliser application_deadline ou date_limite
+            deadline_val = getattr(job_offer, 'application_deadline', None) or getattr(job_offer, 'date_limite', None)
+            
+            job_offer_data = {
+                "id": str(job_offer.id),
+                "title": job_offer.title,
+                "description": job_offer.description,
+                "location": job_offer.location,
+                "contract_type": job_offer.contract_type,
+                "salary_range": salary_range,
+                "requirements": job_offer.requirements or [],
+                "responsibilities": job_offer.responsibilities or [],
+                "benefits": job_offer.benefits or [],
+                "status": job_offer.status,
+                "offer_status": getattr(job_offer, 'offer_status', 'tous'),
+                "created_at": job_offer.created_at.isoformat() if job_offer.created_at else None,
+                "updated_at": job_offer.updated_at.isoformat() if job_offer.updated_at else None,
+                "deadline": deadline_val.isoformat() if deadline_val else None,
+                "questions_mtp": None
+            }
+            
+            # Ajouter les questions MTP si elles existent
+            questions_mtp_value = getattr(job_offer, 'questions_mtp', None)
+            if questions_mtp_value is not None:
+                questions_mtp = questions_mtp_value
+                if isinstance(questions_mtp, str):
+                    questions_mtp = json.loads(questions_mtp)
+                
+                job_offer_data["questions_mtp"] = {
+                    "questions_metier": questions_mtp.get("questions_metier", []),
+                    "questions_talent": questions_mtp.get("questions_talent", []),
+                    "questions_paradigme": questions_mtp.get("questions_paradigme", [])
+                }
+            
+            # Construire les réponses MTP du candidat
+            mtp_answers_data = None
+            mtp_answers_value = getattr(application, 'mtp_answers', None)
+            if mtp_answers_value is not None:
+                mtp_answers = mtp_answers_value
+                if isinstance(mtp_answers, str):
+                    mtp_answers = json.loads(mtp_answers)
+                
+                mtp_answers_data = {
+                    "reponses_metier": mtp_answers.get("reponses_metier", []),
+                    "reponses_talent": mtp_answers.get("reponses_talent", []),
+                    "reponses_paradigme": mtp_answers.get("reponses_paradigme", [])
+                }
+            
+            # Construire les informations de référence
+            reference_data = None
+            ref_entreprise_value = getattr(application, 'ref_entreprise', None)
+            ref_fullname_value = getattr(application, 'ref_fullname', None)
+            if ref_entreprise_value or ref_fullname_value:
+                reference_data = {
+                    "entreprise": application.ref_entreprise,
+                    "fullname": application.ref_fullname,
+                    "email": application.ref_mail,
+                    "contact": application.ref_contact
+                }
+            
+            # Construire la réponse complète
+            availability_start_value = getattr(application, 'availability_start', None)
+            complete_details = {
+                "application_id": str(application.id),
+                "status": application.status,
+                "created_at": application.created_at.isoformat() if application.created_at else None,
+                "updated_at": application.updated_at.isoformat() if application.updated_at else None,
+                "reference_contacts": application.reference_contacts,
+                "availability_start": availability_start_value.isoformat() if availability_start_value else None,
+                "has_been_manager": application.has_been_manager,
+                "reference": reference_data,
+                "candidate": candidate_data,
+                "job_offer": job_offer_data,
+                "mtp_answers": mtp_answers_data
+            }
+            
+            logger.info(
+                "Détails complets récupérés avec succès",
+                application_id=str(application_id),
+                candidate_email=application.candidate.email,
+                job_title=job_offer.title
+            )
+            
+            return complete_details
+            
+        except NotFoundError:
+            # Propager l'erreur NotFoundError sans modification
+            raise
+            
+        except Exception as e:
+            logger.error(
+                "Erreur récupération détails complets",
+                application_id=str(application_id),
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True
+            )
+            raise DatabaseError(
+                "Erreur lors de la récupération des détails complets de la candidature",
+                operation="get_complete_application_details",
+                details={
+                    "application_id": str(application_id),
+                    "error": str(e)
+                }
+            )

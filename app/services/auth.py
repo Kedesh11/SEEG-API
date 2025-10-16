@@ -202,10 +202,21 @@ class AuthService:
                 raise ValidationError("Le matricule est obligatoire pour les candidats internes")
             
             # Validation métier: Vérifier que le matricule existe (si fourni)
+            # ⚠️ WARNING au lieu de bloquer - Permet l'inscription même si matricule non trouvé dans seeg_agents
+            # Justification: La table seeg_agents peut ne pas être à jour avec tous les employés
             if user_data.matricule:
                 is_valid = await self.verify_matricule_exists(user_data.matricule)
                 if not is_valid:
-                    raise ValidationError("Matricule SEEG non trouvé dans la base. Veuillez vérifier votre matricule.")
+                    safe_log(
+                        "warning", 
+                        "⚠️ Matricule non trouvé dans seeg_agents (inscription autorisée quand même)",
+                        matricule=user_data.matricule,
+                        email=user_data.email
+                    )
+                    # Ne pas bloquer l'inscription - juste logger un warning
+                    # L'admin pourra vérifier manuellement lors de l'approbation
+                else:
+                    safe_log("info", "✅ Matricule validé dans seeg_agents", matricule=user_data.matricule)
 
             # Validation métier: Empêcher la duplication de matricule côté users (renvoyer 400 plutôt que 500 DB)
             if user_data.matricule is not None:

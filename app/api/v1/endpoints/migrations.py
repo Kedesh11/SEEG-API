@@ -385,6 +385,91 @@ MIGRATIONS = [
             END $$;
             """
         ]
+    },
+    {
+        "revision": "20251016_create_email_logs",
+        "down_revision": "20251015_application_drafts_pk",
+        "description": "Créer la table email_logs pour l'historique des emails",
+        "sql_commands": [
+            """
+            -- Créer la table email_logs
+            CREATE TABLE IF NOT EXISTS email_logs (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                application_id UUID REFERENCES applications(id) ON DELETE SET NULL,
+                "to" VARCHAR(255) NOT NULL,
+                subject VARCHAR(500) NOT NULL,
+                html TEXT NOT NULL,
+                category VARCHAR(50) NOT NULL,
+                provider_message_id VARCHAR(255),
+                sent_at TIMESTAMP WITH TIME ZONE NOT NULL,
+                email_metadata JSON,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            );
+            """,
+            """
+            -- Créer les index pour performance
+            CREATE INDEX IF NOT EXISTS idx_email_logs_application ON email_logs(application_id);
+            CREATE INDEX IF NOT EXISTS idx_email_logs_category ON email_logs(category);
+            CREATE INDEX IF NOT EXISTS idx_email_logs_sent_at ON email_logs(sent_at);
+            CREATE INDEX IF NOT EXISTS idx_email_logs_to ON email_logs("to");
+            """,
+            """
+            -- Commenter la table
+            COMMENT ON TABLE email_logs IS 'Historique des emails envoyés par le système';
+            COMMENT ON COLUMN email_logs.application_id IS 'ID de la candidature liée (optionnel)';
+            COMMENT ON COLUMN email_logs."to" IS 'Destinataire de l''email';
+            COMMENT ON COLUMN email_logs.category IS 'Catégorie d''email (welcome, application_submitted, etc.)';
+            """
+        ]
+    },
+    {
+        "revision": "20251016_recreate_drafts",
+        "down_revision": "20251016_create_email_logs",
+        "description": "Recréer la table application_drafts sans colonne id",
+        "sql_commands": [
+            """
+            -- Sauvegarder les données existantes dans une table temporaire
+            CREATE TEMP TABLE IF NOT EXISTS temp_drafts AS 
+            SELECT user_id, job_offer_id, form_data, ui_state, created_at, updated_at
+            FROM application_drafts;
+            """,
+            """
+            -- Supprimer complètement l'ancienne table
+            DROP TABLE IF EXISTS application_drafts CASCADE;
+            """,
+            """
+            -- Recréer la table avec la structure correcte
+            CREATE TABLE application_drafts (
+                user_id UUID NOT NULL,
+                job_offer_id UUID NOT NULL,
+                form_data JSONB,
+                ui_state JSONB,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (user_id, job_offer_id),
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+                FOREIGN KEY (job_offer_id) REFERENCES job_offers(id) ON DELETE CASCADE
+            );
+            """,
+            """
+            -- Restaurer les données
+            INSERT INTO application_drafts (user_id, job_offer_id, form_data, ui_state, created_at, updated_at)
+            SELECT user_id, job_offer_id, form_data, ui_state, created_at, updated_at
+            FROM temp_drafts
+            ON CONFLICT (user_id, job_offer_id) DO NOTHING;
+            """,
+            """
+            -- Créer les index
+            CREATE INDEX idx_application_drafts_user_id ON application_drafts(user_id);
+            CREATE INDEX idx_application_drafts_job_offer_id ON application_drafts(job_offer_id);
+            CREATE INDEX idx_application_drafts_created_at ON application_drafts(created_at DESC);
+            """,
+            """
+            -- Supprimer la table temporaire
+            DROP TABLE IF EXISTS temp_drafts;
+            """
+        ]
     }
 ]
 

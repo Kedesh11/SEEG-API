@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import base64
-import uuid
+import uuid as uuid_module
+from uuid import UUID
 import structlog
 from fastapi.responses import StreamingResponse
 
@@ -25,6 +26,7 @@ from app.schemas.application import (
     ApplicationDraftCreate, ApplicationDraftCreateRequest, ApplicationDraftUpdate, ApplicationDraft, ApplicationDraftInDB,
     ApplicationHistoryCreate, ApplicationHistory, ApplicationHistoryInDB
 )
+from app.schemas.application_detail import ApplicationCompleteDetailResponse
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError, FileError, DatabaseError
@@ -423,6 +425,107 @@ async def get_application(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur interne du serveur")
 
 
+@router.get(
+    "/{application_id}/complete",
+    response_model=ApplicationCompleteDetailResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Récupérer les détails complets d'une candidature",
+    description="Récupère tous les détails : candidat + profil + documents, offre + questions MTP, réponses MTP"
+)
+async def get_complete_application_details(
+    application_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    **Récupère les détails complets d'une candidature**
+    
+    Inclut :
+    - Informations de la candidature (statut, dates, références)
+    - Profil complet du candidat avec documents téléversés
+    - Détails de l'offre d'emploi avec questions MTP
+    - Réponses MTP du candidat
+    
+    Contrôle d'accès :
+    - Admin/Recruteur : Toutes les candidatures
+    - Candidat : Uniquement ses propres candidatures
+    """
+    try:
+        safe_log(
+            "info",
+            "🔍 Récupération détails complets",
+            application_id=application_id,
+            user_id=str(current_user.id)
+        )
+        
+        application_service = ApplicationService(db)
+        
+        # Vérifier existence et accès
+        application = await application_service.get_application_with_relations(application_id)
+        
+        if not application:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Candidature non trouvée"
+            )
+        
+        # Contrôle d'accès
+        candidate_id_val = getattr(application, 'candidate_id', None)
+        is_candidate = bool(current_user.role == "candidate")
+        is_not_owner = bool(str(candidate_id_val) != str(current_user.id))
+        if is_candidate and is_not_owner:
+            safe_log(
+                "warning",
+                "🚫 Accès non autorisé",
+                application_id=application_id,
+                user_id=str(current_user.id)
+            )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Accès interdit"
+            )
+        
+        # Récupérer détails complets
+        complete_details = await application_service.get_complete_application_details(
+            UUID(application_id)
+        )
+        
+        safe_log(
+            "info",
+            "✅ Détails complets récupérés",
+            application_id=application_id,
+            documents_count=len(complete_details["candidate"]["documents"])
+        )
+        
+        return ApplicationCompleteDetailResponse(
+            success=True,
+            message="Détails récupérés avec succès",
+            data=complete_details  # type: ignore
+        )
+        
+    except HTTPException:
+        raise
+        
+    except NotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+        
+    except Exception as e:
+        import traceback
+        safe_log(
+            "error",
+            "🔥 Erreur détails complets",
+            error=str(e),
+            traceback=traceback.format_exc()
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Erreur interne"
+        )
+
+
 @router.put("/{application_id}", response_model=ApplicationResponse, summary="Mettre à jour une candidature", openapi_extra={
     "requestBody": {"content": {"application/json": {"example": {"status": "reviewed"}}}},
     "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Candidature mise à  jour avec succÃ¨s", "data": {"id": "uuid", "status": "reviewed"}}}}}}
@@ -613,7 +716,7 @@ async def upload_document(
                  filename=safe_filename)
             
         document_data = ApplicationDocumentCreate(
-            application_id=uuid.UUID(application_id),
+            application_id=UUID(application_id),
             document_type=resolved_type,
             file_name=safe_filename,
             file_data=file_data_b64,
@@ -761,7 +864,7 @@ async def upload_multiple_documents(
                 safe_filename = f"{safe_filename}.pdf"
                 
             document_data = ApplicationDocumentCreate(
-                application_id=uuid.UUID(application_id),
+                application_id=UUID(application_id),
                 document_type=doc_type,
                 file_name=safe_filename,
                 file_data=file_data_b64,
