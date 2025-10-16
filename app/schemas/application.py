@@ -6,6 +6,7 @@ from typing import Optional, List, Dict, Any, BinaryIO
 from datetime import datetime
 from uuid import UUID
 import base64
+import json
 from app.core.validators import validate_pdf_field
 
 
@@ -80,6 +81,41 @@ class ApplicationCreate(ApplicationBase):
             }
             missing_list = [missing_names[t] for t in missing_types]
             raise ValueError(f"Documents manquants : {', '.join(missing_list)}")
+        
+        return v
+    
+    @validator('ref_entreprise', 'ref_fullname', 'ref_mail', 'ref_contact', pre=True)
+    def clean_empty_strings(cls, v):
+        """Nettoie les chaînes vides et les convertit en None, ou extrait les valeurs des tableaux JSON."""
+        if v == "" or v == "[]" or v is None:
+            return None
+        
+        # Si c'est une chaîne qui commence par "[", c'est un tableau JSON
+        if isinstance(v, str) and v.startswith("["):
+            try:
+                array = json.loads(v)
+                # Si c'est un tableau vide, retourner None
+                if not array:
+                    return None
+                
+                # Filtrer les valeurs vides et joindre
+                valid_items = []
+                for item in array:
+                    if item:  # Exclure None, "", etc.
+                        item_str = str(item).strip()
+                        if item_str:  # Exclure les chaînes vides après strip
+                            valid_items.append(item_str)
+                
+                # Si aucune valeur valide, retourner None
+                if not valid_items:
+                    return None
+                
+                # Sinon, joindre avec ", "
+                return ", ".join(valid_items)
+                
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                # Si le parsing échoue, retourner la valeur telle quelle
+                return v
         
         return v
 

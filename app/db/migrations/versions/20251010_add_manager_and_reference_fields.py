@@ -1,7 +1,7 @@
 """Add manager and reference fields to applications table
 
 Revision ID: 20251010_add_mgr_ref
-Revises: 20251010_add_mtp_questions
+Revises: 20251010_add_mtp_questions_to_job_offers
 Create Date: 2025-10-10 16:00:00.000000
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = '20251010_add_mgr_ref'
-down_revision = '20251010_add_mtp_questions'
+down_revision = '20251010_add_mtp_questions_to_job_offers'
 branch_labels = None
 depends_on = None
 

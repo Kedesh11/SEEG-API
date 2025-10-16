@@ -156,6 +156,7 @@ class ApplicationService:
             ValidationError: Si validation échoue (doublon, limites MTP, documents invalides)
             BusinessLogicError: Si erreur lors de la création
         """
+        logger = structlog.get_logger(__name__)
         try:
             # Vérifier qu'il n'y a pas déjà une candidature pour ce job
             existing_result = await self.db.execute(

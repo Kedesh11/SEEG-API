@@ -1,128 +1,93 @@
-from fastapi.testclient import TestClient
+"""
+Configuration pytest centralisée
+Importe toutes les fixtures réutilisables
+
+Architecture:
+- Fixtures organisées par domaine (auth, app, db, http)
+- Scope approprié pour chaque fixture
+- Isolation des tests garantie
+"""
 import pytest
-import os
-import asyncio
+import sys
+from pathlib import Path
+
+# Ajouter le projet au PYTHONPATH
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+# Import des fixtures par domaine
+from tests.fixtures.auth_fixtures import (
+    valid_signup_externe,
+    valid_signup_interne_with_seeg_email,
+    valid_signup_interne_no_seeg_email,
+    invalid_signup_weak_password,
+    invalid_signup_missing_matricule
+)
+
+from tests.fixtures.application_fixtures import (
+    test_pdf_base64,
+    valid_application_data_with_documents,
+    invalid_application_missing_documents,
+    invalid_application_missing_one_document,
+    valid_application_with_extra_documents
+)
+
+from tests.fixtures.db_fixtures import (
+    event_loop,
+    db_session
+)
+
+from tests.fixtures.http_fixtures import (
+    api_base_url,
+    http_client,
+    authenticated_client_factory
+)
 
 
-def _configure_env_for_local_db():
-    # Essayer localhost au lieu de SEEG pour la résolution DNS
-    os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://postgres:%20%20%20%20@localhost:5432/recruteur")
-    os.environ.setdefault("DATABASE_URL_SYNC", "postgresql://postgres:%20%20%20%20@localhost:5432/recruteur")
-    os.environ.setdefault("ENVIRONMENT", "testing")
-    os.environ.setdefault("DEBUG", "true")
-    os.environ.setdefault("SECRET_KEY", "CHANGE_ME_IN_PROD_32CHARS_MINIMUM_1234567890")
-    os.environ.setdefault("JWT_ISSUER", "seeg-api")
-    os.environ.setdefault("JWT_AUDIENCE", "seeg-clients")
-    # Désactiver Application Insights pour les tests
-    os.environ.setdefault("APPLICATIONINSIGHTS_CONNECTION_STRING", "")
-    os.environ.setdefault("LOG_LEVEL", "ERROR")  # Réduire le logging pendant les tests
+# Configuration pytest
+def pytest_configure(config):
+    """Configuration globale pytest"""
+    config.addinivalue_line("markers", "asyncio: mark test as async")
+    config.addinivalue_line("markers", "integration: mark test as integration test")
+    config.addinivalue_line("markers", "unit: mark test as unit test")
+    config.addinivalue_line("markers", "slow: mark test as slow")
 
 
-_configure_env_for_local_db()
-
-from app.main import app  # noqa: E402  # import après config env
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Créer un event loop pour toute la session de tests"""
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    yield loop
-    loop.close()
-
-
-@pytest.fixture(scope="session")
-def client():
-    """Client de test avec raise_server_exceptions=False pour éviter les problèmes d'event loop"""
-    with TestClient(app, raise_server_exceptions=False) as test_client:
-        yield test_client
+@pytest.fixture(scope="session", autouse=True)
+def setup_test_environment():
+    """Setup initial pour tous les tests"""
+    import os
+    # Forcer l'environnement de test
+    os.environ['ENVIRONMENT'] = 'testing'
+    os.environ['TEST_ENV'] = os.getenv('TEST_ENV', 'local')
+    
+    yield
+    
+    # Cleanup si nécessaire
 
 
-@pytest.fixture(scope="session")
-def admin_credentials():
-    return {"email": "sevankedesh11@gmail.com", "password": "Sevan@Seeg"}
-
-
-@pytest.fixture(scope="session")
-def get_bearer():
-    def _make(token: str) -> dict:
-        return {"Authorization": f"Bearer {token}"}
-    return _make
-
-
-@pytest.fixture(scope="session")
-def admin_token(client, admin_credentials):
-    client.post("/api/v1/auth/create-first-admin")
-    r = client.post("/api/v1/auth/login", json=admin_credentials, headers={"content-type": "application/json"})
-    assert r.status_code == 200, r.text
-    return r.json()["access_token"]
-
-
-@pytest.fixture(scope="session")
-def recruiter_credentials():
-    return {"email": "recruteur@test.local", "password": "Recrut3ur#2025"}
-
-
-@pytest.fixture(scope="session")
-def recruiter_token(client, recruiter_credentials, admin_token, get_bearer):
-    # créer recruteur si besoin
-    client.post(
-        "/api/v1/auth/create-user",
-        json={
-            "email": recruiter_credentials["email"],
-            "password": recruiter_credentials["password"],
-            "first_name": "Jean",
-            "last_name": "Mavoungou",
-            "role": "recruiter",
-        },
-        headers={**get_bearer(admin_token), "content-type": "application/json"},
-    )
-    r = client.post("/api/v1/auth/login", json=recruiter_credentials, headers={"content-type": "application/json"})
-    assert r.status_code == 200, r.text
-    return r.json()["access_token"]
-
-
-@pytest.fixture(scope="session")
-def candidate_credentials():
-    return {"email": "candidate@test.local", "password": "Password#2025"}
-
-
-@pytest.fixture(scope="session")
-def candidate_token(client, candidate_credentials):
-    # signup si besoin
-    client.post(
-        "/api/v1/auth/signup",
-        json={
-            "email": candidate_credentials["email"],
-            "password": candidate_credentials["password"],
-            "first_name": "Ada",
-            "last_name": "Lovelace",
-            "matricule": 123456,
-            "date_of_birth": "1990-01-01",
-            "sexe": "F"
-        },
-        headers={"content-type": "application/json"},
-    )
-    r = client.post("/api/v1/auth/login", json=candidate_credentials, headers={"content-type": "application/json"})
-    assert r.status_code == 200, r.text
-    return r.json()["access_token"]
-
-
-@pytest.fixture(scope="session")
-def seeded_ids(client, recruiter_token, candidate_token, get_bearer):
-    # créer une offre si besoin et retourner ses IDs via endpoints
-    r = client.post(
-        "/api/v1/jobs",
-        json={
-            "title": "Ingénieur Systèmes",
-            "description": "Gestion systèmes et réseaux",
-            "status": "open"
-        },
-        headers={**get_bearer(recruiter_token), "content-type": "application/json"},
-    )
-    job_data = r.json() if r.status_code == 200 else {}
-    job_id = job_data.get("id") or job_data.get("data", {}).get("id")
-    return {"job_offer_id": job_id}
-
-
+# Ré-export de toutes les fixtures pour qu'elles soient disponibles
+__all__ = [
+    # Auth
+    'valid_signup_externe',
+    'valid_signup_interne_with_seeg_email',
+    'valid_signup_interne_no_seeg_email',
+    'invalid_signup_weak_password',
+    'invalid_signup_missing_matricule',
+    
+    # Applications
+    'test_pdf_base64',
+    'valid_application_data_with_documents',
+    'invalid_application_missing_documents',
+    'invalid_application_missing_one_document',
+    'valid_application_with_extra_documents',
+    
+    # Database
+    'event_loop',
+    'db_session',
+    
+    # HTTP
+    'api_base_url',
+    'http_client',
+    'authenticated_client_factory',
+]

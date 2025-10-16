@@ -198,7 +198,8 @@ async def create_application(
                         user_id=application_data.candidate_id,
                         years_experience=getattr(candidate, 'annees_experience', None),
                         current_position=getattr(candidate, 'poste_actuel', None),
-                        address=getattr(candidate, 'adresse', None)
+                        address=getattr(candidate, 'adresse', None),
+                        skills=[]  # Tableau vide au lieu de None pour PostgreSQL VARCHAR[]
                     )
                     await user_service.create_candidate_profile(
                         user_id=application_data.candidate_id,
