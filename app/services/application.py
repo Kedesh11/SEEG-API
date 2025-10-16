@@ -75,8 +75,6 @@ class ApplicationService:
         errors = []
         
         # Parser les données JSON de manière sécurisée
-        logger = structlog.get_logger(__name__)
-        
         logger.debug("🔍 Validation MTP", questions_type=type(questions).__name__, answers_type=type(answers).__name__)
         
         # Utilisation de notre utilitaire JSON sécurisé
@@ -618,6 +616,7 @@ class ApplicationService:
     
     async def get_draft(self, user_id: str, job_offer_id: str) -> Optional[ApplicationDraft]:
         """Récupérer un brouillon de candidature"""
+        logger = structlog.get_logger(__name__)
         try:
             result = await self.db.execute(
                 select(ApplicationDraft).where(
@@ -655,6 +654,7 @@ class ApplicationService:
 
     async def get_application_draft(self, application_id: str, user_id: str) -> Optional[ApplicationDraft]:
         """Récupérer le brouillon lié à une candidature (via son job_offer_id)."""
+        logger = structlog.get_logger(__name__)
         try:
             application = await self.get_application_by_id(application_id)
             if not application:
@@ -666,6 +666,7 @@ class ApplicationService:
 
     async def upsert_application_draft(self, application_id: str, user_id: str, draft_data: "ApplicationDraftUpdate") -> ApplicationDraft:
         """Créer/met à jour le brouillon pour la candidature donnée (basé sur user_id + job_offer_id)."""
+        logger = structlog.get_logger(__name__)
         try:
             application = await self.get_application_by_id(application_id)
             if not application:
@@ -683,6 +684,7 @@ class ApplicationService:
 
     async def delete_application_draft(self, application_id: str, user_id: str) -> None:
         """Supprimer le brouillon pour la candidature donnée."""
+        logger = structlog.get_logger(__name__)
         try:
             application = await self.get_application_by_id(application_id)
             if not application:

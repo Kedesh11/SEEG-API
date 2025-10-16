@@ -22,7 +22,7 @@ from app.schemas.application import (
     ApplicationDocumentResponse, ApplicationDocumentCreate, ApplicationDocumentUpdate,
     ApplicationDocumentWithDataResponse, ApplicationDocumentListResponse,
     ApplicationDocument, FileUploadRequest, MultipleFileUploadRequest,
-    ApplicationDraftCreate, ApplicationDraftUpdate, ApplicationDraft, ApplicationDraftInDB,
+    ApplicationDraftCreate, ApplicationDraftCreateRequest, ApplicationDraftUpdate, ApplicationDraft, ApplicationDraftInDB,
     ApplicationHistoryCreate, ApplicationHistory, ApplicationHistoryInDB
 )
 from app.core.dependencies import get_current_user
@@ -127,32 +127,39 @@ async def create_application(
         from app.services.user import UserService
         user_service = UserService(db)
         
-        candidate_profile = await user_service.get_candidate_profile(application_data.candidate_id)
-        if not candidate_profile:
-            safe_log("info", "📝 Première candidature - Création profil candidat", 
-                    candidate_id=str(application_data.candidate_id))
-            from app.schemas.user import CandidateProfileCreate
-            from app.models.user import User
-            
-            # Récupérer les infos de l'utilisateur pour initialiser le profil
-            result = await db.execute(
-                select(User).where(User.id == application_data.candidate_id)
-            )
-            candidate = result.scalar_one_or_none()
-            
-            if candidate:
-                profile_data = CandidateProfileCreate(
-                    user_id=application_data.candidate_id,
-                    years_experience=candidate.annees_experience,  # type: ignore
-                    current_position=candidate.poste_actuel,  # type: ignore
-                    address=candidate.adresse  # type: ignore
-                )
-                await user_service.create_candidate_profile(
-                    user_id=application_data.candidate_id,
-                    profile_data=profile_data
-                )
-                safe_log("info", "✅ Profil candidat créé", 
+        try:
+            candidate_profile = await user_service.get_candidate_profile(application_data.candidate_id)
+            if not candidate_profile:
+                safe_log("info", "📝 Première candidature - Création profil candidat", 
                         candidate_id=str(application_data.candidate_id))
+                from app.schemas.user import CandidateProfileCreate
+                from app.models.user import User
+                
+                # Récupérer les infos de l'utilisateur pour initialiser le profil
+                result = await db.execute(
+                    select(User).where(User.id == application_data.candidate_id)
+                )
+                candidate = result.scalar_one_or_none()
+                
+                if candidate:
+                    # Créer le profil avec les données disponibles (optionnelles)
+                    profile_data = CandidateProfileCreate(
+                        user_id=application_data.candidate_id,
+                        years_experience=getattr(candidate, 'annees_experience', None),
+                        current_position=getattr(candidate, 'poste_actuel', None),
+                        address=getattr(candidate, 'adresse', None)
+                    )
+                    await user_service.create_candidate_profile(
+                        user_id=application_data.candidate_id,
+                        profile_data=profile_data
+                    )
+                    safe_log("info", "✅ Profil candidat créé", 
+                            candidate_id=str(application_data.candidate_id))
+        except Exception as e:
+            # Ne pas bloquer la candidature si le profil candidat échoue
+            safe_log("warning", "⚠️ Erreur création profil candidat (non-bloquant)", 
+                    error=str(e), 
+                    candidate_id=str(application_data.candidate_id))
         
         # 🔷 ÉTAPE 2: Validation et création
         safe_log("debug", "📝 Validation données candidature en cours...")
@@ -445,12 +452,14 @@ async def update_application(
         safe_log("info", "✅ Mise à jour appliquée en mémoire")
         
         # 🔷 ÉTAPE 3: Persistence
+        safe_log("debug", "💾 Flush en base...")
+        await db.flush()
+        await db.refresh(application)
+        safe_log("debug", "✅ Objet flushé et rafraîchi")
+        
         safe_log("debug", "💾 Commit transaction en cours...")
         await db.commit()
         safe_log("info", "✅ Transaction committée avec succès")
-        
-        await db.refresh(application)
-        safe_log("debug", "✅ Objet rafraîchi depuis la BDD")
         
         safe_log("info", "🎉 SUCCÈS mise à jour candidature", 
                  application_id=application_id,
@@ -1160,7 +1169,7 @@ async def export_application_pdf(
 
 
 # ---- Drafts globaux par offre (job_offer_id) ----
-@router.get("/drafts", response_model=dict, summary="RÃ©cupÃ©rer le brouillon par offre", openapi_extra={
+@router.get("/drafts/by-offer", response_model=dict, summary="RÃ©cupÃ©rer le brouillon par offre", openapi_extra={
     "parameters": [
         {"in": "query", "name": "job_offer_id", "required": True, "schema": {"type": "string", "format": "uuid"}}
     ],
@@ -1175,27 +1184,73 @@ async def get_draft_by_job_offer(
     db: AsyncSession = Depends(get_db)
 ):
     try:
+        safe_log("debug", "🔍 GET draft démarré", user_id=str(current_user.id), job_offer_id=job_offer_id)
         service = ApplicationService(db)
         draft = await service.get_draft(user_id=str(current_user.id), job_offer_id=job_offer_id)
+        
         if not draft:
+            safe_log("debug", "✅ Aucun brouillon trouvé", user_id=str(current_user.id), job_offer_id=job_offer_id)
             return {"success": True, "data": None}
-        return {"success": True, "data": draft}
+        
+        safe_log("debug", "📦 Brouillon trouvé, conversion en dict...", user_id=str(current_user.id), job_offer_id=job_offer_id)
+        
+        # Convertir l'objet ORM en dictionnaire de manière sécurisée
+        # Utiliser getattr pour éviter les problèmes avec les colonnes SQLAlchemy
+        try:
+            created_at_val = getattr(draft, 'created_at', None)
+            updated_at_val = getattr(draft, 'updated_at', None)
+            form_data_val = getattr(draft, 'form_data', None)
+            ui_state_val = getattr(draft, 'ui_state', None)
+            
+            draft_data = {
+                "user_id": str(draft.user_id),
+                "job_offer_id": str(draft.job_offer_id),
+                "form_data": form_data_val if form_data_val is not None else {},
+                "ui_state": ui_state_val if ui_state_val is not None else {},
+                "created_at": created_at_val.isoformat() if created_at_val is not None else None,
+                "updated_at": updated_at_val.isoformat() if updated_at_val is not None else None,
+            }
+            
+            safe_log("info", "✅ Brouillon converti avec succès", user_id=str(current_user.id), job_offer_id=job_offer_id)
+            return {"success": True, "data": draft_data}
+        except Exception as convert_error:
+            safe_log("error", "❌ Erreur conversion brouillon", error=str(convert_error), error_type=type(convert_error).__name__)
+            raise
+            
     except ValidationError as e:
+        safe_log("warning", "⚠️ Validation error GET draft", error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
-        raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+    except BusinessLogicError as e:
+        safe_log("error", "❌ Business logic error GET draft", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Erreur métier: {str(e)}")
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        safe_log("error", "❌ Erreur inattendue GET draft", 
+                error=str(e), 
+                error_type=type(e).__name__,
+                trace=error_trace, 
+                user_id=str(current_user.id), 
+                job_offer_id=job_offer_id)
+        raise HTTPException(status_code=500, detail=f"Erreur interne: {type(e).__name__} - {str(e)}")
 
 
-@router.post("/drafts", response_model=dict, summary="CrÃ©er/Maj le brouillon par offre", openapi_extra={
-    "requestBody": {"content": {"application/json": {"example": {
-        "job_offer_id": "00000000-0000-0000-0000-0000000000AA",
-        "form_data": {"step": 1, "values": {"firstname": "Ada"}},
-        "ui_state": {"currentStep": 2}
-    }}}},
-    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Brouillon enregistrÃ©", "data": {}}}}}}
-})
+@router.post(
+    "/drafts/by-offer", 
+    response_model=dict, 
+    status_code=status.HTTP_201_CREATED,  # Standard REST : 201 pour création de ressource
+    summary="Créer/Maj le brouillon par offre", 
+    openapi_extra={
+        "requestBody": {"content": {"application/json": {"example": {
+            "job_offer_id": "00000000-0000-0000-0000-0000000000AA",
+            "form_data": {"step": 1, "values": {"firstname": "Ada"}},
+            "ui_state": {"currentStep": 2}
+        }}}},
+        "responses": {"201": {"content": {"application/json": {"example": {"success": True, "message": "Brouillon enregistré", "data": {}}}}}}
+    }
+)
 async def upsert_draft_by_job_offer(
-    payload: ApplicationDraftCreate,
+    payload: ApplicationDraftCreateRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -1229,6 +1284,12 @@ async def upsert_draft_by_job_offer(
         
         # Sauvegarder le brouillon
         draft = await service.save_draft(data)
+        
+        # Flush pour forcer l'écriture en base et obtenir les valeurs par défaut
+        safe_log("debug", "💾 Flush en base...")
+        await db.flush()
+        await db.refresh(draft)  # Rafraîchir pour obtenir les valeurs par défaut (created_at, updated_at)
+        safe_log("debug", "✅ Brouillon flushé et rafraîchi")
         
         # Commit explicite pour persister les données (principe de transaction explicite)
         await db.commit()
@@ -1266,10 +1327,20 @@ async def upsert_draft_by_job_offer(
         except Exception as e:
             safe_log("warning", "⚠️ Erreur notification brouillon", error=str(e))
         
+        # Convertir l'objet ORM en dictionnaire pour la réponse
+        draft_data = {
+            "user_id": str(draft.user_id),
+            "job_offer_id": str(draft.job_offer_id),
+            "form_data": draft.form_data,
+            "ui_state": draft.ui_state,
+            "created_at": draft.created_at.isoformat() if draft.created_at is not None else None,
+            "updated_at": draft.updated_at.isoformat() if draft.updated_at is not None else None,
+        }
+        
         return {
             "success": True, 
             "message": "Brouillon enregistré avec succès", 
-            "data": draft
+            "data": draft_data
         }
         
     except ValidationError as e:
@@ -1308,7 +1379,7 @@ async def upsert_draft_by_job_offer(
         )
 
 
-@router.delete("/drafts", status_code=status.HTTP_204_NO_CONTENT, summary="Supprimer le brouillon par offre", openapi_extra={
+@router.delete("/drafts/by-offer", status_code=status.HTTP_204_NO_CONTENT, summary="Supprimer le brouillon par offre", openapi_extra={
     "parameters": [
         {"in": "query", "name": "job_offer_id", "required": True, "schema": {"type": "string", "format": "uuid"}}
     ],

@@ -7,7 +7,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 import uuid
 
-from app.models.base import BaseModel
+from app.models.base import BaseModel, Base
 
 class Application(BaseModel):
     __tablename__ = "applications"  # type: ignore[assignment]
@@ -62,13 +62,15 @@ class ApplicationDocument(BaseModel):
     # Relations
     application = relationship("Application", back_populates="documents")
 
-class ApplicationDraft(BaseModel):
+class ApplicationDraft(Base):
+    """Modèle pour les brouillons de candidatures - utilise une clé primaire composite"""
     __tablename__ = "application_drafts"  # type: ignore[assignment]
 
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     job_offer_id = Column(UUID(as_uuid=True), ForeignKey("job_offers.id", ondelete="CASCADE"), primary_key=True)
     form_data = Column(JSONB)  # Brouillon de formulaire stocké en JSONB
     ui_state = Column(JSONB)   # État de l'interface utilisateur stocké en JSONB
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)  # type: ignore[assignment]
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)  # type: ignore[assignment]
 
     # Relations

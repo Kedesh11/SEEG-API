@@ -29,7 +29,7 @@ def safe_log(level: str, message: str, **kwargs):
         print(f"{level.upper()}: {message} - {kwargs}")
 
 
-@router.post("/send", response_model=EmailResponse, status_code=status.HTTP_200_OK)
+@router.post("/send", response_model=EmailResponse, status_code=status.HTTP_201_CREATED)  # Standard REST : 201 pour création de ressource
 async def send_email(
     email_data: EmailSend,
     current_user: User = Depends(get_current_user),
@@ -58,10 +58,11 @@ async def send_email(
         )
         
         if success:
-            safe_log("info", "Email envoyÃ© avec succÃ¨s", to=email_data.to, subject=email_data.subject)
+            safe_log("info", "Email envoyé avec succès", to=email_data.to, subject=email_data.subject)
             return EmailResponse(
                 success=True,
-                message="Email envoyÃ© avec succÃ¨s"
+                message="Email envoyé avec succès",
+                message_id=None  # Azure Communication Services ne retourne pas de message_id
             )
         else:
             raise HTTPException(
@@ -83,7 +84,7 @@ async def send_email(
         )
 
 
-@router.post("/send-interview-email", response_model=EmailResponse, status_code=status.HTTP_200_OK)
+@router.post("/send-interview-email", response_model=EmailResponse, status_code=status.HTTP_201_CREATED)  # Standard REST : 201 pour création de ressource
 async def send_interview_email(
     email_data: InterviewEmailRequest,
     current_user: User = Depends(get_current_user),
@@ -168,7 +169,8 @@ L'Ã©quipe RH - SEEG
             )
             return EmailResponse(
                 success=True,
-                message="Email d'entretien envoyÃ© avec succÃ¨s"
+                message="Email d'entretien envoyé avec succès",
+                message_id=None  # Azure Communication Services ne retourne pas de message_id
             )
         else:
             raise HTTPException(
@@ -217,7 +219,7 @@ async def get_email_logs(
         logs_data = await email_service.get_email_logs(
             skip=skip,
             limit=limit,
-            status=status_filter
+            category=status_filter
         )
         
         # Conversion des donnÃ©es pour le schÃ©ma de rÃ©ponse

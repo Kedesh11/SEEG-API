@@ -10,7 +10,7 @@ from .application import (
     ApplicationBase, ApplicationCreate, ApplicationUpdate, ApplicationResponse, ApplicationListResponse,
     ApplicationDocumentBase, ApplicationDocumentCreate, ApplicationDocumentUpdate, ApplicationDocumentResponse,
     ApplicationDocumentWithData, ApplicationDocumentWithDataResponse, ApplicationDocumentListResponse,
-    ApplicationDraftBase, ApplicationDraftCreate, ApplicationDraftUpdate, ApplicationDraft,
+    ApplicationDraftBase, ApplicationDraftCreate, ApplicationDraftCreateRequest, ApplicationDraftUpdate, ApplicationDraft,
     ApplicationHistoryBase, ApplicationHistoryCreate, ApplicationHistory,
     FileUploadRequest, MultipleFileUploadRequest
 )
@@ -34,7 +34,7 @@ __all__ = [
     "ApplicationBase", "ApplicationCreate", "ApplicationUpdate", "ApplicationResponse", "ApplicationListResponse",
     "ApplicationDocumentBase", "ApplicationDocumentCreate", "ApplicationDocumentUpdate", "ApplicationDocumentResponse",
     "ApplicationDocumentWithData", "ApplicationDocumentWithDataResponse", "ApplicationDocumentListResponse",
-    "ApplicationDraftBase", "ApplicationDraftCreate", "ApplicationDraftUpdate", "ApplicationDraft",
+    "ApplicationDraftBase", "ApplicationDraftCreate", "ApplicationDraftCreateRequest", "ApplicationDraftUpdate", "ApplicationDraft",
     "ApplicationHistoryBase", "ApplicationHistoryCreate", "ApplicationHistory",
     "FileUploadRequest", "MultipleFileUploadRequest",
     

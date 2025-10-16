@@ -115,9 +115,10 @@ async def update_current_user(
                 detail="Utilisateur non trouvÃ©"
             )
         
-        # ✅ COMMIT pour persister les changements
-        await db.commit()
+        # ✅ FLUSH puis COMMIT pour persister les changements
+        await db.flush()
         await db.refresh(updated_user)
+        await db.commit()
         
         # Récupérer le profil candidat si c'est un candidat
         candidate_profile = None
@@ -151,21 +152,55 @@ async def update_current_user(
         )
 
 
-@router.get("/{user_id}", response_model=ResponseSchema[UserResponse], summary="RÃ©cupÃ©rer un utilisateur par ID", openapi_extra={
-    "responses": {"200": {"content": {"application/json": {"example": {"success": True, "message": "Utilisateur rÃ©cupÃ©rÃ© avec succÃ¨s", "data": {"id": "uuid"}}}}}, "404": {"description": "Utilisateur non trouvÃ©"}}
+@router.get("/{user_id}", response_model=ResponseSchema[UserWithProfile], summary="RÃ©cupÃ©rer un utilisateur par ID avec profil complet", openapi_extra={
+    "responses": {
+        "200": {
+            "description": "Informations complètes de l'utilisateur avec profil candidat",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": True,
+                        "message": "Utilisateur récupéré avec succès",
+                        "data": {
+                            "id": "uuid",
+                            "email": "user@example.com",
+                            "first_name": "Jean",
+                            "last_name": "Dupont",
+                            "role": "candidate",
+                            "adresse": "Libreville",
+                            "annees_experience": 5,
+                            "poste_actuel": "Développeur",
+                            "candidate_profile": {
+                                "years_experience": 5,
+                                "skills": ["Python", "React"]
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "403": {"description": "Permission insuffisante"},
+        "404": {"description": "Utilisateur non trouvÃ©"}
+    }
 })
 async def get_user_by_id(
     user_id: UUID,
     current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """RÃ©cupÃ¨re un utilisateur par son ID."""
+    """
+    Récupère un utilisateur par son ID avec toutes ses informations.
+    
+    **Permissions:**
+    - L'utilisateur peut voir son propre profil
+    - Les recruteurs et admins peuvent voir tous les profils
+    """
     try:
-        # VÃ©rifier les permissions
-        if current_user.id != user_id and current_user.role != "admin":
+        # VÃ©rifier les permissions - Recruteur, Admin ou soi-même
+        if current_user.id != user_id and current_user.role not in ["admin", "recruiter"]:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Permission insuffisante"
+                detail="Permission insuffisante. Accessible uniquement à l'utilisateur, aux recruteurs et aux administrateurs."
             )
         
         user_service = UserService(db)
@@ -177,11 +212,24 @@ async def get_user_by_id(
                 detail="Utilisateur non trouvÃ©"
             )
         
-        safe_log("info", "Utilisateur rÃ©cupÃ©rÃ©", target_user_id=str(user_id), requester_id=str(current_user.id))
+        # Récupérer le profil candidat si c'est un candidat
+        candidate_profile = None
+        if user.role == "candidate":  # type: ignore
+            candidate_profile = await user_service.get_candidate_profile(user.id)
+        
+        # Créer la réponse complète avec profil
+        user_dict = UserResponse.from_orm(user).dict()
+        user_dict["candidate_profile"] = CandidateProfileResponse.from_orm(candidate_profile) if candidate_profile else None
+        
+        safe_log("info", "Utilisateur rÃ©cupÃ©rÃ© avec profil", 
+                target_user_id=str(user_id), 
+                requester_id=str(current_user.id),
+                has_profile=candidate_profile is not None)
+        
         return ResponseSchema(
             success=True,
             message="Utilisateur rÃ©cupÃ©rÃ© avec succÃ¨s",
-            data=UserResponse.from_orm(user)
+            data=user_dict
         )
         
     except HTTPException:
@@ -459,13 +507,18 @@ async def update_current_user_profile(
         
         safe_log("debug", "✅ Profil mis à jour en mémoire")
         
-        # 💾 Commit
+        # 💾 Flush puis Commit
+        safe_log("debug", "💾 Flush en base...")
+        await db.flush()
+        safe_log("debug", "✅ Flush réussi")
+        
+        # 🔄 Rafraîchir le profil et l'utilisateur pour avoir toutes les infos à jour
+        await db.refresh(updated_profile)
+        await db.refresh(current_user)
+        
         safe_log("debug", "💾 Commit transaction...")
         await db.commit()
         safe_log("debug", "✅ Commit réussi")
-        
-        # 🔄 Rafraîchir l'utilisateur pour avoir toutes les infos à jour
-        await db.refresh(current_user)
         
         # 📊 LOG: Performance
         duration = time.time() - start_time

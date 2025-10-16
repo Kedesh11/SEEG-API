@@ -259,7 +259,13 @@ class ApplicationDraftBase(BaseModel):
     ui_state: Optional[Dict[str, Any]] = None
 
 
+class ApplicationDraftCreateRequest(ApplicationDraftBase):
+    """Schema pour la requête HTTP - user_id vient du token"""
+    job_offer_id: UUID
+
+
 class ApplicationDraftCreate(ApplicationDraftBase):
+    """Schema interne avec user_id"""
     user_id: UUID
     job_offer_id: UUID
 

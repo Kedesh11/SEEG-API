@@ -311,6 +311,80 @@ MIGRATIONS = [
             CREATE INDEX IF NOT EXISTS idx_users_candidate_status ON users(candidate_status);
             """,
         ]
+    },
+    {
+        "revision": "20251015_application_drafts_pk",
+        "down_revision": "20251015_user_complete_fields",
+        "description": "Refactorisation de application_drafts avec clé primaire composite (user_id, job_offer_id) sans colonne id",
+        "sql_commands": [
+            """
+            -- Étape 1: Vérifier si la table existe et si elle a une colonne id
+            DO $$
+            DECLARE
+                has_id_column BOOLEAN;
+            BEGIN
+                -- Vérifier si la colonne id existe
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns 
+                    WHERE table_name = 'application_drafts' AND column_name = 'id'
+                ) INTO has_id_column;
+                
+                -- Si la table existe avec une colonne id, on doit la recréer
+                IF has_id_column THEN
+                    RAISE NOTICE 'Recréation de la table application_drafts avec clé primaire composite';
+                    
+                    -- Sauvegarder les données existantes (si nécessaire)
+                    -- Note: On ne sauvegarde pas car ce sont des brouillons temporaires
+                    
+                    -- Supprimer l'ancienne table
+                    DROP TABLE IF EXISTS application_drafts CASCADE;
+                    
+                    -- Créer la nouvelle table avec clé primaire composite
+                    CREATE TABLE application_drafts (
+                        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        job_offer_id UUID NOT NULL REFERENCES job_offers(id) ON DELETE CASCADE,
+                        form_data JSONB,
+                        ui_state JSONB,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (user_id, job_offer_id)
+                    );
+                    
+                    -- Ajouter des commentaires pour la documentation
+                    COMMENT ON TABLE application_drafts IS 'Brouillons de candidatures avec clé primaire composite';
+                    COMMENT ON COLUMN application_drafts.user_id IS 'Identifiant de l''utilisateur (partie de la clé primaire)';
+                    COMMENT ON COLUMN application_drafts.job_offer_id IS 'Identifiant de l''offre d''emploi (partie de la clé primaire)';
+                    COMMENT ON COLUMN application_drafts.form_data IS 'Données du formulaire au format JSONB';
+                    COMMENT ON COLUMN application_drafts.ui_state IS 'État de l''interface utilisateur au format JSONB';
+                    
+                    -- Créer des index pour améliorer les performances
+                    CREATE INDEX IF NOT EXISTS idx_application_drafts_user_id ON application_drafts(user_id);
+                    CREATE INDEX IF NOT EXISTS idx_application_drafts_job_offer_id ON application_drafts(job_offer_id);
+                    CREATE INDEX IF NOT EXISTS idx_application_drafts_updated_at ON application_drafts(updated_at);
+                    
+                    RAISE NOTICE 'Table application_drafts recréée avec succès';
+                ELSE
+                    RAISE NOTICE 'Table application_drafts déjà conforme ou n''existe pas';
+                    
+                    -- Créer la table si elle n'existe pas du tout
+                    CREATE TABLE IF NOT EXISTS application_drafts (
+                        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                        job_offer_id UUID NOT NULL REFERENCES job_offers(id) ON DELETE CASCADE,
+                        form_data JSONB,
+                        ui_state JSONB,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (user_id, job_offer_id)
+                    );
+                    
+                    -- Index
+                    CREATE INDEX IF NOT EXISTS idx_application_drafts_user_id ON application_drafts(user_id);
+                    CREATE INDEX IF NOT EXISTS idx_application_drafts_job_offer_id ON application_drafts(job_offer_id);
+                    CREATE INDEX IF NOT EXISTS idx_application_drafts_updated_at ON application_drafts(updated_at);
+                END IF;
+            END $$;
+            """
+        ]
     }
 ]
 

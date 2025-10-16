@@ -340,28 +340,34 @@ async def login(
         )
 
 
-@router.post("/signup", response_model=UserWithProfile, summary="Inscription candidat", openapi_extra={
-    "requestBody": {"content": {"application/json": {"example": {
-        "email": "jean.dupont@seeg-gabon.com",
-        "password": "Password#2025!Secure",
-        "first_name": "Jean",
-        "last_name": "Dupont",
-        "phone": "+24106223344",
-        "date_of_birth": "1990-05-15",
-        "sexe": "M",
-        "candidate_status": "interne",
-        "matricule": 123456,
-        "no_seeg_email": False,
-        "adresse": "123 Rue de la Liberté, Libreville",
-        "poste_actuel": "Technicien Réseau",
-        "annees_experience": 5
-    }}}},
-    "responses": {
-        "200": {"description": "Utilisateur créé", "content": {"application/json": {"example": {"id": "uuid", "email": "jean.dupont@seeg-gabon.com", "role": "candidate", "statut": "actif"}}}},
-        "400": {"description": "Données invalides"},
-        "429": {"description": "Trop de tentatives d'inscription"}
+@router.post(
+    "/signup", 
+    response_model=UserWithProfile, 
+    status_code=status.HTTP_201_CREATED,  # Standard REST : 201 pour création de ressource
+    summary="Inscription candidat", 
+    openapi_extra={
+        "requestBody": {"content": {"application/json": {"example": {
+            "email": "jean.dupont@seeg-gabon.com",
+            "password": "Password#2025!Secure",
+            "first_name": "Jean",
+            "last_name": "Dupont",
+            "phone": "+24106223344",
+            "date_of_birth": "1990-05-15",
+            "sexe": "M",
+            "candidate_status": "interne",
+            "matricule": 123456,
+            "no_seeg_email": False,
+            "adresse": "123 Rue de la Liberté, Libreville",
+            "poste_actuel": "Technicien Réseau",
+            "annees_experience": 5
+        }}}},
+        "responses": {
+            "201": {"description": "Utilisateur créé avec succès", "content": {"application/json": {"example": {"id": "uuid", "email": "jean.dupont@seeg-gabon.com", "role": "candidate", "statut": "actif"}}}},
+            "400": {"description": "Données invalides"},
+            "429": {"description": "Trop de tentatives d'inscription"}
+        }
     }
-})
+)
 # @limiter.limit(SIGNUP_LIMITS)  # ⚠️ TEMPORAIREMENT DÉSACTIVÉ - Problème avec slowapi
 async def signup_candidate(
     request: Request,

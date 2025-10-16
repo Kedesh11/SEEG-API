@@ -73,6 +73,7 @@ async def get_job_offers(
 @router.post(
     "/",
     response_model=JobOfferResponse,
+    status_code=status.HTTP_201_CREATED,  # Standard REST : 201 pour création de ressource
     summary="Créer une offre d'emploi",
     description="Créer une nouvelle offre d'emploi (interne ou externe) avec questions MTP optionnelles"
 )
