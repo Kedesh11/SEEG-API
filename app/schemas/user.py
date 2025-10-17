@@ -129,9 +129,9 @@ class UserResponse(UserBase):
     updated_at: datetime = Field(..., description="Date de dernière modification")
     last_login: Optional[datetime] = Field(None, description="Date de dernière connexion")
     
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
             "example": {
                 "id": "550e8400-e29b-41d4-a716-446655440000",
                 "email": "jean.dupont@seeg-gabon.com",
@@ -156,6 +156,7 @@ class UserResponse(UserBase):
                 "last_login": "2024-10-17T09:15:00Z"
             }
         }
+    }
 
 class CandidateProfileBase(BaseModel):
     """
@@ -250,9 +251,9 @@ class CandidateProfileResponse(CandidateProfileBase):
                 return []
         return v
     
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
             "example": {
                 "id": "660e8400-e29b-41d4-a716-446655440000",
                 "user_id": "550e8400-e29b-41d4-a716-446655440000",
@@ -274,6 +275,7 @@ class CandidateProfileResponse(CandidateProfileBase):
                 "updated_at": "2024-10-17T14:30:00Z"
             }
         }
+    }
 
 
 class UserWithProfile(UserResponse):

@@ -75,8 +75,7 @@ class ApplicationDetailed(BaseModel):
     candidate: Optional[CandidateInfo] = None
     job_offer: Optional[JobOfferInfo] = None
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ApplicationDetailedResponse(BaseModel):

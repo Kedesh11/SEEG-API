@@ -161,7 +161,7 @@ class UserService:
                 raise ValidationError("Un profil candidat existe déjà pour cet utilisateur")
             
             # Créer le profil
-            profile_dict = profile_data.dict()
+            profile_dict = profile_data.model_dump()
             profile_dict['user_id'] = user_id
             profile = CandidateProfile(**profile_dict)
             

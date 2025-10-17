@@ -228,8 +228,7 @@ class ApplicationInDBBase(ApplicationBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class Application(ApplicationInDBBase):
@@ -355,9 +354,9 @@ class ApplicationDocumentInDBBase(BaseModel):
     file_type: str
     uploaded_at: datetime
 
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
             "example": {
                 "id": "00000000-0000-0000-0000-0000000000DD",
                 "application_id": "00000000-0000-0000-0000-0000000000AA",
@@ -368,6 +367,7 @@ class ApplicationDocumentInDBBase(BaseModel):
                 "uploaded_at": "2025-09-22T10:15:00Z"
             }
         }
+    }
 
 
 class ApplicationDocument(ApplicationDocumentInDBBase):
@@ -410,8 +410,7 @@ class ApplicationDraftInDBBase(ApplicationDraftBase):
     job_offer_id: UUID
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ApplicationDraft(ApplicationDraftInDBBase):
@@ -440,8 +439,7 @@ class ApplicationHistoryInDBBase(ApplicationHistoryBase):
     changed_by: Optional[UUID] = None
     changed_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class ApplicationHistory(ApplicationHistoryInDBBase):

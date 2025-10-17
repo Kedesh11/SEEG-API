@@ -183,7 +183,7 @@ async def _login_core(email: str, password: str, db: AsyncSession) -> TokenRespo
         # Ajouter le profil candidat s'il existe
         if candidate_profile:
             from app.schemas.user import CandidateProfileResponse
-            user_data["candidate_profile"] = CandidateProfileResponse.from_orm(candidate_profile).dict()
+            user_data["candidate_profile"] = CandidateProfileResponse.model_validate(candidate_profile).model_dump()
         
         safe_log(
             "info",
@@ -533,7 +533,7 @@ async def signup_candidate(
         # Étape 6: Créer la réponse complète avec profil candidat (null pour le moment)
         try:
             safe_log("debug", "🔄 Création UserWithProfile...")
-            user_dict = UserResponse.from_orm(user).dict()
+            user_dict = UserResponse.model_validate(user).model_dump()
             user_dict["candidate_profile"] = None  # Profil créé lors de la première candidature
             safe_log("debug", "✅ UserWithProfile créé")
         except PydanticValidationError as e:
@@ -698,7 +698,7 @@ async def create_user(
             role=user.role,
             created_by=str(current_admin.id),
         )
-        return UserResponse.from_orm(user)
+        return UserResponse.model_validate(user)
         
     except HTTPException:
         raise
@@ -741,7 +741,7 @@ async def create_first_admin(
         await db.refresh(admin)
         
         safe_log("info", "Premier administrateur créé", user_id=str(admin.id), email=admin.email)
-        return UserResponse.from_orm(admin)
+        return UserResponse.model_validate(admin)
         
     except HTTPException:
         # Erreur métier, rollback automatique par get_db()
@@ -760,7 +760,7 @@ async def get_current_user_profile(
 ):
     """Retourne le profil de l'utilisateur connecté avec ses informations complètes"""
     safe_log("debug", "Profil utilisateur demandé", user_id=str(current_user.id), email=current_user.email)
-    return UserResponse.from_orm(current_user)
+    return UserResponse.model_validate(current_user)
 
 
 @router.post("/refresh", response_model=TokenResponse, summary="Rafraîchir le token d'accès", openapi_extra={

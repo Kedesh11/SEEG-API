@@ -103,10 +103,10 @@ class AccessRequestWithUser(AccessRequestBase):
     user_adresse: Optional[str] = Field(None, alias="adresse")
     user_statut: Optional[str] = Field(None, alias="user_statut")
     
-    class Config:
-        from_attributes = True
-        populate_by_name = True
-        json_schema_extra = {
+    model_config = {
+        "from_attributes": True,
+        "populate_by_name": True,
+        "json_schema_extra": {
             "example": {
                 "id": "00000000-0000-0000-0000-000000000001",
                 "user_id": "00000000-0000-0000-0000-000000000002",
@@ -128,6 +128,7 @@ class AccessRequestWithUser(AccessRequestBase):
                 "user_statut": "en_attente"
             }
         }
+    }
 
 
 class AccessRequestResponse(BaseModel):

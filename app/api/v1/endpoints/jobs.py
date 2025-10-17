@@ -3,15 +3,17 @@ Endpoints de gestion des offres d'emploi
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from typing import List, Optional
 from uuid import UUID
 import structlog
 
 from app.db.database import get_db
-from app.schemas.job import JobOfferResponse, JobOfferCreate, JobOfferUpdate
+from app.schemas.job import JobOfferResponse, JobOfferCreate, JobOfferUpdate, JobOfferPublicResponse
 from app.services.job import JobOfferService
 from app.core.dependencies import get_current_active_user, get_current_recruiter_user
 from app.models.user import User
+from app.models.job_offer import JobOffer
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError
 from app.core.config.config import settings
 
@@ -29,24 +31,21 @@ def safe_log(level: str, message: str, **kwargs):
 
 @router.get(
     "/",
-    response_model=List[JobOfferResponse],
+    response_model=List[JobOfferPublicResponse],
     summary="Liste des offres d'emploi",
-    description="Récupérer toutes les offres avec leurs questions MTP et filtrage intelligent"
+    description="Récupérer toutes les offres avec filtrage intelligent"
 )
 async def get_job_offers(
     skip: int = Query(0, ge=0, description="Nombre d'elements a ignorer"),
     limit: int = Query(100, ge=1, le=1000, description="Nombre d'elements a retourner"),
     status_filter: Optional[str] = Query(None, description="Filtrer par statut"),
+    location: Optional[str] = Query(None, description="Filtrer par localisation"),
+    contract_type: Optional[str] = Query(None, description="Filtrer par type de contrat"),
     current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
     """
     Récupérer la liste des offres d'emploi avec FILTRAGE AUTOMATIQUE.
-    
-    **Données retournées** :
-    - Toutes les informations des offres (titre, description, localisation, etc.)
-    - Les 3 questions MTP pour chaque offre (question_metier, question_talent, question_paradigme)
-    - Les métadonnées (dates, statut, etc.)
     
     **Filtrage intelligent selon le type de candidat** :
     - **Candidat INTERNE** (employé SEEG avec matricule) : Voit TOUTES les offres
@@ -56,13 +55,43 @@ async def get_job_offers(
     **Pagination** : Utilisez `skip` et `limit` pour paginer les résultats
     """
     try:
-        job_service = JobOfferService(db)
-        job_offers = await job_service.get_job_offers(skip=skip, limit=limit, status=status_filter, current_user=current_user)
+        # Requête de base : offres actives
+        query = select(JobOffer).where(JobOffer.status == "active")
+        
+        # Filtrage selon le type d'utilisateur
+        if current_user.role in ["candidate"]:
+            # Candidat externe : uniquement offres "tous" et "externe"
+            if current_user.is_internal_candidate is False:
+                query = query.where(JobOffer.offer_status.in_(["tous", "externe"]))
+            # Candidat interne : toutes les offres
+        # Recruteur/Admin : toutes les offres
+        
+        # Filtres optionnels
+        if location:
+            query = query.where(JobOffer.location.ilike(f"%{location}%"))
+        
+        if contract_type:
+            query = query.where(JobOffer.contract_type == contract_type)
+        
+        if status_filter:
+            query = query.where(JobOffer.status == status_filter)
+        
+        # Pagination
+        query = query.offset(skip).limit(min(limit, 1000))
+        
+        # Tri par date de création (plus récentes en premier)
+        query = query.order_by(JobOffer.created_at.desc())
+        
+        # Exécution
+        result = await db.execute(query)
+        jobs = result.scalars().all()
+        
         safe_log("info", "Offres d'emploi recuperees", 
-                count=len(job_offers),
+                count=len(jobs),
                 user_type="interne" if bool(current_user.is_internal_candidate) else "externe",
                 role=str(current_user.role))
-        return [JobOfferResponse.from_orm(job) for job in job_offers]
+        
+        return [JobOfferPublicResponse.model_validate(job) for job in jobs]
     except Exception as e:
         safe_log("error", "Erreur recuperation offres d'emploi", error=str(e))
         raise HTTPException(
@@ -129,7 +158,7 @@ async def create_job_offer(
                 title=job_offer.title,
                 department=job_offer.department,
                 offer_status=job_offer.offer_status)
-        return JobOfferResponse.from_orm(job_offer)
+        return JobOfferResponse.model_validate(job_offer)
         
     except ValidationError as e:
         error_msg = str(e)
@@ -198,7 +227,7 @@ async def get_job_offer(
                 detail="Offre d'emploi non trouvée"
             )
         
-        return JobOfferResponse.from_orm(job_offer)
+        return JobOfferResponse.model_validate(job_offer)
     except HTTPException:
         raise
     except Exception as e:
@@ -286,7 +315,7 @@ async def update_job_offer(
                 job_id=str(job_id), 
                 recruiter_id=str(current_user.id),
                 fields_updated=list(update_fields.keys()))
-        return JobOfferResponse.from_orm(updated_job)
+        return JobOfferResponse.model_validate(updated_job)
     except HTTPException:
         # Relancer les HTTPExceptions (déjà loguées)
         raise
@@ -406,7 +435,7 @@ async def get_job_offer_applications(
         # Type assertion pour satisfaire le linter
         applications_count = len(getattr(job_with_applications, 'applications', []))
         safe_log("info", "Candidatures récupérées pour offre", job_id=str(job_id), count=applications_count)
-        return JobOfferResponse.from_orm(job_with_applications)
+        return JobOfferResponse.model_validate(job_with_applications)
         
     except HTTPException:
         raise
@@ -436,7 +465,7 @@ async def get_my_job_offers(
         # Filtrer pour ne garder que les offres du recruteur
         job_offers = [job for job in all_jobs if str(job.recruiter_id) == str(current_user.id)]
         safe_log("info", "Mes offres d'emploi récupérées", recruiter_id=str(current_user.id), count=len(job_offers))
-        return [JobOfferResponse.from_orm(job) for job in job_offers]
+        return [JobOfferResponse.model_validate(job) for job in job_offers]
     except Exception as e:
         safe_log("error", "Erreur récupération mes offres d'emploi", error=str(e), recruiter_id=str(current_user.id))
         raise HTTPException(

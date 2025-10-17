@@ -21,8 +21,7 @@ class CandidateDocumentDetail(BaseModel):
     file_size: Optional[int] = Field(None, description="Taille du fichier en octets")
     uploaded_at: datetime = Field(description="Date de téléversement")
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class CandidateProfileDetail(BaseModel):
@@ -51,8 +50,7 @@ class CandidateProfileDetail(BaseModel):
         description="Liste des documents téléversés par le candidat"
     )
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # ============================================================================
@@ -74,8 +72,7 @@ class MTPQuestionsDetail(BaseModel):
         description="Questions paradigme (P)"
     )
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class JobOfferDetail(BaseModel):
@@ -108,8 +105,7 @@ class JobOfferDetail(BaseModel):
     updated_at: datetime
     deadline: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # ============================================================================
@@ -131,8 +127,7 @@ class MTPAnswersDetail(BaseModel):
         description="Réponses aux questions paradigme"
     )
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 # ============================================================================
@@ -196,9 +191,9 @@ class ApplicationCompleteDetail(BaseModel):
         description="Réponses MTP du candidat aux questions de l'offre"
     )
     
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
             "example": {
                 "application_id": "550e8400-e29b-41d4-a716-446655440000",
                 "status": "pending",
@@ -264,6 +259,7 @@ class ApplicationCompleteDetail(BaseModel):
                 }
             }
         }
+    }
 
 
 class ApplicationCompleteDetailResponse(BaseModel):

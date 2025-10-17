@@ -359,9 +359,9 @@ class JobOfferResponse(JobOfferBase):
     created_at: datetime = Field(..., description="Date de création de l'offre")
     updated_at: datetime = Field(..., description="Date de dernière modification")
     
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
             "example": {
                 "id": "1b0f63c6-db77-4ed7-a424-aa2342a4fc43",
                 "recruiter_id": "770e8400-e29b-41d4-a716-446655440000",
@@ -403,6 +403,7 @@ class JobOfferResponse(JobOfferBase):
                 "updated_at": "2024-10-17T15:30:00Z"
             }
         }
+    }
 
 
 # ============================================================================
@@ -432,8 +433,7 @@ class JobOfferPublicResponse(BaseModel):
     job_grade: Optional[str] = None
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 
 class JobOfferDetailPublicResponse(BaseModel):
@@ -468,5 +468,4 @@ class JobOfferDetailPublicResponse(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}

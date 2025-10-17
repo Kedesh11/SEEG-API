@@ -135,9 +135,9 @@ class InterviewSlotResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
-        json_schema_extra = {
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
             "example": {
                 "id": "00000000-0000-0000-0000-0000000000SS",
                 "date": "2025-10-15",
@@ -153,6 +153,7 @@ class InterviewSlotResponse(BaseModel):
                 "updated_at": "2025-10-02T10:00:00Z"
             }
         }
+    }
 
 class InterviewSlotListResponse(BaseModel):
     data: List[InterviewSlotResponse]
