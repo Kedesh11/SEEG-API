@@ -1,10 +1,20 @@
 """
 Configuration de l'application One HCM SEEG
 ============================================================================
-Architecture: Clean Configuration avec principes SOLID
+Architecture: Clean Configuration avec principes SOLID + 12-Factor App
 - Single Responsibility: Chaque setting a un rôle précis
 - Open/Closed: Extensible via variables d'environnement
 - Dependency Inversion: Configuration injectée, pas hardcodée
+- Environment Parity: Même code, différents environnements
+============================================================================
+
+Hiérarchie de priorité (du plus au moins prioritaire):
+1. Variables d'environnement système (ex: export DATABASE_URL=...)
+2. Fichiers .env spécifiques (.env.production, .env.local)
+3. Fichier .env par défaut
+4. Valeurs par défaut dans le code
+
+Cette hiérarchie respecte le principe des 12-Factor Apps.
 ============================================================================
 """
 from typing import List, Optional, Union
@@ -19,15 +29,24 @@ def detect_environment() -> str:
     Détecte automatiquement l'environnement d'exécution.
     
     Priorité de détection:
-    1. Variable WEBSITE_SITE_NAME (Azure App Service)
-    2. Variable ENVIRONMENT explicite
+    1. Variable ENVIRONMENT explicite (la plus haute priorité)
+    2. Variable WEBSITE_SITE_NAME (Azure App Service)
     3. Défaut: development
     
     Returns:
         'production' si Azure ou ENVIRONMENT=production
         'development' sinon
     """
-    # Détection Azure App Service
+    # 1. Variable explicite (priorité maximale)
+    env = os.getenv('ENVIRONMENT', '').lower()
+    if env in ['production', 'prod']:
+        print(f"[INFO] Detection: ENVIRONMENT={env} (explicite)")
+        return 'production'
+    elif env == 'development' or env == 'dev':
+        print(f"[INFO] Detection: ENVIRONMENT={env} (explicite)")
+        return 'development'
+    
+    # 2. Détection Azure App Service
     website_name = os.getenv('WEBSITE_SITE_NAME', '')
     website_instance = os.getenv('WEBSITE_INSTANCE_ID', '')
     
@@ -35,52 +54,65 @@ def detect_environment() -> str:
         print(f"[INFO] Detection: Azure App Service ({website_name})")
         return 'production'
     
-    # Détection variable explicite
-    env = os.getenv('ENVIRONMENT', '').lower()
-    if env in ['production', 'prod']:
-        print(f"[INFO] Detection: ENVIRONMENT={env}")
-        return 'production'
-    
-    # Défaut: développement
+    # 3. Défaut: développement
     print(f"[INFO] Detection: Developpement LOCAL")
     return 'development'
 
 
-def get_env_file() -> str:
+def get_env_files() -> tuple[Optional[str], Optional[str]]:
     """
-    Retourne le fichier .env approprié selon l'environnement.
+    Retourne les fichiers .env à charger selon l'environnement.
+    
+    Pydantic Settings charge les fichiers dans l'ordre : le dernier a priorité.
+    Les variables d'environnement système ont TOUJOURS priorité sur les fichiers.
     
     Returns:
-        Chemin vers .env.production en prod, .env.local en dev, sinon .env
+        Tuple (fichier_base, fichier_specifique)
+        - fichier_base: .env (toujours)
+        - fichier_specifique: .env.production ou .env.local (selon environnement)
     """
     env = detect_environment()
+    env_file_base = '.env' if os.path.exists('.env') else None
+    env_file_specific = None
     
     if env == 'production':
         if os.path.exists('.env.production'):
-            print(f"[INFO] Chargement: .env.production")
-            return '.env.production'
+            env_file_specific = '.env.production'
+            print(f"[INFO] Chargement: .env + .env.production")
+        else:
+            print(f"[INFO] Chargement: .env (defaut)")
     else:
         if os.path.exists('.env.local'):
-            print(f"[INFO] Chargement: .env.local")
-            return '.env.local'
+            env_file_specific = '.env.local'
+            print(f"[INFO] Chargement: .env + .env.local")
+        else:
+            print(f"[INFO] Chargement: .env (defaut)")
     
-    print(f"[INFO] Chargement: .env (defaut)")
-    return '.env'
+    return (env_file_base, env_file_specific)
 
 
 class Settings(BaseSettings):
     """
     Configuration centralisée de l'application.
-    Suit le principe de Separation of Concerns.
+    Suit le principe de Separation of Concerns et 12-Factor App.
+    
+    ORDRE DE PRIORITÉ (du plus au moins prioritaire):
+    1. Variables d'environnement système
+    2. Fichier .env.{environment} (.env.production ou .env.local)
+    3. Fichier .env
+    4. Valeurs par défaut ci-dessous
     """
     
     # Configuration Pydantic v2
+    # Note: env_file charge plusieurs fichiers, le dernier écrase le premier
+    # MAIS les variables d'environnement système ont toujours priorité
     model_config = SettingsConfigDict(
-        env_file=get_env_file(),
+        # Ne pas spécifier env_file ici, on le gère manuellement via env_file dans __init__
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
-        validate_default=True
+        validate_default=True,
+        # env_nested_delimiter="__",  # Pour support de variables imbriquées
     )
     
     # ========================================================================
@@ -242,6 +274,22 @@ class Settings(BaseSettings):
     WEBSITES_PORT: int = Field(default=8000, ge=1, le=65535)
     
     # ========================================================================
+    # SKIP_MIGRATIONS - Pour déploiements séparés
+    # ========================================================================
+    
+    SKIP_MIGRATIONS: bool = Field(
+        default=True,
+        description="Si True, ne pas exécuter les migrations au démarrage"
+    )
+    
+    # ========================================================================
+    # FEATURE FLAGS
+    # ========================================================================
+    
+    RATE_LIMIT_ENABLED: bool = Field(default=False)
+    CREATE_INITIAL_USERS: bool = Field(default=False)
+    
+    # ========================================================================
     # VALIDATORS - Validation stricte pour production
     # ========================================================================
     
@@ -312,10 +360,45 @@ class Settings(BaseSettings):
 
 
 # ============================================================================
+# FACTORY FUNCTION - Création avec support multi-fichiers
+# ============================================================================
+
+def create_settings() -> Settings:
+    """
+    Factory pour créer Settings avec le bon chargement de fichiers .env.
+    
+    Charge les fichiers dans l'ordre suivant:
+    1. .env (base, valeurs communes)
+    2. .env.{environment} (.env.production ou .env.local, spécifique)
+    3. Variables d'environnement système (priorité maximale, automatique)
+    
+    Returns:
+        Instance Settings configurée
+    """
+    env_file_base, env_file_specific = get_env_files()
+    
+    # Construire la liste des fichiers à charger
+    env_files = []
+    if env_file_base:
+        env_files.append(env_file_base)
+    if env_file_specific:
+        env_files.append(env_file_specific)
+    
+    # Créer la configuration avec les bons fichiers
+    # Pydantic Settings charge dans l'ordre et les variables système ont priorité
+    if env_files:
+        # Pydantic v2 utilise model_config mais on peut aussi passer à __init__
+        # Pour avoir le contrôle, on met à jour le model_config dynamiquement
+        Settings.model_config['env_file'] = tuple(env_files)
+    
+    return Settings()
+
+
+# ============================================================================
 # INSTANCE GLOBALE - Singleton Pattern
 # ============================================================================
 
-settings = Settings()
+settings = create_settings()
 
 # Afficher un résumé au démarrage
 print(f"[INFO] Configuration chargee: {settings.ENVIRONMENT}")
@@ -323,3 +406,4 @@ print(f"   - App: {settings.APP_NAME} v{settings.APP_VERSION}")
 print(f"   - Debug: {settings.DEBUG}")
 print(f"   - Database: {settings.DATABASE_URL[:50]}...")
 print(f"   - CORS Origins: {len(settings.ALLOWED_ORIGINS) if isinstance(settings.ALLOWED_ORIGINS, list) else settings.ALLOWED_ORIGINS}")
+print(f"[INFO] Variables système ont priorite sur fichiers .env")

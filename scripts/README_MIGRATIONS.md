@@ -173,4 +173,27 @@ python scripts/migrate_database_local.py --action status --verbose
 psql -U postgres -d seeg_db -c "SELECT * FROM migration_history ORDER BY applied_at DESC LIMIT 10;"
 ```
 
+# Configuration
+$env:DATABASE_URL="postgresql+asyncpg://..."  # Variable temporaire
+python -c "import secrets; print(secrets.token_urlsafe(48))"  # Générer SECRET_KEY
 
+# Migrations locales
+alembic upgrade head
+alembic current
+alembic history
+
+# Migrations Azure
+$env:DATABASE_URL="postgresql+asyncpg://...azure..."
+alembic upgrade head
+
+# Via script
+.\scripts\run-migrations.ps1 -Action upgrade
+
+# Résolution problèmes
+alembic heads  # Voir les têtes
+alembic merge heads  # Fusionner
+alembic stamp <revision>  # Forcer révision
+
+# Déploiement
+.\scripts\deploy-api-v2.ps1
+.\scripts\run-migrations.ps1

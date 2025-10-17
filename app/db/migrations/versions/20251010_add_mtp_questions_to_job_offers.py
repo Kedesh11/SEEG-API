@@ -1,6 +1,6 @@
 """Add MTP questions to job_offers table
 
-Revision ID: 20251010_add_mtp_questions_to_job_offers
+Revision ID: 20251010_add_mtp_questions
 Revises: add_perf_idx_001
 Create Date: 2025-10-10 14:00:00.000000
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = '20251010_add_mtp_questions_to_job_offers'
+revision = '20251010_add_mtp_questions'
 down_revision = 'add_perf_idx_001'
 branch_labels = None
 depends_on = None

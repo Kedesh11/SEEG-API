@@ -29,6 +29,7 @@ from app.schemas.application import (
 from app.schemas.application_detail import ApplicationCompleteDetailResponse
 from app.core.dependencies import get_current_user
 from app.models.user import User
+from app.models.application import Application as ApplicationModel, ApplicationDocument as ApplicationDocumentModel
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError, FileError, DatabaseError
 # from app.core.rate_limit import limiter, UPLOAD_LIMITS  # ⚠️ Désactivé temporairement
 
@@ -278,8 +279,8 @@ async def create_application(
         if application_data.documents:
             # Récupérer le nombre réel de documents créés
             documents_result = await db.execute(
-                select(ApplicationDocument).where(
-                    ApplicationDocument.application_id == application.id  # type: ignore
+                select(ApplicationDocumentModel).where(
+                    ApplicationDocumentModel.application_id == application.id  # type: ignore
                 )
             )
             documents_count = len(documents_result.scalars().all())

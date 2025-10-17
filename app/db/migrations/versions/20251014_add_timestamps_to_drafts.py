@@ -1,6 +1,6 @@
 """add timestamps to application_drafts
 
-Revision ID: 20251014_add_timestamps_to_drafts
+Revision ID: 20251014_timestamps_drafts
 Revises: 
 Create Date: 2025-10-14 17:30:00.000000
 
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision = '20251014_add_timestamps_to_drafts'
+revision = '20251014_timestamps_drafts'
 down_revision = None  # Mettre l'ID de la dernière migration ici
 branch_labels = None
 depends_on = None
