@@ -70,8 +70,8 @@ async def get_current_user_info(
             candidate_profile = await user_service.get_candidate_profile(current_user.id)
         
         # Créer la réponse avec profil
-        user_dict = UserResponse.from_orm(current_user).dict()
-        user_dict["candidate_profile"] = CandidateProfileResponse.from_orm(candidate_profile) if candidate_profile else None
+        user_dict = UserResponse.model_validate(current_user).model_dump()
+        user_dict["candidate_profile"] = CandidateProfileResponse.model_validate(candidate_profile).model_dump() if candidate_profile else None
         
         safe_log("info", "Informations utilisateur rÃ©cupÃ©rÃ©es", 
                 user_id=str(current_user.id),
@@ -126,8 +126,8 @@ async def update_current_user(
             candidate_profile = await user_service.get_candidate_profile(updated_user.id)
         
         # Créer la réponse complète avec profil
-        user_dict = UserResponse.from_orm(updated_user).dict()
-        user_dict["candidate_profile"] = CandidateProfileResponse.from_orm(candidate_profile) if candidate_profile else None
+        user_dict = UserResponse.model_validate(updated_user).model_dump()
+        user_dict["candidate_profile"] = CandidateProfileResponse.model_validate(candidate_profile).model_dump() if candidate_profile else None
         
         safe_log("info", "Profil utilisateur mis Ã  jour", 
                 user_id=str(current_user.id),
@@ -218,8 +218,8 @@ async def get_user_by_id(
             candidate_profile = await user_service.get_candidate_profile(user.id)
         
         # Créer la réponse complète avec profil
-        user_dict = UserResponse.from_orm(user).dict()
-        user_dict["candidate_profile"] = CandidateProfileResponse.from_orm(candidate_profile) if candidate_profile else None
+        user_dict = UserResponse.model_validate(user).model_dump()
+        user_dict["candidate_profile"] = CandidateProfileResponse.model_validate(candidate_profile).model_dump() if candidate_profile else None
         
         safe_log("info", "Utilisateur rÃ©cupÃ©rÃ© avec profil", 
                 target_user_id=str(user_id), 
@@ -315,7 +315,7 @@ async def get_users(
             sort=sort,
             order=order
         )
-        user_responses = [UserResponse.from_orm(user) for user in users]
+        user_responses = [UserResponse.model_validate(user) for user in users]
         total = len(user_responses)
         current_page = (skip // limit) + 1
         
@@ -421,7 +421,7 @@ async def get_current_user_profile(
         return ResponseSchema(
             success=True,
             message="Profil candidat rÃ©cupÃ©rÃ© avec succÃ¨s",
-            data=CandidateProfileResponse.from_orm(candidate_profile)
+            data=CandidateProfileResponse.model_validate(candidate_profile)
         )
         
     except HTTPException:
@@ -531,8 +531,8 @@ async def update_current_user_profile(
                 total_duration=round(duration, 3))
         
         # 🎯 Retourner l'utilisateur complet avec le profil candidat
-        user_dict = UserResponse.from_orm(current_user).dict()
-        user_dict["candidate_profile"] = CandidateProfileResponse.from_orm(updated_profile)
+        user_dict = UserResponse.model_validate(current_user).model_dump()
+        user_dict["candidate_profile"] = CandidateProfileResponse.model_validate(updated_profile).model_dump()
         
         return ResponseSchema(
             success=True,

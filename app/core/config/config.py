@@ -237,6 +237,19 @@ class Settings(BaseSettings):
     )
     
     # ========================================================================
+    # API - URL publique (pour webhooks internes)
+    # ========================================================================
+    
+    API_URL: str = Field(
+        default_factory=lambda: (
+            "https://seeg-backend-api.azurewebsites.net"  # URL production Azure
+            if detect_environment() == 'production'
+            else "http://localhost:8000"  # URL développement
+        ),
+        description="URL publique de l'API (pour auto-appels webhooks)"
+    )
+    
+    # ========================================================================
     # CACHE - Redis (optionnel en production)
     # ========================================================================
     
@@ -288,6 +301,36 @@ class Settings(BaseSettings):
     
     RATE_LIMIT_ENABLED: bool = Field(default=False)
     CREATE_INITIAL_USERS: bool = Field(default=False)
+    
+    # ========================================================================
+    # ETL & DATA WAREHOUSE - Configuration Azure Blob Storage
+    # ========================================================================
+    
+    AZURE_STORAGE_CONNECTION_STRING: Optional[str] = Field(
+        default=None,
+        description="Azure Storage Connection String pour l'export ETL vers Blob Storage (Data Lake)"
+    )
+    
+    AZURE_STORAGE_CONTAINER: str = Field(
+        default="raw",
+        description="Nom du container Azure Blob Storage pour les données brutes (Data Lake)"
+    )
+    
+    WEBHOOK_SECRET: Optional[str] = Field(
+        default=None,
+        description="Secret pour sécuriser les appels webhook ETL (X-Webhook-Token header)"
+    )
+    
+    # Azure Functions pour traitement OCR (optionnel)
+    AZ_FUNC_ON_APP_SUBMITTED_URL: Optional[str] = Field(
+        default=None,
+        description="URL de l'Azure Function pour traitement post-export (OCR, enrichissement, etc.)"
+    )
+    
+    AZ_FUNC_ON_APP_SUBMITTED_KEY: Optional[str] = Field(
+        default=None,
+        description="Clé d'authentification pour l'Azure Function (query string 'code')"
+    )
     
     # ========================================================================
     # VALIDATORS - Validation stricte pour production
@@ -383,6 +426,11 @@ def create_settings() -> Settings:
         env_files.append(env_file_base)
     if env_file_specific:
         env_files.append(env_file_specific)
+    
+    # Ajouter .env.etl pour la configuration ETL (Azure Blob Storage, etc.)
+    if os.path.exists('.env.etl'):
+        env_files.append('.env.etl')
+        print(f"[INFO] Chargement additionnel: .env.etl (configuration ETL)")
     
     # Créer la configuration avec les bons fichiers
     # Pydantic Settings charge dans l'ordre et les variables système ont priorité

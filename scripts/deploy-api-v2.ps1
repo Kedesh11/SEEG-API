@@ -409,8 +409,8 @@ function Test-AzureResources {
         Write-Host "    [INFO] Creation du Resource Group..." -ForegroundColor Yellow
         az group create --name $CONFIG.ResourceGroup --location $CONFIG.Location --output none
         Write-Host "    [OK] Resource Group cree" -ForegroundColor Green
-            }
-            else {
+    }
+    else {
         Write-Host "    [OK] Resource Group existe" -ForegroundColor Green
     }
     
@@ -427,9 +427,9 @@ function Test-AzureResources {
             $acr = $acrShowOutput | ConvertFrom-Json
             $acrExists = $true
             Write-Log -Message "ACR existe: $($acr.loginServer)" -Level "DEBUG"
-            }
         }
-        catch {
+    }
+    catch {
         Write-Log -Message "ACR non trouve ou erreur: $($_.Exception.Message)" -Level "DEBUG"
     }
     
@@ -567,13 +567,13 @@ function Test-AzureResources {
                         $plan = $planShowOutput | ConvertFrom-Json
                         $planExists = $true
                         Write-Host "    [OK] App Service Plan confirme: $($plan.name) (SKU: $($plan.sku.name))" -ForegroundColor Green
-    }
-    else {
+                    }
+                    else {
                         Write-Log -Message "App Service Plan Conflict mais non accessible" -Level "ERROR"
                         throw "Le nom App Service Plan '$($CONFIG.AppServicePlan)' existe mais n'est pas accessible. Verifiez qu'il existe dans le bon Resource Group."
-    }
-}
-catch {
+                    }
+                }
+                catch {
                     Write-Host "`n[ERROR] App Service Plan Conflict mais verification echouee:" -ForegroundColor Red
                     Write-Host "  $($_.Exception.Message)" -ForegroundColor Red
                     throw
@@ -708,8 +708,8 @@ function New-DockerImage {
             if (Test-Path "$LOG_DIR\acr_login_stderr_$TIMESTAMP.log") {
                 $acrLoginErrors = @(Get-Content "$LOG_DIR\acr_login_stderr_$TIMESTAMP.log")
             }
-}
-catch {
+        }
+        catch {
             Complete-Step -StepIndex $stepIndex -Status "Failed" -Message "Erreur lors de l'execution az acr login: $($_.Exception.Message)"
             throw "Erreur lors de l'execution az acr login: $($_.Exception.Message)"
         }
@@ -868,8 +868,8 @@ function Publish-AppService {
     if ($appResult) {
         try {
             $app = $appResult | ConvertFrom-Json
-}
-catch {
+        }
+        catch {
             $app = $null
         }
     }
@@ -973,9 +973,21 @@ catch {
         # Frontend
         "PUBLIC_APP_URL=https://www.seeg-talentsource.com",
         
+        # API URL pour webhooks internes
+        "API_URL=https://seeg-backend-api.azurewebsites.net",
+        
         # Features
         "RATE_LIMIT_ENABLED=false",
         "CREATE_INITIAL_USERS=false",
+        
+        # ETL & Data Warehouse - Azure Blob Storage
+        "AZURE_STORAGE_CONNECTION_STRING=DefaultEndpointsProtocol=https;EndpointSuffix=core.windows.net;AccountName=seegairaweu001;AccountKey=2/kZrX2Unadnl4mknZw4HMqvOPioAEI6XAWSbjQ1MdzwTiQiiM8IxaW3+IHTJ+k9fTlev+k5zWdS+ASt2rJj1w==;BlobEndpoint=https://seegairaweu001.blob.core.windows.net/;FileEndpoint=https://seegairaweu001.file.core.windows.net/;QueueEndpoint=https://seegairaweu001.queue.core.windows.net/;TableEndpoint=https://seegairaweu001.table.core.windows.net/",
+        "AZURE_STORAGE_CONTAINER=raw",
+        "WEBHOOK_SECRET=7s__ele_81OqIhShXI43Rw5WdXwG7P9Jo5jIFYfWI7k",
+        
+        # Azure Functions pour traitement post-export (optionnel)
+        "AZ_FUNC_ON_APP_SUBMITTED_URL=",  # URL Azure Function si configurée
+        "AZ_FUNC_ON_APP_SUBMITTED_KEY=",  # Clé Azure Function si nécessaire
         
         # Migrations et Azure
         "SKIP_MIGRATIONS=true",
@@ -1180,8 +1192,8 @@ function Enable-ContinuousDeployment {
             
             try {
                 $existingWebhook = $webhookResult | ConvertFrom-Json
-}
-catch {
+            }
+            catch {
                 $existingWebhook = $null
             }
             

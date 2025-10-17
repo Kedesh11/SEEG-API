@@ -101,6 +101,7 @@ celerybeat.pid
 .env.production
 .env.*.local
 .env.azure
+.env.etl
 *.env
 .venv
 env/

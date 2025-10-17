@@ -18,6 +18,7 @@ from app.services.application import ApplicationService
 from app.services.file import FileService
 from app.services.email import EmailService
 from app.services.pdf import ApplicationPDFService
+from app.services.webhook_etl_trigger import ETLWebhookTriggerService, get_etl_webhook_trigger
 from app.schemas.application import (
     Application, ApplicationCreate, ApplicationUpdate, ApplicationResponse, ApplicationListResponse,
     ApplicationDocumentResponse, ApplicationDocumentCreate, ApplicationDocumentUpdate,
@@ -83,7 +84,8 @@ def convert_orm_list_to_schema(orm_list: List, schema_class):
 async def create_application(
     application_data: ApplicationCreate,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    etl_trigger: ETLWebhookTriggerService = Depends(get_etl_webhook_trigger)
 ):
     """
     Créer une nouvelle candidature COMPLÈTE avec documents OBLIGATOIRES
@@ -291,6 +293,12 @@ async def create_application(
                  job_offer_id=str(application.job_offer_id),
                  status=application.status,
                  documents_uploaded=documents_count)
+        
+        # 🔷 ÉTAPE 5: Déclenchement automatique du webhook ETL (export vers Blob Storage)
+        # Pattern: Fire-and-Forget, non-bloquant, fail-safe
+        await etl_trigger.trigger_application_submitted(
+            application_id=str(application.id)
+        )
         
         # Message dynamique selon les documents
         if documents_count > 0:

@@ -9,6 +9,30 @@ import base64
 import json
 from app.core.validators import validate_pdf_field
 
+# ============================================================================
+# CONSTANTES - Types de documents
+# ============================================================================
+
+# Documents OBLIGATOIRES pour toute candidature
+REQUIRED_DOCUMENT_TYPES = {'cv', 'cover_letter', 'diplome'}
+
+# Documents OPTIONNELS (peuvent être ajoutés en plus)
+OPTIONAL_DOCUMENT_TYPES = {'certificats', 'lettre_recommandation', 'portfolio', 'autres'}
+
+# Tous les types de documents autorisés
+ALLOWED_DOCUMENT_TYPES = REQUIRED_DOCUMENT_TYPES | OPTIONAL_DOCUMENT_TYPES
+
+# Noms affichables pour les messages d'erreur
+DOCUMENT_TYPE_NAMES = {
+    'cv': 'CV',
+    'cover_letter': 'Lettre de motivation',
+    'diplome': 'Diplôme',
+    'certificats': 'Certificats',
+    'lettre_recommandation': 'Lettre de recommandation',
+    'portfolio': 'Portfolio',
+    'autres': 'Autres documents'
+}
+
 
 class ApplicationBase(BaseModel):
     status: str = "pending"
@@ -54,33 +78,58 @@ class ApplicationBase(BaseModel):
 class ApplicationCreate(ApplicationBase):
     candidate_id: UUID
     job_offer_id: UUID
-    # Documents OBLIGATOIRES à uploader avec la candidature
+    # Documents à uploader avec la candidature (3 obligatoires + optionnels)
     documents: List[Dict[str, Any]] = Field(
         ...,
         min_length=3,
-        description="Liste des documents OBLIGATOIRES (CV, lettre de motivation, diplôme). Format: [{document_type, file_name, file_data_base64}]"
+        description="Liste des documents (3 obligatoires : CV, lettre de motivation, diplôme) + documents optionnels (certificats, recommandations, etc.). Format: [{document_type, file_name, file_data_base64}]"
     )
     
     @validator('documents')
     def validate_required_documents(cls, v):
-        """Valide que les 3 documents obligatoires sont présents."""
-        if not v or len(v) < 3:
-            raise ValueError("Les 3 documents sont obligatoires : CV, lettre de motivation et diplôme")
+        """
+        Valide que les 3 documents obligatoires sont présents.
+        Permet l'ajout de documents optionnels supplémentaires.
         
-        # Vérifier les types de documents
+        Documents OBLIGATOIRES:
+        - cv (CV)
+        - cover_letter (Lettre de motivation)
+        - diplome (Diplôme)
+        
+        Documents OPTIONNELS:
+        - certificats (Certificats professionnels)
+        - lettre_recommandation (Lettres de recommandation)
+        - portfolio (Portfolio professionnel)
+        - autres (Autres documents pertinents)
+        """
+        if not v or len(v) < 3:
+            raise ValueError("Au minimum 3 documents obligatoires : CV, lettre de motivation et diplôme")
+        
+        # Extraire les types de documents fournis
         doc_types = [doc.get('document_type') for doc in v if isinstance(doc, dict)]
-        required_types = {'cv', 'cover_letter', 'diplome'}
         provided_types = set(doc_types)
         
-        missing_types = required_types - provided_types
+        # Vérifier que les 3 documents obligatoires sont présents
+        missing_types = REQUIRED_DOCUMENT_TYPES - provided_types
         if missing_types:
-            missing_names = {
-                'cv': 'CV',
-                'cover_letter': 'Lettre de motivation',
-                'diplome': 'Diplôme'
-            }
-            missing_list = [missing_names[t] for t in missing_types]
-            raise ValueError(f"Documents manquants : {', '.join(missing_list)}")
+            missing_list = [DOCUMENT_TYPE_NAMES.get(t, t) for t in missing_types]
+            raise ValueError(f"Documents obligatoires manquants : {', '.join(missing_list)}")
+        
+        # Vérifier que tous les types fournis sont autorisés
+        invalid_types = provided_types - ALLOWED_DOCUMENT_TYPES
+        if invalid_types:
+            allowed_names = [DOCUMENT_TYPE_NAMES.get(t, t) for t in ALLOWED_DOCUMENT_TYPES]
+            invalid_list = [str(t) for t in invalid_types if t is not None]
+            raise ValueError(
+                f"Types de documents non autorisés : {', '.join(invalid_list)}. "
+                f"Types autorisés : {', '.join(sorted(allowed_names))}"
+            )
+        
+        # Vérifier les doublons (un seul document de chaque type obligatoire)
+        required_counts = {t: doc_types.count(t) for t in REQUIRED_DOCUMENT_TYPES if t in doc_types}
+        duplicates = [DOCUMENT_TYPE_NAMES.get(t, t) for t, count in required_counts.items() if count > 1]
+        if duplicates:
+            raise ValueError(f"Documents en double détectés : {', '.join(duplicates)}. Un seul de chaque type obligatoire.")
         
         return v
     
@@ -216,9 +265,9 @@ class ApplicationDocumentBase(BaseModel):
     @validator('document_type')
     def validate_document_type(cls, v):
         """Valide le type de document."""
-        allowed_types = ['cover_letter', 'cv', 'certificats', 'diplome']
-        if v not in allowed_types:
-            raise ValueError(f"Type de document invalide. Types autorisés: {allowed_types}")
+        if v not in ALLOWED_DOCUMENT_TYPES:
+            allowed_names = [DOCUMENT_TYPE_NAMES.get(t, t) for t in sorted(ALLOWED_DOCUMENT_TYPES)]
+            raise ValueError(f"Type de document invalide. Types autorisés: {', '.join(allowed_names)}")
         return v
 
     @validator('file_name')
@@ -264,9 +313,9 @@ class ApplicationDocumentUpdate(BaseModel):
     def validate_document_type(cls, v):
         """Valide le type de document."""
         if v is not None:
-            allowed_types = ['cover_letter', 'cv', 'certificats', 'diplome']
-            if v not in allowed_types:
-                raise ValueError(f"Type de document invalide. Types autorisés: {allowed_types}")
+            if v not in ALLOWED_DOCUMENT_TYPES:
+                allowed_names = [DOCUMENT_TYPE_NAMES.get(t, t) for t in sorted(ALLOWED_DOCUMENT_TYPES)]
+                raise ValueError(f"Type de document invalide. Types autorisés: {', '.join(allowed_names)}")
         return v
 
     @validator('file_name')
@@ -489,9 +538,10 @@ class FileUploadRequest(BaseModel):
 
     @validator('document_type')
     def validate_document_type(cls, v):
-        allowed_types = ['cover_letter', 'cv', 'certificats', 'diplome']
-        if v not in allowed_types:
-            raise ValueError(f"Type de document invalide. Types autorisés: {allowed_types}")
+        """Valide le type de document."""
+        if v not in ALLOWED_DOCUMENT_TYPES:
+            allowed_names = [DOCUMENT_TYPE_NAMES.get(t, t) for t in sorted(ALLOWED_DOCUMENT_TYPES)]
+            raise ValueError(f"Type de document invalide. Types autorisés: {', '.join(allowed_names)}")
         return v
 
     @validator('file_name')
