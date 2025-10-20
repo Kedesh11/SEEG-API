@@ -89,13 +89,15 @@ COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
 # Copier le code applicatif
 COPY --chown=appuser:appuser app/ ./app/
 COPY --chown=appuser:appuser alembic.ini ./
-# scripts/ exclus (pas necessaire en production, utilise uniquement pour deploiement)
 COPY --chown=appuser:appuser logging.yaml ./
-COPY --chown=appuser:appuser docker-entrypoint.sh ./
 
-# Permissions d'exécution pour l'entrypoint
-RUN chmod +x docker-entrypoint.sh && \
-    chown appuser:appuser docker-entrypoint.sh
+# Copier docker-entrypoint.sh et corriger les fins de ligne AVANT de changer d'utilisateur
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+
+# CRITIQUE: Convertir CRLF -> LF et rendre exécutable (doit être fait en tant que root)
+RUN sed -i 's/\r$//' /app/docker-entrypoint.sh && \
+    chmod +x /app/docker-entrypoint.sh && \
+    chown appuser:appuser /app/docker-entrypoint.sh
 
 # Basculer vers utilisateur non-root
 USER appuser
