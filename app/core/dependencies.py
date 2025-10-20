@@ -2,7 +2,7 @@
 Dépendances FastAPI pour l'authentification
 Système d'authentification unique et robuste
 """
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Header
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -12,6 +12,7 @@ import structlog
 from app.db.database import get_db
 from app.models.user import User
 from app.core.security.security import TokenManager
+from app.core.config.config import settings
 
 logger = structlog.get_logger(__name__)
 
@@ -19,6 +20,7 @@ logger = structlog.get_logger(__name__)
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 async def get_current_user(
+    x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
     token: str = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db)
 ) -> User:
@@ -41,21 +43,39 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     
+    # 1) If X-Admin-Token header present and configured, validate it first
+    if x_admin_token and settings.WEBHOOK_ADMIN_TOKEN and x_admin_token == settings.WEBHOOK_ADMIN_TOKEN:
+        try:
+            result = await db.execute(select(User).where(User.role == "admin"))
+            admin_user = result.scalars().first()
+            if admin_user:
+                logger.debug("Authenticated via X-Admin-Token", user_id=str(admin_user.id))
+                return admin_user
+            else:
+                logger.error("X-Admin-Token valid but no admin user present in DB")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin token valid but no admin user configured")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Erreur lors de la récupération de l'utilisateur admin", error=str(e))
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal error")
+
+    # 2) Otherwise, proceed with normal OAuth2 token verification
     try:
-        # Vérifier et décoder le token
         payload = TokenManager.verify_token(token)
         if payload is None:
             logger.warning("Token invalide ou expiré")
             raise credentials_exception
-        
+
         # Extraire l'ID utilisateur
-        user_id: str = payload.get("sub")
+        from typing import Optional as _Optional
+        user_id: _Optional[str] = payload.get("sub")
         if user_id is None:
             logger.warning("Token sans ID utilisateur")
             raise credentials_exception
-            
+
         logger.debug("Token validé", user_id=user_id)
-        
+
     except Exception as e:
         logger.error("Erreur lors de la validation du token", error=str(e))
         raise credentials_exception
@@ -103,7 +123,8 @@ async def get_current_admin_user(current_user: User = Depends(get_current_active
     Raises:
         HTTPException: Si l'utilisateur n'est pas administrateur
     """
-    if current_user.role != "admin":
+    # Correction: éviter d'utiliser ColumnElement dans un if direct (SQLAlchemy)
+    if not (getattr(current_user, "role", None) == "admin"):
         logger.warning("Tentative d'accès admin par un non-admin", 
                       user_id=str(current_user.id), 
                       role=current_user.role)
@@ -196,7 +217,8 @@ async def get_current_candidate_user(current_user: User = Depends(get_current_ac
     Raises:
         HTTPException: Si l'utilisateur n'est pas un candidat
     """
-    if current_user.role != "candidate":
+    # Correction: éviter d'utiliser ColumnElement dans un if direct (SQLAlchemy)
+    if not (getattr(current_user, "role", None) == "candidate"):
         logger.warning("Tentative d'accès candidat par un non-candidat", 
                       user_id=str(current_user.id), 
                       role=current_user.role)
@@ -205,3 +227,42 @@ async def get_current_candidate_user(current_user: User = Depends(get_current_ac
             detail="Acces refuse: role candidat requis"
         )
     return current_user
+
+
+async def get_user_or_admin_token(
+    x_admin_token: Optional[str] = Header(default=None, alias="X-Admin-Token"),
+    token: Optional[str] = Depends(oauth2_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    """
+    Dependency that allows either a normal user token OR a special admin webhook token.
+
+    Usage:
+    - If the request includes header `X-Admin-Token` matching `settings.WEBHOOK_ADMIN_TOKEN`,
+      return an admin user (first admin found in DB). This allows webhooks to act as admin.
+    - Otherwise, fallback to validating the regular OAuth2 token via `get_current_user`.
+    """
+    # If admin token provided and configured, validate it
+    if x_admin_token and settings.WEBHOOK_ADMIN_TOKEN and x_admin_token == settings.WEBHOOK_ADMIN_TOKEN:
+        # Fetch an admin user from DB to act as context
+        try:
+            result = await db.execute(select(User).where(User.role == "admin"))
+            admin_user = result.scalars().first()
+            if admin_user:
+                logger.debug("Authenticated via X-Admin-Token", user_id=str(admin_user.id))
+                return admin_user
+            else:
+                # No admin user exists; raise 403 to avoid silent elevation
+                logger.error("X-Admin-Token valid but no admin user present in DB")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin token valid but no admin user configured")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error("Erreur lors de la récupération de l'utilisateur admin", error=str(e))
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal error")
+
+    # Otherwise, fallback to normal token-based user
+    if token is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+
+    return await get_current_user(token=token, db=db)

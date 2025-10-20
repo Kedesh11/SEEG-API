@@ -225,6 +225,29 @@ AZ_FUNC_ON_APP_SUBMITTED_URL=https://your-function.azurewebsites.net/api/on_appl
 AZ_FUNC_ON_APP_SUBMITTED_KEY=<function-key>
 ```
 
+#### Token Admin pour Webhooks (Option A)
+
+Si vous souhaitez que des webhooks externes (par ex. Azure) appellent des routes existantes nécessitant un utilisateur (par exemple pour mettre à jour un utilisateur non connecté), vous pouvez configurer un token administrateur spécial.
+
+1. Définissez la variable d'environnement suivante dans votre environnement sécurisé (Key Vault / pipeline secret):
+
+```bash
+WEBHOOK_ADMIN_TOKEN=<valeur-secrete-longue-et-sans-espace>
+```
+
+2. Le webhook enverra l'en-tête HTTP `X-Admin-Token: <valeur-secrete>` avec la requête. Si le token correspond à `WEBHOOK_ADMIN_TOKEN`, l'API utilisera le premier utilisateur `admin` trouvé en base comme contexte d'exécution pour cette requête.
+
+Exemple (curl) :
+
+```bash
+curl -X PUT "https://seeg-backend-api.azurewebsites.net/api/v1/users/me" \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: $WEBHOOK_ADMIN_TOKEN" \
+  -d '{"first_name": "UpdatedByWebhook"}'
+```
+
+Sécurité : stockez `WEBHOOK_ADMIN_TOKEN` dans un coffre-fort et renouvelez-le périodiquement. Ne loggez jamais sa valeur.
+
 #### CORS
 
 ```bash

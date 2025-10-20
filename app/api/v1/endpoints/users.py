@@ -152,6 +152,55 @@ async def update_current_user(
         )
 
 
+@router.put("/{user_id}", response_model=ResponseSchema[UserWithProfile], summary="Mettre Ã  jour un utilisateur (admin/webhook)")
+async def update_user_by_id(
+    user_id: UUID,
+    user_update: UserUpdate,
+    current_user = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Mettre Ã  jour un utilisateur par son ID. Autorisé pour les admins ou via X-Admin-Token."""
+    try:
+        # Vérifier permissions: si l'appel se fait via token admin, current_user.role sera 'admin'
+        if current_user.role != "admin":
+            # Non-admins ne peuvent mettre Ã  jour d'autres utilisateurs
+            if current_user.id != user_id:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission insuffisante")
+
+        user_service = UserService(db)
+        updated_user = await user_service.update_user(
+            user_id=user_id,
+            user_data=user_update
+        )
+
+        if not updated_user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Utilisateur non trouvÃ©")
+
+        await db.flush()
+        await db.refresh(updated_user)
+        await db.commit()
+
+        candidate_profile = None
+        if updated_user.role == "candidate":  # type: ignore
+            candidate_profile = await user_service.get_candidate_profile(updated_user.id)
+
+        user_dict = UserResponse.model_validate(updated_user).model_dump()
+        user_dict["candidate_profile"] = CandidateProfileResponse.model_validate(candidate_profile).model_dump() if candidate_profile else None
+
+        safe_log("info", "Utilisateur mis Ã  jour par ID", target_user_id=str(user_id), requester_id=str(current_user.id))
+
+        return ResponseSchema(success=True, message="Utilisateur mis Ã  jour avec succÃ¨s", data=user_dict)
+
+    except HTTPException:
+        raise
+    except ValidationError as e:
+        safe_log("warning", "Erreur validation MAJ utilisateur", user_id=str(user_id), error=str(e))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        safe_log("error", "Erreur MAJ utilisateur par ID", user_id=str(user_id), error=str(e))
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Erreur lors de la mise Ã  jour de l'utilisateur")
+
+
 @router.get("/{user_id}", response_model=ResponseSchema[UserWithProfile], summary="RÃ©cupÃ©rer un utilisateur par ID avec profil complet", openapi_extra={
     "responses": {
         "200": {

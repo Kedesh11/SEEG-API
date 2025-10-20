@@ -1,3 +1,4 @@
+
 """
 Configuration de l'application One HCM SEEG
 ============================================================================
@@ -17,11 +18,43 @@ Hiérarchie de priorité (du plus au moins prioritaire):
 Cette hiérarchie respecte le principe des 12-Factor Apps.
 ============================================================================
 """
+
+# --- Imports standards et tiers ---
 from typing import List, Optional, Union
-from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
 import os
 import warnings
+import functools
+from pydantic import Field, field_validator, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# --- Imports conditionnels Azure Key Vault ---
+try:
+    from azure.identity import DefaultAzureCredential
+    from azure.keyvault.secrets import SecretClient
+except ImportError:
+    DefaultAzureCredential = None
+    SecretClient = None
+
+# --- Utilitaire Key Vault ---
+def get_secret_from_keyvault(secret_name: str, vault_url: Optional[str] = None) -> Optional[str]:
+    """
+    Récupère un secret depuis Azure Key Vault si le SDK est disponible et la config présente.
+    Args:
+        secret_name: Nom du secret dans Key Vault (ex: 'WEBHOOK-ADMIN-TOKEN')
+        vault_url: URL du Key Vault (ex: 'https://seeg-api.vault.azure.net/')
+    Returns:
+        Valeur du secret ou None si indisponible.
+    """
+    if not (DefaultAzureCredential and SecretClient and vault_url):
+        return None
+    try:
+        credential = DefaultAzureCredential()
+        client = SecretClient(vault_url=vault_url, credential=credential)
+        secret = client.get_secret(secret_name)
+        return secret.value
+    except Exception as e:
+        warnings.warn(f"[KeyVault] Impossible de récupérer le secret '{secret_name}': {e}")
+        return None
 
 
 def detect_environment() -> str:
@@ -331,6 +364,23 @@ class Settings(BaseSettings):
         default=None,
         description="Clé d'authentification pour l'Azure Function (query string 'code')"
     )
+    
+    # Token administrateur spécial pour webhooks/automations (Option A)
+    WEBHOOK_ADMIN_TOKEN: Optional[str] = Field(
+        default=None,
+        description="Token secret utilisé pour autoriser des actions admin via webhooks (X-Admin-Token header)."
+    )
+
+    # URL du Key Vault (ex: https://seeg-api.vault.azure.net/)
+    KEYVAULT_URL: Optional[str] = Field(default=None, description="URL Azure Key Vault (ex: https://seeg-api.vault.azure.net/)")
+
+    def __init__(self, **values):
+        super().__init__(**values)
+        # Surcharge WEBHOOK_ADMIN_TOKEN si Key Vault configuré
+        if self.KEYVAULT_URL:
+            secret = get_secret_from_keyvault('WEBHOOK-ADMIN-TOKEN', self.KEYVAULT_URL)
+            if secret:
+                self.WEBHOOK_ADMIN_TOKEN = secret
     
     # ========================================================================
     # VALIDATORS - Validation stricte pour production
