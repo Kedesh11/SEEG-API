@@ -1,22 +1,21 @@
-version: '3.8'
-
 services:
-  # Base de données PostgreSQL
-  postgres:
-    image: postgres:16-alpine
-    container_name: seeg-postgres
+  # Base de données MongoDB
+  mongodb:
+    image: mongo:6
+    container_name: seeg-mongodb
+    profiles: ["localdb"]
     environment:
-      POSTGRES_USER: seeg
-      POSTGRES_PASSWORD: seeg_secure_password
-      POSTGRES_DB: seeg_db
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: rootpassword
+      MONGO_INITDB_DATABASE: seeg_db
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mongodb_data:/data/db
     ports:
-      - "5432:5432"
+      - "${MONGODB_PORT_HOST:-27018}:27017"
     networks:
       - seeg-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U seeg"]
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
       interval: 10s
       timeout: 5s
       retries: 5
@@ -101,8 +100,8 @@ services:
     container_name: seeg-api
     environment:
       # Database
-      DATABASE_URL: postgresql+asyncpg://seeg:seeg_secure_password@postgres:5432/seeg_db
-      DATABASE_URL_SYNC: postgresql://seeg:seeg_secure_password@postgres:5432/seeg_db
+      MONGODB_URL: ${MONGODB_URL}
+      MONGODB_DB_NAME: ${MONGODB_DB_NAME:-seeg_db}
       
       # Redis
       REDIS_URL: redis://redis:6379/0
@@ -130,26 +129,22 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-noreply@seeg.ga}
       
-      # Application Insights (optional)
-      APPLICATIONINSIGHTS_CONNECTION_STRING: ${APPLICATIONINSIGHTS_CONNECTION_STRING:-}
+      # Application Insights (removed)
     
     volumes:
       - ./app:/app/app
-      - ./alembic:/app/alembic
       - ./logs:/app/logs
     ports:
       - "8000:8000"
     networks:
       - seeg-network
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
       jaeger:
         condition: service_started
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/monitoring/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ping"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -174,7 +169,7 @@ networks:
     driver: bridge
 
 volumes:
-  postgres_data:
+  mongodb_data:
   redis_data:
   prometheus_data:
   grafana_data:

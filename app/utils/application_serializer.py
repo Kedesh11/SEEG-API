@@ -3,8 +3,7 @@ Utilitaires pour sérialiser les candidatures avec leurs relations
 Best Practice: Séparation des responsabilités (SRP)
 """
 import structlog
-from typing import Optional, Dict, Any
-from app.models.application import Application
+from typing import Dict, Any
 from app.schemas.application_detailed import (
     ApplicationDetailed,
     CandidateInfo,
@@ -16,7 +15,7 @@ logger = structlog.get_logger(__name__)
 
 
 def serialize_application_with_relations(
-    application: Application,
+    application: Any,
     include_candidate: bool = True,
     include_job_offer: bool = True
 ) -> Dict[str, Any]:

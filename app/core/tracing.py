@@ -10,11 +10,6 @@ from opentelemetry.exporter.jaeger.thrift import JaegerExporter
 from opentelemetry.sdk.resources import Resource, SERVICE_NAME, SERVICE_VERSION
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
-from opentelemetry.instrumentation.redis import RedisInstrumentor
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
 from opentelemetry.trace import Status, StatusCode
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
@@ -33,7 +28,7 @@ def safe_log(level: str, message: str, **kwargs):
     """
     try:
         getattr(logger, level)(message, **kwargs)
-    except (TypeError, AttributeError) as e:
+    except (TypeError, AttributeError):
         print(f"{level.upper()}: {message} - {kwargs}")
 
 
@@ -128,50 +123,42 @@ class TracingManager:
         Args:
             app: Instance FastAPI
         """
+        try:
+            from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        except ModuleNotFoundError as e:
+            safe_log("warning", "Tracing FastAPI indisponible", error=str(e))
+            return
+
         FastAPIInstrumentor.instrument_app(
             app,
             tracer_provider=self.tracer_provider,
-            excluded_urls="health,metrics"
+            excluded_urls="health,metrics",
         )
-        
+
         safe_log("info", "Application FastAPI instrumentée")
-    
-    def instrument_sqlalchemy(self, engine):
-        """
-        Instrumente SQLAlchemy.
-        
-        Args:
-            engine: Engine SQLAlchemy
-        """
-        SQLAlchemyInstrumentor().instrument(
-            engine=engine,
-            tracer_provider=self.tracer_provider
-        )
-        
-        safe_log("info", "SQLAlchemy instrumenté")
-    
-    def instrument_asyncpg(self):
-        """Instrumente AsyncPG."""
-        AsyncPGInstrumentor().instrument(
-            tracer_provider=self.tracer_provider
-        )
-        
-        safe_log("info", "AsyncPG instrumenté")
     
     def instrument_redis(self):
         """Instrumente Redis."""
-        RedisInstrumentor().instrument(
-            tracer_provider=self.tracer_provider
-        )
-        
+        try:
+            from opentelemetry.instrumentation.redis import RedisInstrumentor
+        except ModuleNotFoundError as e:
+            safe_log("warning", "Tracing Redis indisponible", error=str(e))
+            return
+
+        RedisInstrumentor().instrument(tracer_provider=self.tracer_provider)
+
         safe_log("info", "Redis instrumenté")
     
     def instrument_httpx(self):
         """Instrumente HTTPX pour les appels HTTP sortants."""
-        HTTPXClientInstrumentor().instrument(
-            tracer_provider=self.tracer_provider
-        )
-        
+        try:
+            from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        except ModuleNotFoundError as e:
+            safe_log("warning", "Tracing HTTPX indisponible", error=str(e))
+            return
+
+        HTTPXClientInstrumentor().instrument(tracer_provider=self.tracer_provider)
+
         safe_log("info", "HTTPX instrumenté")
 
 
@@ -340,11 +327,13 @@ def set_span_error(error: Exception):
 
 
 # Décorateurs spécialisés pour différents types d'opérations
-trace_database = lambda name=None: trace_method(
-    span_name=name,
-    kind=trace.SpanKind.CLIENT,
-    attributes={"db.system": "postgresql"}
-)
+def trace_database(name=None):
+    """Décorateur pour tracer une opération de base de données."""
+    return trace_method(
+        span_name=name,
+        kind=trace.SpanKind.CLIENT,
+        attributes={"db.system": "mongodb"}
+    )
 
 trace_cache = lambda name=None: trace_method(
     span_name=name,

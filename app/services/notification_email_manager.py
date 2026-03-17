@@ -10,8 +10,8 @@ Principes appliqués:
 - Logging: Traçabilité complète de toutes les opérations
 - Idempotence: Les notifications peuvent être envoyées plusieurs fois sans effet de bord
 """
-from typing import Optional
-from sqlalchemy.ext.asyncio import AsyncSession
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from typing import Optional, Any, Union
 from uuid import UUID
 import structlog
 
@@ -33,12 +33,12 @@ class NotificationEmailManager:
     - Detailed Logging: Traçabilité complète
     """
     
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncIOMotorDatabase):
         """
-        Initialiser le gestionnaire avec injection de dépendances
+        Initialiser le gestionnaire avec injection de dÃ©pendances
         
         Args:
-            db: Session de base de données (partagée entre les services)
+            db: Base de donnÃ©es MongoDB
         """
         self.db = db
         self.email_service = EmailService(db)
@@ -48,7 +48,7 @@ class NotificationEmailManager:
     
     async def notify_and_email_registration(
         self,
-        user_id: UUID,
+        user_id: Union[UUID, str],
         email: str,
         first_name: str,
         last_name: str,
@@ -96,7 +96,6 @@ class NotificationEmailManager:
                 user_id=user_id,
                 email=email
             )
-            await self.db.flush()  # Persister sans commit complet
             result["notification_sent"] = True
             logger.info("✅ Notification bienvenue créée", user_id=str(user_id))
         except Exception as e:
@@ -109,7 +108,7 @@ class NotificationEmailManager:
     
     async def notify_and_email_password_reset_request(
         self,
-        user_id: UUID,
+        user_id: Union[UUID, str],
         email: str
     ) -> dict:
         """
@@ -135,7 +134,6 @@ class NotificationEmailManager:
                 user_id=user_id,
                 email=email
             )
-            await self.db.flush()
             result["notification_sent"] = True
             logger.info("✅ Notification reset password créée", user_id=str(user_id))
         except Exception as e:
@@ -146,7 +144,7 @@ class NotificationEmailManager:
     
     async def notify_and_email_password_changed(
         self,
-        user_id: UUID,
+        user_id: Union[UUID, str],
         email: str,
         first_name: str,
         last_name: str
@@ -233,7 +231,6 @@ class NotificationEmailManager:
             logger.info("🔔 Création notification changement password", 
                        user_id=str(user_id))
             await self.notification_manager.notify_password_changed(user_id=user_id)
-            await self.db.flush()
             result["notification_sent"] = True
             logger.info("✅ Notification changement password créée", user_id=str(user_id))
         except Exception as e:
@@ -246,8 +243,8 @@ class NotificationEmailManager:
     
     async def notify_and_email_application_submitted(
         self,
-        user_id: UUID,
-        application_id: UUID,
+        user_id: Union[UUID, str],
+        application_id: Union[UUID, str],
         candidate_email: str,
         candidate_name: str,
         job_title: str
@@ -293,7 +290,6 @@ class NotificationEmailManager:
                 application_id=application_id,
                 job_title=job_title
             )
-            await self.db.flush()
             result["notification_sent"] = True
             logger.info("✅ Notification candidature créée", 
                        application_id=str(application_id))
@@ -305,8 +301,8 @@ class NotificationEmailManager:
     
     async def notify_application_draft_saved(
         self,
-        user_id: UUID,
-        job_offer_id: UUID,
+        user_id: Union[UUID, str],
+        job_offer_id: Union[UUID, str],
         job_title: str
     ) -> dict:
         """
@@ -330,7 +326,6 @@ class NotificationEmailManager:
                 job_offer_id=job_offer_id,
                 job_title=job_title
             )
-            await self.db.flush()
             result["notification_sent"] = True
             logger.info("✅ Notification brouillon créée", user_id=str(user_id))
         except Exception as e:
@@ -341,8 +336,8 @@ class NotificationEmailManager:
     
     async def notify_and_email_application_status_changed(
         self,
-        user_id: UUID,
-        application_id: UUID,
+        user_id: Union[UUID, str],
+        application_id: Union[UUID, str],
         candidate_email: str,
         candidate_name: str,
         job_title: str,
@@ -392,7 +387,6 @@ class NotificationEmailManager:
                 job_title=job_title,
                 new_status=new_status
             )
-            await self.db.flush()
             result["notification_sent"] = True
             logger.info("✅ Notification changement statut créée", 
                        application_id=str(application_id))
@@ -406,10 +400,10 @@ class NotificationEmailManager:
     
     async def notify_and_email_interview_scheduled(
         self,
-        candidate_id: UUID,
+        candidate_id: Union[UUID, str],
         candidate_email: str,
         candidate_name: str,
-        application_id: UUID,
+        application_id: Union[UUID, str],
         job_title: str,
         interview_date: str,  # Format: "YYYY-MM-DD"
         interview_time: str,  # Format: "HH:MM:SS"
@@ -583,7 +577,6 @@ class NotificationEmailManager:
                 interview_type="entretien",
                 job_title=job_title
             )
-            await self.db.flush()
             result["notification_sent"] = True
             logger.info("✅ Notification entretien créée", 
                        candidate_id=str(candidate_id))

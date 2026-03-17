@@ -1,15 +1,12 @@
 """
 Service de gestion des demandes d'accès à la plateforme.
 """
-import structlog
-from typing import Optional, List, Tuple, cast
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, func, and_, desc, text
-from uuid import UUID
+from typing import Optional, List, Tuple, cast, Dict, Any
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from bson import ObjectId
 from datetime import datetime, timezone
+import structlog
 
-from app.models.access_request import AccessRequest
-from app.models.user import User
 from app.schemas.access_request import AccessRequestCreate, AccessRequestUpdate
 from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError, UnauthorizedError
 
@@ -19,18 +16,18 @@ logger = structlog.get_logger(__name__)
 class AccessRequestService:
     """Service de gestion des demandes d'accès."""
     
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
     
     async def create_access_request(
         self,
-        user_id: UUID,
+        user_id: Any,
         email: str,
         first_name: Optional[str] = None,
         last_name: Optional[str] = None,
         phone: Optional[str] = None,
-        matricule: Optional[str] = None
-    ) -> AccessRequest:
+        matricule: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Créer une nouvelle demande d'accès.
         
@@ -38,7 +35,7 @@ class AccessRequestService:
         sans email @seeg-gabon.com.
         
         Args:
-            user_id: UUID de l'utilisateur
+            user_id: ID de l'utilisateur
             email: Email du demandeur
             first_name: Prénom
             last_name: Nom
@@ -46,7 +43,7 @@ class AccessRequestService:
             matricule: Matricule SEEG
             
         Returns:
-            AccessRequest: La demande créée
+            Dict[str, Any]: La demande créée
             
         Raises:
             ValidationError: Si les données sont invalides
@@ -54,58 +51,39 @@ class AccessRequestService:
         """
         try:
             # Vérifier qu'il n'existe pas déjà une demande pending pour cet utilisateur
-            try:
-                existing_result = await self.db.execute(
-                    select(AccessRequest).where(
-                        and_(
-                            AccessRequest.user_id == user_id,
-                            AccessRequest.status == 'pending'
-                        )
-                    )
-                )
-            except Exception as e:
-                # Correction automatique locale: si la colonne updated_at manque sur la table access_requests,
-                # on l'ajoute dynamiquement pour éviter l'erreur UndefinedColumn
-                err_msg = str(e)
-                if 'updated_at' in err_msg and 'UndefinedColumn' in err_msg:
-                    await self.db.execute(text("ALTER TABLE access_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NULL"))
-                    await self.db.flush()
-                    existing_result = await self.db.execute(
-                        select(AccessRequest).where(
-                            and_(
-                                AccessRequest.user_id == user_id,
-                                AccessRequest.status == 'pending'
-                            )
-                        )
-                    )
-                else:
-                    raise
-            existing_request = existing_result.scalar_one_or_none()
+            user_id_str = str(user_id)
+            existing_request = await self.db.access_requests.find_one({
+                "user_id": user_id_str,
+                "status": "pending"
+            })
             
             if existing_request:
-                logger.warning("Demande d'accès déjà existante", user_id=str(user_id))
+                logger.warning("Demande d'accès déjà existante", user_id=user_id_str)
+                existing_request["id"] = str(existing_request["_id"])
                 return existing_request
             
             # Créer la demande
-            access_request = AccessRequest()
-            access_request.user_id = user_id  # type: ignore
-            access_request.email = email  # type: ignore
-            access_request.first_name = first_name  # type: ignore
-            access_request.last_name = last_name  # type: ignore
-            access_request.phone = phone  # type: ignore
-            access_request.matricule = matricule  # type: ignore
-            access_request.request_type = "internal_no_seeg_email"  # type: ignore
-            access_request.status = "pending"  # type: ignore
-            access_request.viewed = False  # type: ignore
+            access_request = {
+                "user_id": user_id_str,
+                "email": email,
+                "first_name": first_name,
+                "last_name": last_name,
+                "phone": phone,
+                "matricule": matricule,
+                "request_type": "internal_no_seeg_email",
+                "status": "pending",
+                "viewed": False,
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
+            }
             
-            self.db.add(access_request)
-            # PAS de commit ici - responsabilité de l'appelant
-            await self.db.flush()  # Pour obtenir l'ID
-            await self.db.refresh(access_request)
+            result = await self.db.access_requests.insert_one(access_request)
+            access_request["id"] = str(result.inserted_id)
+            access_request["_id"] = result.inserted_id
             
             logger.info("Demande d'accès créée", 
-                       request_id=str(access_request.id),
-                       user_id=str(user_id),
+                       request_id=access_request["id"],
+                       user_id=user_id_str,
                        email=email,
                        matricule=matricule)
             
@@ -120,66 +98,31 @@ class AccessRequestService:
         status_filter: Optional[str] = None,
         viewed_filter: Optional[bool] = None,
         skip: int = 0,
-        limit: int = 100
-    ) -> Tuple[List[AccessRequest], int, int, int]:
-        """
-        Récupérer toutes les demandes d'accès avec filtres.
-        
-        Args:
-            status_filter: Filtrer par statut (pending, approved, rejected)
-            viewed_filter: Filtrer par viewed (True/False)
-            skip: Nombre d'éléments à ignorer (pagination)
-            limit: Nombre d'éléments à retourner
-            
-        Returns:
-            Tuple[List[AccessRequest], total, pending_count, unviewed_count]:
-                - Liste des demandes
-                - Nombre total de demandes
-                - Nombre de demandes pending
-                - Nombre de demandes non vues (pour le badge)
-        """
+        limit: int = 100,
+    ) -> Tuple[List[Dict[str, Any]], int, int, int]:
         try:
-            # Construire la requête de base
-            query = select(AccessRequest).order_by(desc(AccessRequest.created_at))
-            count_query = select(func.count(AccessRequest.id))
-            
-            # Appliquer les filtres
-            conditions = []
+            filter_query = {}
             if status_filter:
-                conditions.append(AccessRequest.status == status_filter)
+                filter_query["status"] = status_filter
             if viewed_filter is not None:
-                conditions.append(AccessRequest.viewed == viewed_filter)
-            
-            if conditions:
-                query = query.where(and_(*conditions))
-                count_query = count_query.where(and_(*conditions))
-            
-            # Pagination
-            query = query.offset(skip).limit(limit)
+                filter_query["viewed"] = viewed_filter
             
             # Exécuter les requêtes
-            result = await self.db.execute(query)
-            requests = list(result.scalars().all())
-            
-            count_result = await self.db.execute(count_query)
-            total = count_result.scalar() or 0
+            cursor = self.db.access_requests.find(filter_query).sort("created_at", -1).skip(skip).limit(limit)
+            requests = await cursor.to_list(length=limit)
+            total = await self.db.access_requests.count_documents(filter_query)
             
             # Compter les demandes pending
-            pending_result = await self.db.execute(
-                select(func.count(AccessRequest.id)).where(AccessRequest.status == 'pending')
-            )
-            pending_count = pending_result.scalar() or 0
+            pending_count = await self.db.access_requests.count_documents({"status": "pending"})
             
             # Compter les demandes non vues (pour le badge)
-            unviewed_result = await self.db.execute(
-                select(func.count(AccessRequest.id)).where(
-                    and_(
-                        AccessRequest.status == 'pending',
-                        AccessRequest.viewed == False
-                    )
-                )
-            )
-            unviewed_count = unviewed_result.scalar() or 0
+            unviewed_count = await self.db.access_requests.count_documents({
+                "status": "pending",
+                "viewed": False
+            })
+            
+            for req in requests:
+                req["id"] = str(req["_id"])
             
             logger.info("Demandes d'accès récupérées",
                        total=total,
@@ -192,43 +135,24 @@ class AccessRequestService:
             logger.error("Erreur récupération demandes d'accès", error=str(e))
             raise BusinessLogicError("Erreur lors de la récupération des demandes")
     
-    async def get_request_by_id(self, request_id: UUID) -> Optional[AccessRequest]:
+    async def get_request_by_id(self, request_id: Any) -> Optional[Dict[str, Any]]:
         """Récupérer une demande d'accès par son ID."""
         try:
-            result = await self.db.execute(
-                select(AccessRequest).where(AccessRequest.id == request_id)
-            )
-            return result.scalar_one_or_none()
+            query = {"_id": ObjectId(request_id)} if len(str(request_id)) == 24 else {"_id": str(request_id)}
+            request = await self.db.access_requests.find_one(query)
+            if request:
+                request["id"] = str(request["_id"])
+            return request
         except Exception as e:
             logger.error("Erreur récupération demande", request_id=str(request_id), error=str(e))
             raise BusinessLogicError("Erreur lors de la récupération de la demande")
     
     async def approve_request(
         self,
-        request_id: UUID,
-        reviewer_id: UUID
-    ) -> AccessRequest:
-        """
-        Approuver une demande d'accès.
-        
-        Actions:
-        1. Vérifier que la demande existe et est 'pending'
-        2. Mettre à jour users.statut = 'actif'
-        3. Mettre à jour access_requests.status = 'approved'
-        4. Enregistrer reviewed_at et reviewed_by
-        
-        Args:
-            request_id: ID de la demande
-            reviewer_id: ID du recruteur qui approuve
-            
-        Returns:
-            AccessRequest: La demande mise à jour
-            
-        Raises:
-            NotFoundError: Si la demande n'existe pas
-            ValidationError: Si la demande n'est pas 'pending'
-            BusinessLogicError: Si erreur lors du traitement
-        """
+        request_id: Any,
+        reviewer_id: Any,
+    ) -> Dict[str, Any]:
+        """Approuver une demande d'accès (pending -> approved)."""
         try:
             # Récupérer la demande
             request = await self.get_request_by_id(request_id)
@@ -236,38 +160,37 @@ class AccessRequestService:
             if not request:
                 raise NotFoundError("Demande d'accès non trouvée")
             
-            current_status: str = cast(str, request.status)
+            current_status = request.get("status")
             if current_status != 'pending':
                 raise ValidationError(f"La demande a déjà été traitée (statut: {current_status})")
             
             # Mettre à jour le statut de l'utilisateur
-            await self.db.execute(
-                update(User)
-                .where(User.id == request.user_id)
-                .values(
-                    statut='actif',
-                    updated_at=datetime.now(timezone.utc)
-                )
+            user_id = request.get("user_id")
+            user_query = {"_id": ObjectId(user_id)} if len(str(user_id)) == 24 else {"_id": str(user_id)}
+            await self.db.users.update_one(
+                user_query,
+                {"$set": {
+                    "statut": "actif",
+                    "updated_at": datetime.now(timezone.utc)
+                }}
             )
             
             # Mettre à jour la demande
-            await self.db.execute(
-                update(AccessRequest)
-                .where(AccessRequest.id == request_id)
-                .values(
-                    status='approved',
-                    reviewed_at=datetime.now(timezone.utc),
-                    reviewed_by=reviewer_id
-                )
+            await self.db.access_requests.update_one(
+                {"_id": request["_id"]},
+                {"$set": {
+                    "status": "approved",
+                    "reviewed_at": datetime.now(timezone.utc),
+                    "reviewed_by": str(reviewer_id),
+                    "updated_at": datetime.now(timezone.utc)
+                }}
             )
             
-            # PAS de commit ici - responsabilité de l'appelant
-            await self.db.flush()
-            await self.db.refresh(request)
+            request = await self.get_request_by_id(request_id)
             
             logger.info("Demande d'accès approuvée",
                        request_id=str(request_id),
-                       user_id=str(request.user_id),
+                       user_id=str(user_id),
                        reviewer_id=str(reviewer_id))
             
             return request
@@ -280,10 +203,10 @@ class AccessRequestService:
     
     async def reject_request(
         self,
-        request_id: UUID,
-        reviewer_id: UUID,
-        rejection_reason: str
-    ) -> AccessRequest:
+        request_id: Any,
+        reviewer_id: Any,
+        rejection_reason: str,
+    ) -> Dict[str, Any]:
         """
         Refuser une demande d'accès.
         
@@ -318,39 +241,38 @@ class AccessRequestService:
             if not request:
                 raise NotFoundError("Demande d'accès non trouvée")
             
-            current_status: str = cast(str, request.status)
+            current_status = request.get("status")
             if current_status != 'pending':
                 raise ValidationError(f"La demande a déjà été traitée (statut: {current_status})")
             
             # Mettre à jour le statut de l'utilisateur
-            await self.db.execute(
-                update(User)
-                .where(User.id == request.user_id)
-                .values(
-                    statut='bloqué',
-                    updated_at=datetime.now(timezone.utc)
-                )
+            user_id = request.get("user_id")
+            user_query = {"_id": ObjectId(user_id)} if len(str(user_id)) == 24 else {"_id": str(user_id)}
+            await self.db.users.update_one(
+                user_query,
+                {"$set": {
+                    "statut": "bloqué",
+                    "updated_at": datetime.now(timezone.utc)
+                }}
             )
             
             # Mettre à jour la demande
-            await self.db.execute(
-                update(AccessRequest)
-                .where(AccessRequest.id == request_id)
-                .values(
-                    status='rejected',
-                    rejection_reason=rejection_reason.strip(),
-                    reviewed_at=datetime.now(timezone.utc),
-                    reviewed_by=reviewer_id
-                )
+            await self.db.access_requests.update_one(
+                {"_id": request["_id"]},
+                {"$set": {
+                    "status": "rejected",
+                    "rejection_reason": rejection_reason.strip(),
+                    "reviewed_at": datetime.now(timezone.utc),
+                    "reviewed_by": str(reviewer_id),
+                    "updated_at": datetime.now(timezone.utc)
+                }}
             )
             
-            # PAS de commit ici - responsabilité de l'appelant
-            await self.db.flush()
-            await self.db.refresh(request)
+            request = await self.get_request_by_id(request_id)
             
             logger.info("Demande d'accès refusée",
                        request_id=str(request_id),
-                       user_id=str(request.user_id),
+                       user_id=str(user_id),
                        reviewer_id=str(reviewer_id),
                        reason_length=len(rejection_reason))
             
@@ -372,21 +294,12 @@ class AccessRequestService:
             int: Nombre de demandes marquées comme vues
         """
         try:
-            result = await self.db.execute(
-                update(AccessRequest)
-                .where(
-                    and_(
-                        AccessRequest.status == 'pending',
-                        AccessRequest.viewed == False
-                    )
-                )
-                .values(viewed=True)
+            result = await self.db.access_requests.update_many(
+                {"status": "pending", "viewed": False},
+                {"$set": {"viewed": True, "updated_at": datetime.now(timezone.utc)}}
             )
             
-            # PAS de commit ici - responsabilité de l'appelant
-            await self.db.flush()
-            
-            count = result.rowcount or 0
+            count = result.modified_count
             logger.info("Demandes marquées comme vues", count=count)
             
             return count
@@ -395,33 +308,18 @@ class AccessRequestService:
             logger.error("Erreur marquage viewed", error=str(e))
             raise BusinessLogicError("Erreur lors du marquage des demandes")
     
-    async def mark_request_as_viewed(self, request_id: UUID) -> AccessRequest:
-        """
-        Marquer une demande spécifique comme vue.
-        
-        Args:
-            request_id: ID de la demande
-            
-        Returns:
-            AccessRequest: La demande mise à jour
-        """
+    async def mark_request_as_viewed(self, request_id: Any) -> Any:
         try:
-            request = await self.get_request_by_id(request_id)
-            
-            if not request:
-                raise NotFoundError("Demande non trouvée")
-            
-            await self.db.execute(
-                update(AccessRequest)
-                .where(AccessRequest.id == request_id)
-                .values(viewed=True)
+            query = {"_id": ObjectId(request_id)} if len(str(request_id)) == 24 else {"_id": str(request_id)}
+            result = await self.db.access_requests.update_one(
+                query,
+                {"$set": {"viewed": True, "updated_at": datetime.now(timezone.utc)}}
             )
             
-            # PAS de commit ici
-            await self.db.flush()
-            await self.db.refresh(request)
+            if result.matched_count == 0:
+                raise NotFoundError("Demande non trouvée")
             
-            return request
+            return await self.get_request_by_id(request_id)
             
         except NotFoundError:
             raise
@@ -437,15 +335,11 @@ class AccessRequestService:
             int: Nombre de demandes pending et non vues
         """
         try:
-            result = await self.db.execute(
-                select(func.count(AccessRequest.id)).where(
-                    and_(
-                        AccessRequest.status == 'pending',
-                        AccessRequest.viewed == False
-                    )
-                )
-            )
-            return result.scalar() or 0
+            count = await self.db.access_requests.count_documents({
+                "status": "pending",
+                "viewed": False
+            })
+            return count
         except Exception as e:
             logger.error("Erreur comptage unviewed", error=str(e))
             return 0

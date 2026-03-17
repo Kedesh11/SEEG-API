@@ -3,13 +3,11 @@ Endpoints publics (sans authentification)
 Pour permettre aux visiteurs de voir les offres d'emploi
 """
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import List, Optional
+from typing import List, Optional, Any
+from bson import ObjectId
 from uuid import UUID
 
 from app.db.database import get_db
-from app.models.job_offer import JobOffer
 from app.schemas.job import JobOfferPublicResponse, JobOfferDetailPublicResponse
 import structlog
 
@@ -23,19 +21,19 @@ async def get_public_jobs(
     limit: int = 100,
     location: Optional[str] = None,
     contract_type: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
+    db: Any = Depends(get_db),
 ):
     """
     Récupérer la liste des offres d'emploi publiques (sans authentification).
-    
+
     **Filtres automatiques :**
     - Offres avec offer_status = 'tous', 'externe' ou 'interne'
     - Uniquement les offres ACTIVES (status = 'active')
-    
+
     **Filtres optionnels :**
     - location : Filtrer par localisation
     - contract_type : Filtrer par type de contrat (CDI, CDD, Stage, Alternance)
-    
+
     **Pagination :**
     - skip : Nombre d'offres à ignorer (défaut: 0)
     - limit : Nombre maximum d'offres à retourner (défaut: 100, max: 100)
@@ -43,28 +41,28 @@ async def get_public_jobs(
     try:
         # Requête de base : offres publiques et actives
         # Afficher uniquement les offres "tous" et "externe" (jamais "interne" car pas d'authentification)
-        query = select(JobOffer).where(
-            JobOffer.offer_status.in_(["tous", "externe"]),
-            JobOffer.status == "active"
-        )
-        
+        query = {
+            "offer_status": {"$in": ["tous", "externe"]},
+            "status": "active"
+        }
+
         # Filtres optionnels
         if location:
-            query = query.where(JobOffer.location.ilike(f"%{location}%"))
-        
+            query["location"] = {"$regex": location, "$options": "i"}
+
         if contract_type:
-            query = query.where(JobOffer.contract_type == contract_type)
-        
-        # Pagination
-        query = query.offset(skip).limit(min(limit, 100))
-        
-        # Tri par date de création (plus récentes en premier)
-        query = query.order_by(JobOffer.created_at.desc())
-        
-        # Exécution
-        result = await db.execute(query)
-        jobs = result.scalars().all()
-        
+            query["contract_type"] = contract_type
+
+        # Exécution et tri par date de création (plus récentes en premier)
+        cursor = db.job_offers.find(query).sort("created_at", -1).skip(skip).limit(min(limit, 100))
+        jobs_docs = await cursor.to_list(length=None)
+
+        # Conversion
+        jobs = []
+        for doc in jobs_docs:
+            doc["id"] = str(doc.get("_id"))
+            jobs.append(doc)
+
         logger.info(
             "Liste des offres publiques récupérée",
             count=len(jobs),
@@ -73,9 +71,9 @@ async def get_public_jobs(
             location=location,
             contract_type=contract_type
         )
-        
+
         return jobs
-        
+
     except Exception as e:
         logger.error("Erreur lors de la récupération des offres publiques", error=str(e), error_type=type(e).__name__)
         raise HTTPException(
@@ -86,33 +84,31 @@ async def get_public_jobs(
 
 @router.get("/jobs/count", response_model=dict, summary="Compteur d'offres publiques (sans auth)")
 async def get_public_jobs_count(
-    db: AsyncSession = Depends(get_db),
+    db: Any = Depends(get_db),
 ):
     """
     Compter le nombre d'offres d'emploi publiques disponibles.
-    
+
     **Retourne :**
     - total : Nombre total d'offres publiques actives
     """
     try:
         # Compter les offres "tous" et "externe"
-        query = select(JobOffer).where(
-            JobOffer.offer_status.in_(["tous", "externe"]),
-            JobOffer.status == "active"
-        )
-        
-        result = await db.execute(query)
-        jobs = result.scalars().all()
-        total = len(jobs)
-        
+        query = {
+            "offer_status": {"$in": ["tous", "externe"]},
+            "status": "active"
+        }
+
+        total = await db.job_offers.count_documents(query)
+
         logger.info("Compteur d'offres publiques", total=total)
-        
+
         return {
             "total": total,
             "status": "active",
             "type": "public"
         }
-        
+
     except Exception as e:
         logger.error("Erreur lors du comptage des offres publiques", error=str(e))
         raise HTTPException(
@@ -123,16 +119,16 @@ async def get_public_jobs_count(
 
 @router.get("/jobs/{job_id}", response_model=JobOfferDetailPublicResponse, summary="Détails d'une offre publique (sans auth)")
 async def get_public_job_details(
-    job_id: UUID,
-    db: AsyncSession = Depends(get_db),
+    job_id: str,
+    db: Any = Depends(get_db),
 ):
     """
     Récupérer les détails complets d'une offre d'emploi publique (sans authentification).
-    
+
     **Restrictions :**
     - Offres avec offer_status = 'tous', 'externe' ou 'interne'
     - Uniquement les offres ACTIVES (status = 'active')
-    
+
     **Retourne :**
     - Tous les détails de l'offre (titre, description, localisation, etc.)
     - Les questions MTP si disponibles
@@ -141,26 +137,27 @@ async def get_public_job_details(
     try:
         # Requête avec vérifications de sécurité
         # Uniquement les offres "tous" et "externe"
-        query = select(JobOffer).where(
-            JobOffer.id == job_id,
-            JobOffer.offer_status.in_(["tous", "externe"]),
-            JobOffer.status == "active"
-        )
-        
-        result = await db.execute(query)
-        job = result.scalar_one_or_none()
-        
+        query = {
+            "_id": ObjectId(job_id) if len(job_id) == 24 else job_id,
+            "offer_status": {"$in": ["tous", "externe"]},
+            "status": "active"
+        }
+
+        job = await db.job_offers.find_one(query)
+
         if not job:
             logger.warning("Offre publique non trouvée ou non accessible", job_id=str(job_id))
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Offre d'emploi non trouvée ou non accessible publiquement"
             )
-        
-        logger.info("Détails de l'offre publique récupérés", job_id=str(job_id), title=job.title)
-        
+
+        job["id"] = str(job.get("_id"))
+
+        logger.info("Détails de l'offre publique récupérés", job_id=str(job_id), title=job.get("title"))
+
         return job
-        
+
     except HTTPException:
         raise
     except Exception as e:

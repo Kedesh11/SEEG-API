@@ -55,33 +55,41 @@ log_header() {
 # ============================================================================
 
 extract_db_host_port() {
-    # Extrait host et port depuis DATABASE_URL
-    # Supporte: postgresql://user:pass@host:port/db et postgresql+asyncpg://...
+    # Extrait host et port depuis MONGODB_URL
+    # Supporte: mongodb://user:pass@host:port/db ou mongodb://host:port
     local url="$1"
     
     if [[ -z "$url" ]]; then
-        log_error "DATABASE_URL vide"
+        log_error "MONGODB_URL vide"
         return 1
     fi
     
-    # Extraction avec sed (compatible Linux)
-    DB_HOST=$(echo "$url" | sed -E 's/^[^:]+:\/\/[^@]+@([^:\/]+).*/\1/')
-    DB_PORT=$(echo "$url" | sed -E 's/^[^:]+:\/\/[^@]+@[^:]+:([0-9]+).*/\1/')
+    # Extraction simplifiée (non-srv)
+    DB_HOST=$(echo "$url" | sed -E 's/mongodb:\/\/(.*@)?([^:\/]+).*/\2/')
+    DB_PORT=$(echo "$url" | sed -E 's/mongodb:\/\/(.*@)?[^:]+:([0-9]+).*/\2/')
     
     if [[ -z "$DB_HOST" ]] || [[ -z "$DB_PORT" ]]; then
-        log_error "Impossible d'extraire host/port depuis DATABASE_URL"
-        return 1
+        log_warn "Impossible d'extraire host/port depuis MONGODB_URL. Format peut-être SRV."
+        DB_HOST=$(echo "$url" | sed -E 's/mongodb\+srv:\/\/(.*@)?([^\/]+).*/\2/')
+        DB_PORT="27017" # Default for SRV
     fi
     
     log_info "Base de données détectée: ${DB_HOST}:${DB_PORT}"
     return 0
 }
 
-wait_for_postgres() {
-    log_header "ATTENTE DE POSTGRESQL"
+wait_for_mongodb() {
+    log_header "ATTENTE DE MONGODB"
     
     if [[ "$SKIP_WAIT_FOR_DB" == "true" ]]; then
-        log_warn "Vérification PostgreSQL désactivée (SKIP_WAIT_FOR_DB=true)"
+        log_warn "Vérification MongoDB désactivée (SKIP_WAIT_FOR_DB=true)"
+        return 0
+    fi
+
+    # Atlas (mongodb+srv) n'expose pas forcément un host:port joignable en TCP direct
+    # (résolution SRV + équilibrage), donc un test nc -z est souvent trompeur.
+    if [[ -n "$MONGODB_URL" ]] && [[ "$MONGODB_URL" == mongodb+srv://* ]]; then
+        log_warn "MONGODB_URL en mongodb+srv détecté: skip du test TCP (nc)"
         return 0
     fi
     
@@ -89,36 +97,36 @@ wait_for_postgres() {
     local port=""
     
     # Déterminer host/port selon l'environnement
-    if [[ "$ENVIRONMENT" == "production" ]] && [[ -n "$DATABASE_URL" ]]; then
-        if ! extract_db_host_port "$DATABASE_URL"; then
+    if [[ "$ENVIRONMENT" == "production" ]] && [[ -n "$MONGODB_URL" ]]; then
+        if ! extract_db_host_port "$MONGODB_URL"; then
             log_error "Échec extraction host/port, utilisation valeurs par défaut"
-            host="${POSTGRES_HOST:-postgres}"
-            port="${POSTGRES_PORT:-5432}"
+            host="${MONGODB_HOST:-mongodb}"
+            port="${MONGODB_PORT:-27017}"
         else
             host="$DB_HOST"
             port="$DB_PORT"
         fi
     else
-        host="${POSTGRES_HOST:-postgres}"
-        port="${POSTGRES_PORT:-5432}"
-        log_info "Mode développement: PostgreSQL sur ${host}:${port}"
+        host="${MONGODB_HOST:-mongodb}"
+        port="${MONGODB_PORT:-27017}"
+        log_info "Mode développement: MongoDB sur ${host}:${port}"
     fi
     
     # Attente avec retry
     local retry=0
-    log_info "Attente de PostgreSQL sur ${host}:${port}..."
+    log_info "Attente de MongoDB sur ${host}:${port}..."
     
     while ! nc -z "$host" "$port" 2>/dev/null; do
         retry=$((retry + 1))
         if [[ $retry -ge $MAX_DB_RETRIES ]]; then
-            log_error "PostgreSQL injoignable après ${MAX_DB_RETRIES} tentatives"
+            log_error "MongoDB injoignable après ${MAX_DB_RETRIES} tentatives"
             return 1
         fi
-        log_info "PostgreSQL pas encore prêt (tentative ${retry}/${MAX_DB_RETRIES})..."
+        log_info "MongoDB pas encore prêt (tentative ${retry}/${MAX_DB_RETRIES})..."
         sleep $DB_RETRY_DELAY
     done
     
-    log_success "PostgreSQL est prêt sur ${host}:${port}"
+    log_success "MongoDB est prêt sur ${host}:${port}"
     return 0
 }
 
@@ -147,50 +155,7 @@ wait_for_redis() {
     return 0
 }
 
-run_migrations() {
-    log_header "APPLICATION DES MIGRATIONS ALEMBIC"
-    
-    if ! command -v alembic &> /dev/null; then
-        log_error "Alembic non trouvé dans le PATH"
-        return 1
-    fi
-    
-    log_info "Vérification de l'état actuel des migrations..."
-    alembic current || log_warn "Impossible de déterminer la révision actuelle."
-    
-    log_info "Exécution: alembic upgrade head"
-    
-    if alembic upgrade head 2>&1; then
-        log_success "Migrations appliquées avec succès"
-        return 0
-    else
-        log_error "Échec des migrations"
-        
-        # Test de connexion DB pour diagnostic
-        log_info "Test de connexion à la base de données..."
-        if python -c "
-import asyncio
-from app.db.database import async_engine
 
-async def test_connection():
-    try:
-        async with async_engine.connect() as conn:
-            print('[INFO] ✅ Connexion DB réussie')
-            return 0
-    except Exception as e:
-        print(f'[ERROR] ❌ Connexion DB échouée: {e}')
-        return 1
-
-exit(asyncio.run(test_connection()))
-" 2>&1; then
-            log_info "Connexion DB OK mais migrations échouées"
-        else
-            log_error "Connexion DB impossible"
-        fi
-        
-        return 1
-    fi
-}
 
 bootstrap_initial_users() {
     if [[ "$CREATE_INITIAL_USERS" != "true" ]]; then
@@ -232,34 +197,39 @@ main() {
     log_info "User: $(whoami)"
     
     # Étape 1: Attente des dépendances
-    if ! wait_for_postgres; then
-        log_error "PostgreSQL injoignable, arrêt"
+    if ! wait_for_mongodb; then
+        log_error "MongoDB injoignable, arrêt"
         exit 1
     fi
     
     wait_for_redis  # Non bloquant si Redis absent
-    
-    # Étape 2: Migrations de base de données
-    if [[ "$SKIP_MIGRATIONS" == "true" ]]; then
-        log_warn "Migrations ignorées (SKIP_MIGRATIONS=true)"
-        log_info "Les migrations doivent être exécutées séparément avec run-migrations.ps1"
-    else
-        if ! run_migrations; then
-            log_error "Migrations échouées, arrêt"
-            exit 1
-        fi
-    fi
     
     # Étape 3: Bootstrap utilisateurs (optionnel)
     bootstrap_initial_users
     
     # Étape 4: Démarrage de l'application
     log_header "DEMARRAGE DE L'APPLICATION"
+    
+    # Render injecte $PORT; fallback to 8000 sinon
+    APP_PORT="${PORT:-8000}"
+    log_info "Port: ${APP_PORT}"
     log_info "Commande: $*"
     log_success "Prêt à démarrer l'API"
     
-    # Exécuter la commande CMD du Dockerfile
-    exec "$@"
+    # Si le premier argument est 'uvicorn', injecter le port dynamique
+    if [[ "$1" == "uvicorn" ]]; then
+        # Remplacer le port fixe par le port dynamique
+        exec uvicorn app.main:app \
+            --host 0.0.0.0 \
+            --port "${APP_PORT}" \
+            --workers "${WORKERS:-2}" \
+            --access-log \
+            --log-config logging.yaml \
+            --proxy-headers \
+            --forwarded-allow-ips "*"
+    else
+        exec "$@"
+    fi
 }
 
 # ============================================================================

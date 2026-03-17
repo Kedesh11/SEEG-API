@@ -1,20 +1,20 @@
 """
 Service pour l'envoi d'emails
 """
+
 from typing import List, Optional, Dict, Any
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 from pydantic import SecretStr
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, insert, func, desc
 from datetime import datetime, timezone
 import structlog
 import smtplib
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from bson import ObjectId
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import aiofiles
 import os
 
-from app.models.email import EmailLog
 from app.core.config.config import settings
 from app.core.exceptions import EmailError
 
@@ -23,11 +23,11 @@ logger = structlog.get_logger(__name__)
 
 class EmailService:
     """Service pour l'envoi d'emails"""
-    
-    def __init__(self, db: AsyncSession):
+
+    def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self._setup_fastmail()
-    
+
     def _setup_fastmail(self):
         """Configuration de FastMail"""
         # Ne pas configurer FastMail en environnement de test
@@ -36,7 +36,7 @@ class EmailService:
             self.fastmail = None
             logger.info("FastMail dÃ©sactivÃ© en environnement de test")
             return
-            
+
         try:
             # Configuration FastMail avec les nouveaux noms de champs (fastapi-mail v1.4+)
             self.mail_config = ConnectionConfig(
@@ -47,16 +47,16 @@ class EmailService:
                 MAIL_PORT=settings.SMTP_PORT,
                 MAIL_SERVER=settings.SMTP_HOST,
                 MAIL_STARTTLS=settings.SMTP_TLS,  # Nouveau nom (anciennement MAIL_TLS)
-                MAIL_SSL_TLS=settings.SMTP_SSL,   # Nouveau nom (anciennement MAIL_SSL)
+                MAIL_SSL_TLS=settings.SMTP_SSL,  # Nouveau nom (anciennement MAIL_SSL)
                 USE_CREDENTIALS=True,
-                VALIDATE_CERTS=True
+                VALIDATE_CERTS=True,
             )
             self.fastmail = FastMail(self.mail_config)
             logger.info("✅ FastMail configuré avec succès")
         except Exception as e:
             logger.error("Failed to setup FastMail", error=str(e))
             self.fastmail = None
-    
+
     async def send_email(
         self,
         to: str | List[str],
@@ -66,11 +66,11 @@ class EmailService:
         sender: Optional[str] = None,
         cc: Optional[List[str]] = None,
         bcc: Optional[List[str]] = None,
-        attachments: Optional[List[Any]] = None  # Type plus flexible
+        attachments: Optional[List[Any]] = None,  # Type plus flexible
     ) -> bool:
         """
         Envoyer un email
-        
+
         Args:
             to: Destinataire(s)
             subject: Sujet de l'email
@@ -80,10 +80,10 @@ class EmailService:
             cc: Copie carbone
             bcc: Copie carbone cachée
             attachments: Pièces jointes
-            
+
         Returns:
             bool: True si l'envoi a réussi
-            
+
         Raises:
             EmailError: Si l'envoi échoue
         """
@@ -92,17 +92,17 @@ class EmailService:
             recipients = [to]
         else:
             recipients = to
-        
+
         try:
             # En environnement de test, simuler l'envoi
             if settings.ENVIRONMENT == "testing":
                 logger.info(
                     "Email simulé en environnement de test",
                     to=recipients,
-                    subject=subject
+                    subject=subject,
                 )
                 return True
-            
+
             # Création du message (fastapi-mail v1.4+)
             # Dans fastapi-mail v1.4+, on utilise 'body' pour le contenu HTML/plain
             message_body = html_body if html_body else body
@@ -113,16 +113,16 @@ class EmailService:
                 subtype=MessageType.html if html_body else MessageType.plain,
                 cc=cc or [],
                 bcc=bcc or [],
-                attachments=attachments or []
+                attachments=attachments or [],
             )
-            
+
             # Envoi via FastMail
             if self.fastmail:
                 await self.fastmail.send_message(message)
                 logger.info(
                     "Email sent successfully via FastMail",
                     to=recipients,
-                    subject=subject
+                    subject=subject,
                 )
             else:
                 # Fallback vers SMTP direct
@@ -130,9 +130,9 @@ class EmailService:
                 logger.info(
                     "Email sent successfully via SMTP direct",
                     to=recipients,
-                    subject=subject
+                    subject=subject,
                 )
-            
+
             # Log de l'email dans la base de données
             await self._log_email(
                 to=recipients,
@@ -141,20 +141,17 @@ class EmailService:
                 html_body=html_body,
                 status="sent",
                 error_message=None,
-                sent_at=datetime.now(timezone.utc)
+                sent_at=datetime.now(timezone.utc),
             )
-            
+
             return True
-            
+
         except Exception as e:
             error_msg = str(e)
             logger.error(
-                "Failed to send email",
-                to=recipients,
-                subject=subject,
-                error=error_msg
+                "Failed to send email", to=recipients, subject=subject, error=error_msg
             )
-            
+
             # Log de l'erreur dans la base de données
             await self._log_email(
                 to=recipients,
@@ -163,72 +160,76 @@ class EmailService:
                 html_body=html_body,
                 status="failed",
                 error_message=error_msg,
-                sent_at=datetime.now(timezone.utc)
+                sent_at=datetime.now(timezone.utc),
             )
-            
+
             raise EmailError(f"Échec de l'envoi de l'email: {error_msg}")
-    
+
     async def _send_smtp_direct(self, message: MessageSchema):
         """
         Envoi direct via SMTP (fallback)
-        
+
         Args:
             message: Message Ã  envoyer
         """
         try:
             # CrÃ©ation du message MIME
-            msg = MIMEMultipart('alternative')
-            msg['Subject'] = message.subject
-            msg['From'] = f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM_EMAIL}>"
-            msg['To'] = ', '.join(message.recipients)
-            
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = message.subject
+            msg["From"] = f"{settings.MAIL_FROM_NAME} <{settings.MAIL_FROM_EMAIL}>"
+            msg["To"] = ", ".join(message.recipients)
+
             if message.cc:
-                msg['Cc'] = ', '.join(message.cc)
-            
+                msg["Cc"] = ", ".join(message.cc)
+
             # Ajout du corps du message
             # Dans fastapi-mail v1.4+, body contient le contenu et subtype indique le type
             if message.body and isinstance(message.body, str):
-                message_type = 'html' if message.subtype == MessageType.html else 'plain'
-                part = MIMEText(message.body, message_type, 'utf-8')
+                message_type = (
+                    "html" if message.subtype == MessageType.html else "plain"
+                )
+                part = MIMEText(message.body, message_type, "utf-8")
                 msg.attach(part)
-            
+
             # Connexion SMTP
             server = smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT)
-            
+
             if settings.SMTP_TLS:
                 server.starttls()
-            
+
             server.login(settings.SMTP_USERNAME, settings.SMTP_PASSWORD)
-            
+
             # Envoi
-            all_recipients = message.recipients + (message.cc or []) + (message.bcc or [])
+            all_recipients = (
+                message.recipients + (message.cc or []) + (message.bcc or [])
+            )
             server.send_message(msg, to_addrs=all_recipients)
             server.quit()
-            
+
         except Exception as e:
             raise EmailError(f"Erreur SMTP direct: {str(e)}")
-    
+
     async def send_application_confirmation(
         self,
         candidate_email: str,
         candidate_name: str,
         job_title: str,
-        application_id: str
+        application_id: str,
     ) -> bool:
         """
         Envoyer un email de confirmation de candidature
-        
+
         Args:
             candidate_email: Email du candidat
             candidate_name: Nom du candidat
             job_title: Titre du poste
             application_id: ID de la candidature
-            
+
         Returns:
             bool: True si l'envoi a rÃ©ussi
         """
         subject = f"Confirmation de candidature - {job_title}"
-        
+
         body = f"""
 Bonjour {candidate_name},
 
@@ -243,7 +244,7 @@ Nous vous contacterons dans les plus brefs dÃ©lais pour vous informer de la su
 Cordialement,
 L'Ã©quipe RH - SEEG
         """
-        
+
         html_body = f"""
         <html>
         <body>
@@ -257,32 +258,29 @@ L'Ã©quipe RH - SEEG
         </body>
         </html>
         """
-        
+
         return await self.send_email(
-            to=candidate_email,
-            subject=subject,
-            body=body,
-            html_body=html_body
+            to=candidate_email, subject=subject, body=body, html_body=html_body
         )
-    
+
     async def send_application_status_update(
         self,
         candidate_email: str,
         candidate_name: str,
         job_title: str,
         new_status: str,
-        notes: Optional[str] = None
+        notes: Optional[str] = None,
     ) -> bool:
         """
         Envoyer un email de mise Ã  jour du statut de candidature
-        
+
         Args:
             candidate_email: Email du candidat
             candidate_name: Nom du candidat
             job_title: Titre du poste
             new_status: Nouveau statut
             notes: Notes additionnelles
-            
+
         Returns:
             bool: True si l'envoi a rÃ©ussi
         """
@@ -291,12 +289,12 @@ L'Ã©quipe RH - SEEG
             "shortlisted": "prÃ©sÃ©lectionnÃ©e",
             "interview_scheduled": "convoquÃ©e pour un entretien",
             "accepted": "acceptÃ©e",
-            "rejected": "non retenue"
+            "rejected": "non retenue",
         }
-        
+
         status_text = status_messages.get(new_status, new_status)
         subject = f"Mise Ã  jour de votre candidature - {job_title}"
-        
+
         body = f"""
 Bonjour {candidate_name},
 
@@ -309,7 +307,7 @@ Nous vous remercions pour votre intÃ©rÃªt et vous tiendrons informÃ©(e) de
 Cordialement,
 L'Ã©quipe RH - SEEG
         """
-        
+
         html_body = f"""
         <html>
         <body>
@@ -322,14 +320,11 @@ L'Ã©quipe RH - SEEG
         </body>
         </html>
         """
-        
+
         return await self.send_email(
-            to=candidate_email,
-            subject=subject,
-            body=body,
-            html_body=html_body
+            to=candidate_email, subject=subject, body=body, html_body=html_body
         )
-    
+
     async def send_interview_invitation(
         self,
         candidate_email: str,
@@ -338,11 +333,11 @@ L'Ã©quipe RH - SEEG
         interview_date: datetime,
         interview_location: str,
         interviewer_name: str,
-        additional_notes: Optional[str] = None
+        additional_notes: Optional[str] = None,
     ) -> bool:
         """
         Envoyer une invitation d'entretien
-        
+
         Args:
             candidate_email: Email du candidat
             candidate_name: Nom du candidat
@@ -351,14 +346,14 @@ L'Ã©quipe RH - SEEG
             interview_location: Lieu de l'entretien
             interviewer_name: Nom de l'interviewer
             additional_notes: Notes additionnelles
-            
+
         Returns:
             bool: True si l'envoi a rÃ©ussi
         """
         subject = f"Invitation Ã  un entretien - {job_title}"
-        
+
         formatted_date = interview_date.strftime("%d/%m/%Y Ã  %H:%M")
-        
+
         body = f"""
 Bonjour {candidate_name},
 
@@ -376,7 +371,7 @@ Veuillez confirmer votre prÃ©sence en rÃ©pondant Ã  cet email.
 Cordialement,
 L'Ã©quipe RH - SEEG
         """
-        
+
         html_body = f"""
         <html>
         <body>
@@ -395,14 +390,11 @@ L'Ã©quipe RH - SEEG
         </body>
         </html>
         """
-        
+
         return await self.send_email(
-            to=candidate_email,
-            subject=subject,
-            body=body,
-            html_body=html_body
+            to=candidate_email, subject=subject, body=body, html_body=html_body
         )
-    
+
     async def _log_email(
         self,
         to: List[str],
@@ -411,11 +403,11 @@ L'Ã©quipe RH - SEEG
         html_body: Optional[str],
         status: str,
         error_message: Optional[str],
-        sent_at: datetime
+        sent_at: datetime,
     ):
         """
         Enregistrer l'email dans les logs
-        
+
         Args:
             to: Destinataires
             subject: Sujet
@@ -426,114 +418,118 @@ L'Ã©quipe RH - SEEG
             sent_at: Date d'envoi
         """
         try:
-            # Adapter au modèle EmailLog existant
-            email_log = EmailLog(
-                to=', '.join(to),  # type: ignore  # Champ 'to' dans le modèle
-                subject=subject,  # type: ignore
-                html=html_body if html_body else body,  # type: ignore  # Champ 'html' dans le modèle
-                category=status,  # type: ignore  # Utiliser 'category' pour stocker le statut
-                sent_at=sent_at,  # type: ignore
-                email_metadata={  # type: ignore
-                    "body_plain": body,
-                    "status": status,
-                    "error_message": error_message
-                } if error_message else {"body_plain": body, "status": status}
-            )
-            
-            self.db.add(email_log)
-            # ✅ PAS de commit ici - c'est la responsabilité du service appelant
-            
+            # Adapter au modèle EmailLog existant - Version MongoDB
+            email_log = {
+                "to": ", ".join(to),
+                "subject": subject,
+                "html": html_body if html_body else body,
+                "category": status,
+                "sent_at": sent_at,
+                "email_metadata": (
+                    {
+                        "body_plain": body,
+                        "status": status,
+                        "error_message": error_message,
+                    }
+                    if error_message
+                    else {"body_plain": body, "status": status}
+                ),
+            }
+
+            await self.db.email_logs.insert_one(email_log)
+
         except Exception as e:
             logger.error("Failed to log email", error=str(e))
-    
+
     async def get_email_logs(
-        self,
-        skip: int = 0,
-        limit: int = 100,
-        category: Optional[str] = None
+        self, skip: int = 0, limit: int = 100, category: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Récupérer les logs d'emails
-        
+
         Args:
             skip: Nombre d'éléments à ignorer
             limit: Nombre maximum d'éléments à retourner
             category: Filtrer par catégorie (status)
-            
+
         Returns:
             Dict contenant les logs et les métadonnées de pagination
         """
-        query = select(EmailLog)
-        count_query = select(func.count(EmailLog.id))
-        
-        if category:
-            query = query.where(EmailLog.category == category)
-            count_query = count_query.where(EmailLog.category == category)
-        
-        query = query.order_by(desc(EmailLog.sent_at))
-        query = query.offset(skip).limit(limit)
-        
-        result = await self.db.execute(query)
-        logs = result.scalars().all()
-        
-        count_result = await self.db.execute(count_query)
-        total_count = count_result.scalar()
-        
-        return {
-            "items": [
-                {
-                    "id": str(log.id),
-                    "recipient_email": log.to,  # Champ 'to' dans le modèle
-                    "subject": log.subject,
-                    "status": log.category,  # Champ 'category' stocke le statut
-                    "sent_at": log.sent_at,
-                    "error_message": log.email_metadata.get("error_message") if log.email_metadata else None
-                }
-                for log in logs
-            ],
-            "total": total_count if total_count is not None else 0,
-            "skip": skip,
-            "limit": limit,
-            "has_more": skip + len(logs) < (total_count if total_count else 0)
-        }
-    
+        try:
+            filter_query = {}
+            if category:
+                filter_query["category"] = category
+
+            cursor = (
+                self.db.email_logs.find(filter_query)
+                .sort("sent_at", -1)
+                .skip(skip)
+                .limit(limit)
+            )
+            logs = await cursor.to_list(length=limit)
+
+            total_count = await self.db.email_logs.count_documents(filter_query)
+
+            return {
+                "items": [
+                    {
+                        "id": str(log.get("_id", log.get("id"))),
+                        "recipient_email": log.get("to"),
+                        "subject": log.get("subject"),
+                        "status": log.get("category"),
+                        "sent_at": log.get("sent_at"),
+                        "error_message": (
+                            log.get("email_metadata", {}).get("error_message")
+                            if log.get("email_metadata")
+                            else None
+                        ),
+                    }
+                    for log in logs
+                ],
+                "total": total_count,
+                "skip": skip,
+                "limit": limit,
+                "has_more": skip + len(logs) < total_count,
+            }
+        except Exception as e:
+            logger.error("Failed to get email logs", error=str(e))
+            raise BusinessLogicError("Erreur lors de la récupération des logs d'emails")
+
     # ========================================================================
     # TEMPLATES EMAIL - SYSTÈME D'AUTHENTIFICATION v2.0
     # ========================================================================
-    
-    def _get_salutation(self, sexe: Optional[str], first_name: str, last_name: str) -> str:
+
+    def _get_salutation(
+        self, sexe: Optional[str], first_name: str, last_name: str
+    ) -> str:
         """
         Générer la salutation appropriée selon le sexe.
-        
+
         Args:
             sexe: 'M' (Homme) ou 'F' (Femme)
             first_name: Prénom
             last_name: Nom
-            
+
         Returns:
             str: "Monsieur Jean Dupont" ou "Madame Marie Martin"
         """
-        if sexe == 'M':
+        if sexe == "M":
             return f"Monsieur {first_name} {last_name}"
-        elif sexe == 'F':
+        elif sexe == "F":
             return f"Madame {first_name} {last_name}"
         else:
             return f"{first_name} {last_name}"
-    
+
     async def send_welcome_email(
-        self,
-        to_email: str,
-        first_name: str,
-        last_name: str,
-        sexe: Optional[str] = None
+        self, to_email: str, first_name: str, last_name: str, sexe: Optional[str] = None
     ) -> bool:
         """
         Email 1 : Bienvenue sur la plateforme (pour candidats avec statut='actif').
-        
+
         Envoyé à :
         - Candidats EXTERNES après inscription
         - Candidats INTERNES avec email @seeg-gabon.com après inscription
-        
+
         Args:
             to_email: Email du candidat
             first_name: Prénom
@@ -541,9 +537,9 @@ L'Ã©quipe RH - SEEG
             sexe: 'M' ou 'F' pour personnaliser la salutation
         """
         salutation = self._get_salutation(sexe, first_name, last_name)
-        
+
         subject = "Bienvenue sur OneHCM - SEEG Talent Source"
-        
+
         html_body = f"""
 <!DOCTYPE html>
 <html>
@@ -601,7 +597,7 @@ L'Ã©quipe RH - SEEG
 </body>
 </html>
         """
-        
+
         plain_body = f"""
 {salutation},
 
@@ -623,33 +619,30 @@ Cordialement,
 L'équipe OneHCM - SEEG Talent Source
 {settings.PUBLIC_APP_URL}
         """
-        
+
         try:
             await self.send_email(
-                to=to_email,
-                subject=subject,
-                body=plain_body,
-                html_body=html_body
+                to=to_email, subject=subject, body=plain_body, html_body=html_body
             )
-            logger.info("Email de bienvenue envoyé", to=to_email, name=f"{first_name} {last_name}")
+            logger.info(
+                "Email de bienvenue envoyé",
+                to=to_email,
+                name=f"{first_name} {last_name}",
+            )
             return True
         except Exception as e:
             logger.error("Erreur envoi email bienvenue", to=to_email, error=str(e))
             return False
-    
+
     async def send_access_request_pending_email(
-        self,
-        to_email: str,
-        first_name: str,
-        last_name: str,
-        sexe: Optional[str] = None
+        self, to_email: str, first_name: str, last_name: str, sexe: Optional[str] = None
     ) -> bool:
         """
         Email 2 : Demande d'accès en cours de traitement.
-        
+
         Envoyé aux candidats internes sans email @seeg-gabon.com.
         Leur compte est en attente de validation par un recruteur.
-        
+
         Args:
             to_email: Email du candidat
             first_name: Prénom
@@ -657,9 +650,9 @@ L'équipe OneHCM - SEEG Talent Source
             sexe: 'M' ou 'F'
         """
         salutation = self._get_salutation(sexe, first_name, last_name)
-        
+
         subject = "Demande d'Accès en Cours de Traitement - OneHCM"
-        
+
         html_body = f"""
 <!DOCTYPE html>
 <html>
@@ -707,7 +700,7 @@ L'équipe OneHCM - SEEG Talent Source
 </body>
 </html>
         """
-        
+
         plain_body = f"""
 {salutation},
 
@@ -725,20 +718,23 @@ Cordialement,
 L'équipe OneHCM - SEEG Talent Source
 {settings.PUBLIC_APP_URL}
         """
-        
+
         try:
             await self.send_email(
-                to=to_email,
-                subject=subject,
-                body=plain_body,
-                html_body=html_body
+                to=to_email, subject=subject, body=plain_body, html_body=html_body
             )
-            logger.info("Email demande en attente envoyé", to=to_email, name=f"{first_name} {last_name}")
+            logger.info(
+                "Email demande en attente envoyé",
+                to=to_email,
+                name=f"{first_name} {last_name}",
+            )
             return True
         except Exception as e:
-            logger.error("Erreur envoi email demande en attente", to=to_email, error=str(e))
+            logger.error(
+                "Erreur envoi email demande en attente", to=to_email, error=str(e)
+            )
             return False
-    
+
     async def send_access_request_notification_to_admin(
         self,
         first_name: str,
@@ -748,14 +744,14 @@ L'équipe OneHCM - SEEG Talent Source
         matricule: Optional[str],
         date_of_birth: Optional[str],
         sexe: Optional[str],
-        adresse: Optional[str]
+        adresse: Optional[str],
     ) -> bool:
         """
         Email 3 : Notification admin - Nouvelle demande d'accès.
-        
-        Envoyé à support@seeg-talentsource.com quand un candidat interne 
+
+        Envoyé à support@seeg-talentsource.com quand un candidat interne
         sans email SEEG s'inscrit.
-        
+
         Args:
             first_name: Prénom du candidat
             last_name: Nom du candidat
@@ -766,10 +762,12 @@ L'équipe OneHCM - SEEG Talent Source
             sexe: Sexe (M/F)
             adresse: Adresse
         """
-        sexe_label = "Homme" if sexe == 'M' else ("Femme" if sexe == 'F' else "Non précisé")
-        
+        sexe_label = (
+            "Homme" if sexe == "M" else ("Femme" if sexe == "F" else "Non précisé")
+        )
+
         subject = "🔔 Nouvelle Demande d'Accès - OneHCM"
-        
+
         html_body = f"""
 <!DOCTYPE html>
 <html>
@@ -847,7 +845,7 @@ L'équipe OneHCM - SEEG Talent Source
 </body>
 </html>
         """
-        
+
         plain_body = f"""
 🔔 NOUVELLE DEMANDE D'ACCÈS
 
@@ -872,38 +870,33 @@ Accéder au Dashboard Recruteur :
 Cordialement,
 Système OneHCM - SEEG Talent Source
         """
-        
+
         admin_email = "support@seeg-talentsource.com"
-        
+
         try:
             await self.send_email(
-                to=admin_email,
-                subject=subject,
-                body=plain_body,
-                html_body=html_body
+                to=admin_email, subject=subject, body=plain_body, html_body=html_body
             )
-            logger.info("Email notification admin envoyé", 
-                       to=admin_email, 
-                       candidate=f"{first_name} {last_name}",
-                       matricule=matricule)
+            logger.info(
+                "Email notification admin envoyé",
+                to=admin_email,
+                candidate=f"{first_name} {last_name}",
+                matricule=matricule,
+            )
             return True
         except Exception as e:
             logger.error("Erreur envoi notification admin", error=str(e))
             return False
-    
+
     async def send_access_approved_email(
-        self,
-        to_email: str,
-        first_name: str,
-        last_name: str,
-        sexe: Optional[str] = None
+        self, to_email: str, first_name: str, last_name: str, sexe: Optional[str] = None
     ) -> bool:
         """
         Email 4 : Demande d'accès approuvée.
-        
+
         Envoyé au candidat quand un recruteur approuve sa demande d'accès.
         Le compte passe de 'en_attente' à 'actif'.
-        
+
         Args:
             to_email: Email du candidat
             first_name: Prénom
@@ -911,9 +904,9 @@ Système OneHCM - SEEG Talent Source
             sexe: 'M' ou 'F'
         """
         salutation = self._get_salutation(sexe, first_name, last_name)
-        
+
         subject = "✅ Accès Approuvé - OneHCM"
-        
+
         html_body = f"""
 <!DOCTYPE html>
 <html>
@@ -973,7 +966,7 @@ Système OneHCM - SEEG Talent Source
 </body>
 </html>
         """
-        
+
         plain_body = f"""
 {salutation},
 
@@ -996,35 +989,36 @@ Cordialement,
 L'équipe OneHCM - SEEG Talent Source
 {settings.PUBLIC_APP_URL}
         """
-        
+
         try:
             await self.send_email(
-                to=to_email,
-                subject=subject,
-                body=plain_body,
-                html_body=html_body
+                to=to_email, subject=subject, body=plain_body, html_body=html_body
             )
-            logger.info("Email d'approbation envoyé", to=to_email, name=f"{first_name} {last_name}")
+            logger.info(
+                "Email d'approbation envoyé",
+                to=to_email,
+                name=f"{first_name} {last_name}",
+            )
             return True
         except Exception as e:
             logger.error("Erreur envoi email approbation", to=to_email, error=str(e))
             return False
-    
+
     async def send_access_rejected_email(
         self,
         to_email: str,
         first_name: str,
         last_name: str,
         rejection_reason: str,
-        sexe: Optional[str] = None
+        sexe: Optional[str] = None,
     ) -> bool:
         """
         Email 5 : Demande d'accès refusée.
-        
+
         Envoyé au candidat quand un recruteur refuse sa demande d'accès.
         Le compte passe de 'en_attente' à 'bloqué'.
         Inclut le motif du refus saisi par le recruteur.
-        
+
         Args:
             to_email: Email du candidat
             first_name: Prénom
@@ -1033,9 +1027,9 @@ L'équipe OneHCM - SEEG Talent Source
             sexe: 'M' ou 'F'
         """
         salutation = self._get_salutation(sexe, first_name, last_name)
-        
+
         subject = "❌ Demande d'Accès Refusée - OneHCM"
-        
+
         html_body = f"""
 <!DOCTYPE html>
 <html>
@@ -1084,7 +1078,7 @@ L'équipe OneHCM - SEEG Talent Source
 </body>
 </html>
         """
-        
+
         plain_body = f"""
 {salutation},
 
@@ -1105,15 +1099,14 @@ Cordialement,
 L'équipe OneHCM - SEEG Talent Source
 {settings.PUBLIC_APP_URL}
         """
-        
+
         try:
             await self.send_email(
-                to=to_email,
-                subject=subject,
-                body=plain_body,
-                html_body=html_body
+                to=to_email, subject=subject, body=plain_body, html_body=html_body
             )
-            logger.info("Email de refus envoyé", to=to_email, name=f"{first_name} {last_name}")
+            logger.info(
+                "Email de refus envoyé", to=to_email, name=f"{first_name} {last_name}"
+            )
             return True
         except Exception as e:
             logger.error("Erreur envoi email refus", to=to_email, error=str(e))

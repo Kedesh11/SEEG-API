@@ -1,103 +1,42 @@
 """
-Gestion des sessions de base de données.
-Respecte le principe de responsabilité unique (Single Responsibility Principle).
+Gestion des sessions de base de données (Version MongoDB).
 """
-
-from contextlib import asynccontextmanager, contextmanager
-from typing import AsyncGenerator, Generator
-
-from sqlalchemy.orm import Session
-from sqlalchemy.ext.asyncio import AsyncSession
-
-from app.db.database import SessionLocal, AsyncSessionLocal
+from contextlib import asynccontextmanager
+from typing import AsyncGenerator
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from app.db.database import get_db
 import structlog
 
 logger = structlog.get_logger(__name__)
 
-
-@contextmanager
-def get_db_session() -> Generator[Session, None, None]:
-    """
-    Contexte manager pour une session de base de données synchrone.
-    
-    Yields:
-        Session: Session SQLAlchemy
-        
-    Raises:
-        Exception: En cas d'erreur, la session est rollback
-    """
-    db = SessionLocal()
-    try:
-        yield db
-        db.commit()
-    except Exception as e:
-        logger.error("Database session error", error=str(e))
-        db.rollback()
-        raise
-    finally:
-        db.close()
-
-
 @asynccontextmanager
-async def get_async_db_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_async_db_session() -> AsyncGenerator[AsyncIOMotorDatabase, None]:
     """
-    Contexte manager pour une session de base de données asynchrone.
+    Contexte manager pour une session de base de données MongoDB.
     
     Yields:
-        AsyncSession: Session SQLAlchemy asynchrone
-        
-    Raises:
-        Exception: En cas d'erreur, la session est rollback
+        AsyncIOMotorDatabase: Base de données MongoDB
     """
-    db = AsyncSessionLocal()
-    try:
+    async for db in get_db():
         yield db
-        await db.commit()
-    except Exception as e:
-        logger.error("Async database session error", error=str(e))
-        await db.rollback()
-        raise
-    finally:
-        await db.close()
-
 
 class DatabaseManager:
     """
-    Gestionnaire de base de données pour les transactions complexes.
-    Respecte le principe de responsabilité unique.
+    Gestionnaire de base de données pour MongoDB.
+    Note: Les transactions MongoDB nécessitent un cluster réplica set.
     """
     
-    def __init__(self, session: AsyncSession):
-        self.session = session
-    
-    async def begin_transaction(self):
-        """Débuter une transaction"""
-        await self.session.begin()
-    
-    async def commit_transaction(self):
-        """Valider une transaction"""
-        await self.session.commit()
-    
-    async def rollback_transaction(self):
-        """Annuler une transaction"""
-        await self.session.rollback()
-    
+    def __init__(self, db: AsyncIOMotorDatabase):
+        self.db = db
+        self.session = None
+
     async def __aenter__(self):
-        await self.begin_transaction()
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is not None:
-            await self.rollback_transaction()
-        else:
-            await self.commit_transaction()
+        pass
 
-
-# Fonction pour obtenir une session asynchrone (pour les tests)
+# Fonction legacy pour compatibilité
 async def get_async_session():
-    """Générateur pour obtenir une session asynchrone"""
-    session = AsyncSessionLocal()
-    try:
-        yield session
-    finally:
-        await session.close()
+    async for db in get_db():
+        yield db

@@ -2,21 +2,16 @@
 Service de génération de PDF pour les candidatures
 """
 import io
-import os
-import json
 from datetime import datetime
-from typing import Optional, Any, Dict, List
-from pathlib import Path
+from typing import Any, Dict, List
 from reportlab.lib.pagesizes import A4, LETTER
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
-from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
-from reportlab.pdfgen import canvas
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 import structlog
 
-from app.models.application import Application
 from app.utils.json_utils import JSONDataHandler
 
 logger = structlog.get_logger(__name__)
@@ -100,26 +95,27 @@ class ApplicationPDFService:
     
     async def generate_application_pdf(
         self, 
-        application: Any,
+        application: Dict[str, Any],
         include_documents: bool = False
     ) -> bytes:
         """
         Génère un PDF complet pour une candidature
         
         Args:
-            application: Modèle Application avec toutes les relations chargées
+            application: Données de la candidature (dict MongoDB)
             include_documents: Inclure les documents joints (non implémenté dans cette version)
         
         Returns:
             bytes: Contenu binaire du PDF
         """
-        logger.info("🚀 Début génération PDF", application_id=getattr(application, 'id', 'N/A'))
+        app_id = application.get("id") or str(application.get("_id", "N/A"))
+        logger.info("🚀 Début génération PDF", application_id=app_id)
         
         # Log des données d'entrée pour diagnostic
         logger.debug("🔍 Données d'entrée PDF", 
-                    mtp_answers_type=type(getattr(application, 'mtp_answers', None)).__name__,
-                    candidate_id=str(getattr(application, 'candidate_id', 'N/A')),
-                    job_offer_id=str(getattr(application, 'job_offer_id', 'N/A')))
+                    mtp_answers_type=type(application.get('mtp_answers')).__name__,
+                    candidate_id=str(application.get('candidate_id', 'N/A')),
+                    job_offer_id=str(application.get('job_offer_id', 'N/A')))
         
         try:
             # Créer un buffer en mémoire
@@ -133,7 +129,7 @@ class ApplicationPDFService:
                 leftMargin=2*cm,
                 topMargin=2*cm,
                 bottomMargin=2*cm,
-                title=f"Candidature_{application.id}"
+                title=f"Candidature_{app_id}"
             )
         
             # Construire le contenu
@@ -229,11 +225,12 @@ class ApplicationPDFService:
         elements.append(Spacer(1, 0.5*cm))
         
         # Informations de référence
+        app_id = application.get("id") or str(application.get("_id", "N/A"))
         ref_data = [
             [Paragraph("<b>Date de génération:</b>", self.styles['FieldLabel']), 
              Paragraph(datetime.now().strftime("%d/%m/%Y à %H:%M"), self.styles['FieldValue'])],
             [Paragraph("<b>Référence candidature:</b>", self.styles['FieldLabel']), 
-             Paragraph(str(application.id), self.styles['FieldValue'])]
+             Paragraph(app_id, self.styles['FieldValue'])]
         ]
         
         ref_table = Table(ref_data, colWidths=[5*cm, 12*cm])
@@ -255,30 +252,31 @@ class ApplicationPDFService:
         elements.append(Paragraph("INFORMATIONS PERSONNELLES", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        user = getattr(application, 'candidate', None)
-        profile = getattr(user, 'candidate_profile', None)
+        user = application.get('candidate')
+        profile = user.get('candidate_profile') if user else None
         
         if user:
             data = [
-                ["Nom complet", f"{user.first_name or ''} {user.last_name or ''}"],
-                ["Email", user.email or 'N/A'],
-                ["Téléphone", user.phone or 'N/A'],
+                ["Nom complet", f"{user.get('first_name') or ''} {user.get('last_name') or ''}"],
+                ["Email", user.get('email') or 'N/A'],
+                ["Téléphone", user.get('phone') or 'N/A'],
             ]
             
-            if user.date_of_birth:
-                data.append(["Date de naissance", user.date_of_birth.strftime("%d/%m/%Y") if hasattr(user.date_of_birth, 'strftime') else str(user.date_of_birth)])
+            dob = user.get('date_of_birth')
+            if dob:
+                data.append(["Date de naissance", dob.strftime("%d/%m/%Y") if hasattr(dob, 'strftime') else str(dob)])
             
             if profile:
-                if hasattr(profile, 'gender') and profile.gender:
-                    data.append(["Genre", profile.gender])
-                if hasattr(profile, 'address') and profile.address:
-                    data.append(["Adresse", profile.address])
-                if hasattr(profile, 'current_position') and profile.current_position:
-                    data.append(["Poste actuel", profile.current_position])
-                if hasattr(profile, 'linkedin_profile') and profile.linkedin_profile:
-                    data.append(["LinkedIn", profile.linkedin_profile])
-                if hasattr(profile, 'portfolio_url') and profile.portfolio_url:
-                    data.append(["Portfolio", profile.portfolio_url])
+                if profile.get('gender'):
+                    data.append(["Genre", profile.get('gender')])
+                if profile.get('address'):
+                    data.append(["Adresse", profile.get('address')])
+                if profile.get('current_position'):
+                    data.append(["Poste actuel", profile.get('current_position')])
+                if profile.get('linkedin_profile'):
+                    data.append(["LinkedIn", profile.get('linkedin_profile')])
+                if profile.get('portfolio_url'):
+                    data.append(["Portfolio", profile.get('portfolio_url')])
             
             table = Table(data, colWidths=[5*cm, 12*cm])
             table.setStyle(TableStyle([
@@ -303,27 +301,28 @@ class ApplicationPDFService:
         elements.append(Paragraph("POSTE VISÉ", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        job_offer = getattr(application, 'job_offer', None)
+        job_offer = application.get('job_offer')
         
         if job_offer:
             data = [
-                ["Titre du poste", job_offer.title or 'N/A'],
-                ["Type de contrat", job_offer.contract_type or 'N/A'],
-                ["Localisation", job_offer.location or 'N/A'],
+                ["Titre du poste", job_offer.get('title') or 'N/A'],
+                ["Type de contrat", job_offer.get('contract_type') or 'N/A'],
+                ["Localisation", job_offer.get('location') or 'N/A'],
             ]
             
-            if hasattr(job_offer, 'date_limite') and job_offer.date_limite:
-                data.append(["Date limite de dépôt", job_offer.date_limite.strftime("%d/%m/%Y") if hasattr(job_offer.date_limite, 'strftime') else str(job_offer.date_limite)])
+            date_limite = job_offer.get('date_limite')
+            if date_limite:
+                data.append(["Date limite de dépôt", date_limite.strftime("%d/%m/%Y") if hasattr(date_limite, 'strftime') else str(date_limite)])
             
-            created_at = getattr(application, 'created_at', None)
+            created_at = application.get('created_at')
             created_at_text = str(created_at)
             if created_at is not None and hasattr(created_at, 'strftime'):
                 try:
-                    created_at_text = created_at.strftime("%d/%m/%Y")  # type: ignore[call-arg]
+                    created_at_text = created_at.strftime("%d/%m/%Y")
                 except Exception:
                     created_at_text = str(created_at)
             data.append(["Date de candidature", created_at_text])
-            status_value = getattr(application, 'status', None)
+            status_value = application.get('status')
             status_text = self.STATUS_LABELS.get(status_value, status_value) if status_value is not None else 'N/A'
             data.append(["Statut actuel", str(status_text)])
             
@@ -350,23 +349,23 @@ class ApplicationPDFService:
         elements.append(Paragraph("EXPÉRIENCE PROFESSIONNELLE", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        user = getattr(application, 'candidate', None)
-        profile = getattr(user, 'candidate_profile', None)
+        user = application.get('candidate')
+        profile = user.get('candidate_profile') if user else None
         
         # Affichage des années d'expérience
-        years_exp = getattr(profile, 'years_experience', None) if profile else None
+        years_exp = profile.get('years_experience') if profile else None
         if years_exp:
             elements.append(Paragraph(f"<b>Années d'expérience:</b> {years_exp} ans", self.styles['Normal']))
             elements.append(Spacer(1, 0.3*cm))
         
         # Affichage du poste actuel
-        current_pos = getattr(profile, 'current_position', None) if profile else None
+        current_pos = profile.get('current_position') if profile else None
         if current_pos:
             elements.append(Paragraph(f"<b>Poste actuel:</b> {current_pos}", self.styles['Normal']))
             elements.append(Spacer(1, 0.3*cm))
         
         # Affichage du département actuel
-        current_dept = getattr(profile, 'current_department', None) if profile else None
+        current_dept = profile.get('current_department') if profile else None
         if current_dept:
             elements.append(Paragraph(f"<b>Département actuel:</b> {current_dept}", self.styles['Normal']))
             elements.append(Spacer(1, 0.3*cm))
@@ -385,11 +384,11 @@ class ApplicationPDFService:
         elements.append(Paragraph("FORMATION & ÉDUCATION", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        user = getattr(application, 'candidate', None)
-        profile = getattr(user, 'candidate_profile', None)
+        user = application.get('candidate')
+        profile = user.get('candidate_profile') if user else None
         
-        if profile and hasattr(profile, 'education'):
-            education_text = getattr(profile, 'education', None)
+        if profile and profile.get('education'):
+            education_text = profile.get('education')
             if education_text:
                 elements.append(Paragraph(f"<b>Formation:</b> {education_text}", self.styles['Normal']))
                 elements.append(Spacer(1, 0.3*cm))
@@ -409,12 +408,12 @@ class ApplicationPDFService:
         elements.append(Paragraph("COMPÉTENCES", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        user = getattr(application, 'candidate', None)
-        profile = getattr(user, 'candidate_profile', None)
+        user = application.get('candidate')
+        profile = user.get('candidate_profile') if user else None
         
-        if profile and hasattr(profile, 'skills'):
-            logger.debug("🔍 Traitement des compétences", profile_id=getattr(profile, 'id', 'N/A'))
-            skills_raw = getattr(profile, 'skills', None)
+        if profile and profile.get('skills'):
+            logger.debug("🔍 Traitement des compétences", profile_id=profile.get('id') or str(profile.get('_id', 'N/A')))
+            skills_raw = profile.get('skills')
             skills = JSONDataHandler.safe_get_dict_list(skills_raw)
             logger.debug("🔍 Skills parsées", skills_count=len(skills))
             
@@ -466,7 +465,7 @@ class ApplicationPDFService:
         elements.append(Spacer(1, 0.3*cm))
         
         try:
-            mtp_raw = getattr(application, 'mtp_answers', None)
+            mtp_raw = application.get('mtp_answers')
             logger.debug("🔍 Traitement réponses MTP", mtp_type=type(mtp_raw).__name__)
             
             mtp_dict = JSONDataHandler.safe_parse_json(mtp_raw, {})
@@ -495,14 +494,17 @@ class ApplicationPDFService:
                     for i, paradigme in enumerate(paradigme_responses[:3], 1):
                         elements.append(Paragraph(f"{i}. {str(paradigme)}", self.styles['Normal']))
                     elements.append(Spacer(1, 0.3*cm))
+                
+                if not (metier_responses or talent_responses or paradigme_responses):
+                    logger.debug("🔍 Aucune réponse MTP valide trouvée")
+                    elements.append(Paragraph("Aucune réponse MTP renseignée", self.styles['Normal']))
             else:
                 logger.debug("🔍 Aucune réponse MTP valide trouvée")
+                elements.append(Paragraph("Aucune réponse MTP renseignée", self.styles['Normal']))
                 
         except Exception as e:
             logger.error("❌ Erreur traitement réponses MTP", error=str(e))
             elements.append(Paragraph("Erreur lors de l'affichage des réponses MTP", self.styles['Normal']))
-        else:
-            elements.append(Paragraph("Aucune réponse MTP renseignée", self.styles['Normal']))
         
         elements.append(Spacer(1, 0.8*cm))
         
@@ -515,7 +517,7 @@ class ApplicationPDFService:
         elements.append(Paragraph("LETTRE DE MOTIVATION", self.styles['SectionTitle']))
         elements.append(Spacer(1, 0.3*cm))
         
-        motivation_text = getattr(application, 'cover_letter', None) or getattr(application, 'motivation', None)
+        motivation_text = application.get('cover_letter') or application.get('motivation')
         if motivation_text:
             elements.append(Paragraph(motivation_text, self.styles['Normal']))
         else:
@@ -525,10 +527,10 @@ class ApplicationPDFService:
         
         # Disponibilité et références
         info_data = []
-        availability_start = getattr(application, 'availability_start', None)
+        availability_start = application.get('availability_start')
         if availability_start:
             info_data.append(["Disponibilité", availability_start.strftime("%d/%m/%Y") if hasattr(availability_start, 'strftime') else str(availability_start)])
-        reference_contacts = getattr(application, 'reference_contacts', None)
+        reference_contacts = application.get('reference_contacts')
         if reference_contacts:
             info_data.append(["Références", reference_contacts])
         
@@ -566,8 +568,8 @@ class ApplicationPDFService:
         """Construire la section entretien (si programmé)"""
         elements = []
         
-        interview_date = getattr(application, 'interview_date', None)
-        if getattr(application, 'status', None) == 'entretien_programme' and interview_date:
+        interview_date = application.get('interview_date')
+        if application.get('status') == 'entretien_programme' and interview_date:
             elements.append(Paragraph("ENTRETIEN PROGRAMMÉ", self.styles['SectionTitle']))
             elements.append(Spacer(1, 0.3*cm))
             
@@ -598,16 +600,18 @@ class ApplicationPDFService:
         
         return elements
     
-    def _build_footer(self, application: Any) -> list:
+    def _build_footer(self, application: Dict[str, Any]) -> List[Any]:
         """Construire le pied de page"""
         elements = []
+        
+        app_id = application.get("id") or str(application.get("_id", "N/A"))
         
         elements.append(Spacer(1, 1*cm))
         
         footer_text = f"""
         ─────────────────────────────────────────────────────────────<br/>
         Document généré le {datetime.now().strftime("%d/%m/%Y à %H:%M")}<br/>
-        Référence candidature : {application.id}<br/>
+        Référence candidature : {app_id}<br/>
         <b>SEEG - Société d'Énergie et d'Eau du Gabon</b><br/>
         ─────────────────────────────────────────────────────────────
         """
@@ -645,21 +649,21 @@ class ApplicationPDFService:
         Returns:
             str: Nom de fichier formaté
         """
-        user = getattr(application, 'candidate', None)
-        job_offer = getattr(application, 'job_offer', None)
+        user = application.get('candidate')
+        job_offer = application.get('job_offer')
         
         parts = ["Candidature"]
         
         if user:
-            last_name = getattr(user, 'last_name', None)
-            first_name = getattr(user, 'first_name', None)
+            last_name = user.get('last_name')
+            first_name = user.get('first_name')
             if last_name:
                 parts.append(str(last_name).replace(' ', '_'))
             if first_name:
                 parts.append(str(first_name).replace(' ', '_'))
         
         if job_offer:
-            title = getattr(job_offer, 'title', None)
+            title = job_offer.get('title')
             if title:
                 parts.append(str(title).replace(' ', '_'))
         

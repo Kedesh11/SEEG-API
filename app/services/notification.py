@@ -2,12 +2,10 @@
 Service pour la gestion des notifications
 """
 from typing import List, Optional, Dict, Any
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func, and_, or_, desc
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from bson import ObjectId
 from datetime import datetime, timedelta, timezone
 import structlog
-
-from app.models.notification import Notification
 from app.schemas.notification import (
     NotificationCreate, NotificationUpdate, NotificationResponse,
     NotificationListResponse, NotificationStatsResponse
@@ -20,7 +18,7 @@ logger = structlog.get_logger(__name__)
 class NotificationService:
     """Service pour la gestion des notifications"""
     
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
     
     async def create_notification(
@@ -37,31 +35,33 @@ class NotificationService:
             NotificationResponse: Notification crÃ©Ã©e
         """
         try:
-            notification = Notification()
-            notification.user_id = notification_data.user_id  # type: ignore
-            notification.related_application_id = notification_data.related_application_id  # type: ignore
-            notification.title = notification_data.title  # type: ignore
-            notification.message = notification_data.message  # type: ignore
-            notification.type = notification_data.type  # type: ignore
-            notification.link = notification_data.link  # type: ignore
-            notification.read = notification_data.read  # type: ignore
+            notification = {
+                "user_id": str(notification_data.user_id),
+                "related_application_id": str(notification_data.related_application_id) if notification_data.related_application_id else None,
+                "title": notification_data.title,
+                "message": notification_data.message,
+                "type": notification_data.type,
+                "link": notification_data.link,
+                "read": notification_data.read,
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
+            }
             
-            self.db.add(notification)
-            #  PAS de commit ici - MAIS flush nécessaire avant refresh
-            await self.db.flush()
-            await self.db.refresh(notification)
+            result = await self.db.notifications.insert_one(notification)
+            notification["_id"] = result.inserted_id
             
             logger.info(
                 "Notification created",
-                notification_id=str(notification.id),
+                notification_id=str(result.inserted_id),
                 user_id=str(notification_data.user_id),
                 type=notification_data.type
             )
             
+            # Map _id to id for Pydantic if needed
+            notification["id"] = str(notification["_id"])
             return NotificationResponse.model_validate(notification)
             
         except Exception as e:
-            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to create notification",
                 error=str(e),
@@ -84,19 +84,15 @@ class NotificationService:
         Returns:
             NotificationResponse: Notification
         """
-        result = await self.db.execute(
-            select(Notification).where(
-                and_(
-                    Notification.id == notification_id,
-                    Notification.user_id == user_id
-                )
-            )
-        )
-        notification = result.scalar_one_or_none()
+        query = {"_id": ObjectId(notification_id)} if len(notification_id) == 24 else {"_id": notification_id}
+        query["user_id"] = str(user_id)
+        
+        notification = await self.db.notifications.find_one(query)
         
         if not notification:
-            raise NotFoundError(f"Notification avec l'ID {notification_id} non trouvÃ©e")
+            raise NotFoundError(f"Notification avec l'ID {notification_id} non trouvée")
         
+        notification["id"] = str(notification.get("_id", notification.get("id")))
         return NotificationResponse.model_validate(notification)
     
     async def get_user_notifications(
@@ -117,60 +113,45 @@ class NotificationService:
         Retourne un schÃ©ma conforme Ã  NotificationListResponse
         { notifications, total, page, per_page, total_pages }
         """
-        query = select(Notification).where(Notification.user_id == user_id)
-        count_query = select(func.count(Notification.id)).where(Notification.user_id == user_id)
+        filter_query = {"user_id": str(user_id)}
         
         if unread_only:
-            query = query.where(Notification.read == False)
-            count_query = count_query.where(Notification.read == False)
+            filter_query["read"] = False
         
         if q:
-            like = f"%{q}%"
-            query = query.where(or_(Notification.title.ilike(like), Notification.message.ilike(like)))
-            count_query = count_query.where(or_(Notification.title.ilike(like), Notification.message.ilike(like)))
+            filter_query["$or"] = [
+                {"title": {"$regex": q, "$options": "i"}},
+                {"message": {"$regex": q, "$options": "i"}}
+            ]
         
         if type:
-            query = query.where(Notification.type == type)
-            count_query = count_query.where(Notification.type == type)
+            filter_query["type"] = type
         
         # Dates
-        def parse_date(s: Optional[str]):
-            if not s:
-                return None
-            try:
-                return datetime.fromisoformat(s)
-            except Exception:
-                return None
-        df = parse_date(date_from)
-        dt = parse_date(date_to)
-        if df:
-            query = query.where(Notification.created_at >= df)
-            count_query = count_query.where(Notification.created_at >= df)
-        if dt:
-            query = query.where(Notification.created_at <= dt)
-            count_query = count_query.where(Notification.created_at <= dt)
+        df = self._parse_date(date_from)
+        dt = self._parse_date(date_to)
+        if df or dt:
+            date_query = {}
+            if df:
+                date_query["$gte"] = df
+            if dt:
+                date_query["$lte"] = dt
+            filter_query["created_at"] = date_query
         
         # Tri
-        if sort in {"created_at", "title"}:
-            direction = desc if (order or "desc").lower() == "desc" else None
-            if direction:
-                query = query.order_by(direction(getattr(Notification, sort)))
-            else:
-                query = query.order_by(getattr(Notification, sort))
-        else:
-            query = query.order_by(desc(Notification.created_at))
+        sort_field = sort if sort in ["created_at", "title"] else "created_at"
+        sort_dir = -1 if (order or "desc").lower() == "desc" else 1
         
-        # Pagination
-        query = query.offset(skip).limit(limit)
-        
-        result = await self.db.execute(query)
-        notifications = result.scalars().all()
-        count_result = await self.db.execute(count_query)
-        total_count = count_result.scalar() or 0
+        cursor = self.db.notifications.find(filter_query).sort(sort_field, sort_dir).skip(skip).limit(limit)
+        notifications = await cursor.to_list(length=limit)
+        total_count = await self.db.notifications.count_documents(filter_query)
 
         per_page = limit
         page = (skip // limit) + 1 if limit else 1
         total_pages = (total_count + limit - 1) // limit if limit else 1
+
+        for notif in notifications:
+            notif["id"] = str(notif.get("_id", notif.get("id")))
 
         return NotificationListResponse(
             notifications=[NotificationResponse.model_validate(notif) for notif in notifications],
@@ -179,6 +160,14 @@ class NotificationService:
             per_page=per_page,
             total_pages=total_pages
         )
+
+    def _parse_date(self, s: Optional[str]) -> Optional[datetime]:
+        if not s:
+            return None
+        try:
+            return datetime.fromisoformat(s.replace('Z', '+00:00'))
+        except Exception:
+            return None
     
     async def mark_as_read(
         self,
@@ -196,26 +185,19 @@ class NotificationService:
             NotificationResponse: Notification mise Ã  jour
         """
         try:
-            # VÃ©rification de l'existence de la notification
-            result = await self.db.execute(
-                select(Notification).where(
-                    and_(
-                        Notification.id == notification_id,
-                        Notification.user_id == user_id
-                    )
-                )
+            query = {"_id": ObjectId(notification_id)} if len(notification_id) == 24 else {"_id": notification_id}
+            query["user_id"] = str(user_id)
+            
+            result = await self.db.notifications.update_one(
+                query,
+                {"$set": {"read": True, "updated_at": datetime.now(timezone.utc)}}
             )
-            notification = result.scalar_one_or_none()
             
-            if not notification:
-                raise NotFoundError(f"Notification avec l'ID {notification_id} non trouvÃ©e")
+            if result.matched_count == 0:
+                raise NotFoundError(f"Notification avec l'ID {notification_id} non trouvée")
             
-            # Mise Ã  jour du statut
-            notification.read = True  # type: ignore
-            notification.updated_at = datetime.now(timezone.utc)
-            
-            #  PAS de commit ici
-            await self.db.refresh(notification)
+            notification = await self.db.notifications.find_one(query)
+            notification["id"] = str(notification.get("_id", notification.get("id")))
             
             logger.info(
                 "Notification marked as read",
@@ -226,7 +208,6 @@ class NotificationService:
             return NotificationResponse.model_validate(notification)
             
         except Exception as e:
-            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to mark notification as read",
                 notification_id=notification_id,
@@ -246,23 +227,12 @@ class NotificationService:
             int: Nombre de notifications mises Ã  jour
         """
         try:
-            result = await self.db.execute(
-                update(Notification)
-                .where(
-                and_(
-                    Notification.user_id == user_id,
-                    Notification.read == False
-                )
-            )
-            .values(
-                read=True,
-                updated_at=datetime.now(timezone.utc)
-            )
+            result = await self.db.notifications.update_many(
+                {"user_id": str(user_id), "read": False},
+                {"$set": {"read": True, "updated_at": datetime.now(timezone.utc)}}
             )
             
-            #  PAS de commit ici
-            
-            updated_count = result.rowcount
+            updated_count = result.modified_count
             logger.info(
                 "All notifications marked as read",
                 user_id=user_id,
@@ -272,7 +242,6 @@ class NotificationService:
             return updated_count
             
         except Exception as e:
-            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to mark all notifications as read",
                 user_id=user_id,
@@ -290,15 +259,8 @@ class NotificationService:
         Returns:
             int: Nombre de notifications non lues
         """
-        result = await self.db.execute(
-            select(func.count(Notification.id)).where(
-                and_(
-                    Notification.user_id == user_id,
-                    Notification.read == False
-                )
-            )
-        )
-        return result.scalar() or 0
+        count = await self.db.notifications.count_documents({"user_id": str(user_id), "read": False})
+        return count
     
     async def get_user_notification_statistics(self, user_id: str) -> NotificationStatsResponse:
         """
@@ -311,21 +273,18 @@ class NotificationService:
             NotificationStatsResponse: Statistiques des notifications
         """
         # Nombre total de notifications
-        total_result = await self.db.execute(
-            select(func.count(Notification.id)).where(Notification.user_id == user_id)
-        )
-        total_notifications = total_result.scalar()
+        total_notifications = await self.db.notifications.count_documents({"user_id": str(user_id)})
         
         # Nombre de notifications non lues
-        unread_count = await self.get_unread_count(user_id)
+        unread_count = await self.get_unread_count(str(user_id))
         
         # Statistiques par type
-        type_result = await self.db.execute(
-            select(Notification.type, func.count(Notification.id))
-            .where(Notification.user_id == user_id)
-            .group_by(Notification.type)
-        )
-        type_stats = {row[0]: row[1] for row in type_result.fetchall()}
+        pipeline = [
+            {"$match": {"user_id": str(user_id)}},
+            {"$group": {"_id": "$type", "count": {"$sum": 1}}}
+        ]
+        cursor = self.db.notifications.aggregate(pipeline)
+        type_stats = {item["_id"]: item["count"] async for item in cursor}
 
         read_count = (total_notifications or 0) - (unread_count or 0)
 
@@ -349,18 +308,12 @@ class NotificationService:
         try:
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=days_old)
             
-            result = await self.db.execute(
-                delete(Notification).where(
-                    and_(
-                        Notification.created_at < cutoff_date,
-                        Notification.read == True
-                    )
-                )
-            )
+            result = await self.db.notifications.delete_many({
+                "created_at": {"$lt": cutoff_date},
+                "read": True
+            })
             
-            #  PAS de commit ici
-            
-            deleted_count = result.rowcount
+            deleted_count = result.deleted_count
             logger.info(
                 "Old notifications cleaned up",
                 deleted_count=deleted_count,
@@ -370,7 +323,6 @@ class NotificationService:
             return deleted_count
             
         except Exception as e:
-            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to cleanup old notifications",
                 error=str(e)

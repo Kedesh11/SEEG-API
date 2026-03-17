@@ -14,11 +14,15 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 import json
 import structlog
-from azure.storage.blob import ContentSettings
 
 from app.services.blob_storage import BlobStorageService
 
 logger = structlog.get_logger(__name__)
+
+try:
+    from azure.storage.blob import ContentSettings
+except ModuleNotFoundError:  # pragma: no cover
+    ContentSettings = None  # type: ignore[assignment]
 
 
 class ETLDataWarehouseService:
@@ -43,6 +47,11 @@ class ETLDataWarehouseService:
         Args:
             blob_service: Service de connexion Blob Storage
         """
+        if ContentSettings is None:
+            raise RuntimeError(
+                "Dépendance manquante: installe `azure-storage-blob` pour activer "
+                "l'ETL Data Warehouse vers Azure Blob Storage."
+            )
         self.blob_service = blob_service
     
     def _build_dim_candidate(

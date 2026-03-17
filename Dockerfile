@@ -88,7 +88,7 @@ COPY --from=builder --chown=appuser:appuser /opt/venv /opt/venv
 
 # Copier le code applicatif
 COPY --chown=appuser:appuser app/ ./app/
-COPY --chown=appuser:appuser alembic.ini ./
+# Note: alembic n'est pas embarqué (MongoDB / pas de migrations Alembic)
 # scripts/ exclus (pas necessaire en production, utilise uniquement pour deploiement)
 COPY --chown=appuser:appuser logging.yaml ./
 COPY --chown=appuser:appuser docker-entrypoint.sh ./
@@ -109,9 +109,9 @@ ENV LOG_LEVEL=INFO \
     ENABLE_TRACING=true \
     METRICS_ENABLED=true
 
-# Health check amélioré avec retry et timeout adapté
+# Health check amélioré (supporte PORT dynamique, ex: Render)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -f http://localhost:8000/monitoring/health || exit 1
+    CMD sh -c 'curl -f "http://localhost:${PORT:-8000}/ping" || exit 1'
 
 # Point d'entrée: migrations automatiques puis démarrage
 ENTRYPOINT ["./docker-entrypoint.sh"]

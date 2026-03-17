@@ -3,14 +3,10 @@ Configuration de la base de données.
 Respecte le principe de séparation des préoccupations.
 """
 
-from .database import get_db, get_db_sync, engine, async_engine
-from .session import SessionLocal, AsyncSessionLocal
+from .database import close_mongo_connection, connect_to_mongo, get_db
 
 __all__ = [
     "get_db",
-    "get_db_sync",
-    "engine",
-    "async_engine",
-    "SessionLocal",
-    "AsyncSessionLocal",
+    "connect_to_mongo",
+    "close_mongo_connection",
 ]

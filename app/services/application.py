@@ -5,16 +5,11 @@ import structlog
 import json
 from typing import Optional, List, Dict, Any
 from app.utils.json_utils import JSONDataHandler
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func, and_, desc
-from sqlalchemy.orm import selectinload, joinedload
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from bson import ObjectId
 from uuid import UUID
 import base64
 
-from app.models.application import Application, ApplicationDocument, ApplicationDraft, ApplicationHistory
-from app.models.user import User
-from app.models.job_offer import JobOffer
-from app.models.candidate_profile import CandidateProfile
 from app.schemas.application import (
     ApplicationCreate, ApplicationUpdate, ApplicationDocumentCreate, 
     ApplicationDocumentUpdate, ApplicationDocumentWithData,
@@ -27,7 +22,7 @@ logger = structlog.get_logger(__name__)
 class ApplicationService:
     """Service de gestion des candidatures"""
     
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
     
     async def _validate_mtp_answers(
@@ -48,22 +43,18 @@ class ApplicationService:
         Raises:
             ValidationError: Si le nombre de réponses ne correspond pas aux questions
         """
-        from app.models.job_offer import JobOffer
         logger = structlog.get_logger(__name__)
         
         # Récupérer l'offre avec ses questions MTP
-        job_result = await self.db.execute(
-            select(JobOffer).where(JobOffer.id == job_offer_id)
-        )
-        job_offer = job_result.scalar_one_or_none()
+        query = {"_id": ObjectId(job_offer_id)} if len(str(job_offer_id)) == 24 else {"_id": str(job_offer_id)}
+        job_offer = await self.db.job_offers.find_one(query)
         
         if job_offer is None:
             raise ValidationError("Offre d'emploi introuvable")
         
         # Si l'offre n'a pas de questions MTP, pas de validation nécessaire
-        # Utiliser getattr pour éviter les warnings du type checker avec SQLAlchemy
-        questions_mtp = getattr(job_offer, 'questions_mtp', None)
-        if questions_mtp is None:
+        questions_mtp = job_offer.get('questions_mtp')
+        if not questions_mtp:
             logger.info("Pas de questions MTP pour cette offre", job_offer_id=str(job_offer_id))
             return
         
@@ -136,7 +127,7 @@ class ApplicationService:
             paradigme=f"{nb_reponses_paradigme}/{nb_questions_paradigme}"
         )
     
-    async def create_application(self, application_data: ApplicationCreate, user_id: Optional[str] = None) -> Application:
+    async def create_application(self, application_data: ApplicationCreate, user_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Créer une nouvelle candidature avec validation des questions MTP et documents.
         
@@ -159,13 +150,10 @@ class ApplicationService:
         logger = structlog.get_logger(__name__)
         try:
             # Vérifier qu'il n'y a pas déjà une candidature pour ce job
-            existing_result = await self.db.execute(
-                select(Application).where(
-                    Application.candidate_id == application_data.candidate_id,
-                    Application.job_offer_id == application_data.job_offer_id
-                )
-            )
-            existing_application = existing_result.scalar_one_or_none()
+            existing_application = await self.db.applications.find_one({
+                "candidate_id": str(application_data.candidate_id),
+                "job_offer_id": str(application_data.job_offer_id)
+            })
             
             if existing_application:
                 raise ValidationError("Une candidature existe déjà pour cette offre d'emploi")
@@ -181,16 +169,25 @@ class ApplicationService:
             documents_to_upload = application_data.documents
             
             # Créer la candidature (sans les documents dans le dict)
+            from datetime import datetime
+            import uuid
+            
             application_dict = application_data.dict(exclude={'documents'})
-            application = Application(**application_dict)
-            self.db.add(application)
-            # Flush pour obtenir l'ID et persister l'objet dans la session
-            await self.db.flush()
-            await self.db.refresh(application)
+            application_dict["_id"] = str(uuid.uuid4())
+            application_dict["candidate_id"] = str(application_dict.get("candidate_id"))
+            application_dict["job_offer_id"] = str(application_dict.get("job_offer_id"))
+            application_dict["created_at"] = datetime.utcnow()
+            application_dict["updated_at"] = datetime.utcnow()
+            
+            if "status" not in application_dict or not application_dict["status"]:
+                application_dict["status"] = "soumis"
+                
+            await self.db.applications.insert_one(application_dict)
+            application = application_dict
             
             logger.info("Candidature créée", 
-                       application_id=str(application.id), 
-                       candidate_id=str(application.candidate_id),
+                       application_id=str(application["_id"]), 
+                       candidate_id=str(application["candidate_id"]),
                        has_documents=documents_to_upload is not None and len(documents_to_upload) > 0)
             
             # Upload des documents si fournis
@@ -243,7 +240,7 @@ class ApplicationService:
                         
                         # Créer le document
                         document_create = ApplicationDocumentCreate(
-                            application_id=application.id,
+                            application_id=application["_id"],
                             document_type=document_type,
                             file_name=file_name,
                             file_data=file_data_b64,
@@ -255,21 +252,21 @@ class ApplicationService:
                         uploaded_count += 1
                         
                         logger.info("Document uploadé", 
-                                   application_id=str(application.id),
-                                   document_id=str(document.id),
+                                   application_id=str(application["_id"]),
+                                   document_id=str(document.get("_id", document.get("id"))),
                                    document_type=document_type,
                                    file_name=file_name)
                         
                     except Exception as doc_error:
                         logger.error("Erreur upload document individuel", 
-                                   application_id=str(application.id),
+                                   application_id=str(application["_id"]),
                                    error=str(doc_error),
                                    document_data=doc_data)
                         # Continuer avec les autres documents
                         continue
                 
                 logger.info("Documents uploadés avec la candidature", 
-                           application_id=str(application.id),
+                           application_id=str(application["_id"]),
                            total_uploaded=uploaded_count,
                            total_provided=len(documents_to_upload))
             
@@ -289,19 +286,15 @@ class ApplicationService:
             # Retourner l'erreur originale pour un meilleur debugging
             raise BusinessLogicError(f"Erreur lors de la création de la candidature: {type(e).__name__} - {str(e)}")
     
-    async def get_application_by_id(self, application_id: str) -> Optional[Application]:
+    async def get_application_by_id(self, application_id: str) -> Optional[Dict[str, Any]]:
         """Récupérer une candidature par son ID avec cache"""
         from app.core.cache import cache_application
-        from app.db.query_optimizer import QueryOptimizer
         
         @cache_application(expire=600)  # Cache 10 minutes
         async def _get_application(app_id: str):
             try:
-                query = select(Application).where(Application.id == UUID(app_id))
-                query = QueryOptimizer.optimize_application_query(query)
-                
-                result = await self.db.execute(query)
-                application = result.scalar_one_or_none()
+                query = {"_id": ObjectId(app_id)} if len(app_id) == 24 else {"_id": app_id}
+                application = await self.db.applications.find_one(query)
                 
                 if not application:
                     raise NotFoundError("Candidature non trouvée")
@@ -318,7 +311,7 @@ class ApplicationService:
         
         return await _get_application(application_id)
     
-    async def get_application_with_relations(self, application_id: str) -> Optional[Application]:
+    async def get_application_with_relations(self, application_id: str) -> Optional[Dict[str, Any]]:
         """
         Récupérer une candidature avec toutes ses relations pour le PDF
         (users, candidate_profiles, job_offers)
@@ -352,34 +345,21 @@ class ApplicationService:
         status_filter: Optional[str] = None,
         job_offer_id: Optional[str] = None,
         candidate_id: Optional[str] = None
-    ) -> tuple[List[Application], int]:
-        """RÃ©cupÃ©rer la liste des candidatures avec filtres"""
+    ) -> tuple[List[Dict[str, Any]], int]:
+        """Récupérer la liste des candidatures avec filtres"""
         try:
-            query = select(Application)
-            count_query = select(func.count(Application.id))
-            
-            # Appliquer les filtres
-            conditions = []
+            filter_query = {}
             if status_filter:
-                conditions.append(Application.status == status_filter)
+                filter_query["status"] = status_filter
             if job_offer_id:
-                conditions.append(Application.job_offer_id == UUID(job_offer_id))
+                filter_query["job_offer_id"] = str(job_offer_id)
             if candidate_id:
-                conditions.append(Application.candidate_id == UUID(candidate_id))
+                filter_query["candidate_id"] = str(candidate_id)
             
-            if conditions:
-                query = query.where(and_(*conditions))
-                count_query = count_query.where(and_(*conditions))
+            cursor = self.db.applications.find(filter_query).skip(skip).limit(limit)
+            applications = await cursor.to_list(length=limit)
             
-            # Pagination
-            query = query.offset(skip).limit(limit)
-            
-            # Exécuter les requêtes
-            result = await self.db.execute(query)
-            applications = list(result.scalars().all())
-            
-            count_result = await self.db.execute(count_query)
-            total = count_result.scalar() or 0
+            total = await self.db.applications.count_documents(filter_query)
             
             return applications, total
         except ValueError as e:
@@ -388,22 +368,24 @@ class ApplicationService:
             logger.error("Erreur récupération candidatures", error=str(e))
             raise BusinessLogicError("Erreur lors de la récupération des candidatures")
     
-    async def update_application(self, application_id: str, application_data: ApplicationUpdate) -> Application:
+    async def update_application(self, application_id: str, application_data: ApplicationUpdate) -> Dict[str, Any]:
         """Mettre à jour une candidature"""
         try:
-            application = await self.get_application_by_id(application_id)
-            if not application:
+            update_data = application_data.dict(exclude_unset=True)
+            from datetime import datetime
+            update_data["updated_at"] = datetime.utcnow()
+            
+            query = {"_id": ObjectId(application_id)} if len(application_id) == 24 else {"_id": application_id}
+            
+            result = await self.db.applications.update_one(
+                query,
+                {"$set": update_data}
+            )
+            
+            if result.matched_count == 0:
                 raise NotFoundError("Candidature non trouvée")
             
-            # Mettre à jour les champs fournis
-            update_data = application_data.dict(exclude_unset=True)
-            for field, value in update_data.items():
-                setattr(application, field, value)
-            
-            # Flush pour persister les modifications
-            await self.db.flush()
-            await self.db.refresh(application)
-            
+            application = await self.get_application_by_id(application_id)
             logger.info("Candidature mise à jour", application_id=application_id)
             return application
         except NotFoundError:
@@ -415,10 +397,11 @@ class ApplicationService:
     async def delete_application(self, application_id: str) -> None:
         """Supprimer une candidature"""
         try:
-            application = await self.get_application_by_id(application_id)
+            query = {"_id": ObjectId(application_id)} if len(application_id) == 24 else {"_id": application_id}
+            result = await self.db.applications.delete_one(query)
             
-            await self.db.delete(application)
-            #  PAS de commit ici
+            if result.deleted_count == 0:
+                raise NotFoundError("Candidature non trouvée")
             
             logger.info("Candidature supprimée", application_id=application_id)
         except NotFoundError:
@@ -428,34 +411,34 @@ class ApplicationService:
             raise BusinessLogicError("Erreur lors de la suppression de la candidature")
     
     # Méthodes pour les documents PDF
-    async def create_document(self, document_data: ApplicationDocumentCreate) -> ApplicationDocument:
+    async def create_document(self, document_data: ApplicationDocumentCreate) -> Dict[str, Any]:
         """Créer un nouveau document PDF"""
         try:
             # Vérifier que l'application existe
-            application = await self.get_application_by_id(str(document_data.application_id))
+            await self.get_application_by_id(str(document_data.application_id))
             
             # Décoder les données base64
             file_data = base64.b64decode(document_data.file_data)
             
             # Créer le document
-            from app.models.application import ApplicationDocument as ApplicationDocumentModel
-            document = ApplicationDocumentModel(
-                application_id=document_data.application_id,  # type: ignore
-                document_type=document_data.document_type,  # type: ignore
-                file_name=document_data.file_name,  # type: ignore
-                file_data=file_data,  # type: ignore
-                file_size=document_data.file_size,  # type: ignore
-                file_type=document_data.file_type  # type: ignore
-            )
+            import uuid
+            from datetime import datetime
+            doc_id = str(uuid.uuid4())
+            document_dict = {
+                "_id": doc_id,
+                "application_id": str(document_data.application_id),
+                "document_type": document_data.document_type,
+                "file_name": document_data.file_name,
+                "file_data": file_data,
+                "file_size": document_data.file_size,
+                "file_type": document_data.file_type,
+                "uploaded_at": datetime.utcnow()
+            }
             
-            self.db.add(document)
-            #  PAS de commit ici - le endpoint fera le commit
-            # Flush pour obtenir l'ID et persister l'objet dans la session
-            await self.db.flush()
-            await self.db.refresh(document)
+            await self.db.application_documents.insert_one(document_dict)
             
-            logger.info("Document créé", document_id=str(document.id), application_id=str(document.application_id))
-            return document
+            logger.info("Document créé", document_id=doc_id, application_id=str(document_data.application_id))
+            return document_dict
         except NotFoundError:
             raise
         except Exception as e:
@@ -466,21 +449,19 @@ class ApplicationService:
         self, 
         application_id: str, 
         document_type: Optional[str] = None
-    ) -> List[ApplicationDocument]:
+    ) -> List[Dict[str, Any]]:
         """Récupérer les documents d'une candidature"""
         try:
             # Vérifier que l'application existe
             await self.get_application_by_id(application_id)
             
-            query = select(ApplicationDocument).where(
-                ApplicationDocument.application_id == UUID(application_id)
-            )
+            query = {"application_id": str(application_id)}
             
             if document_type:
-                query = query.where(ApplicationDocument.document_type == document_type)
+                query["document_type"] = document_type
             
-            result = await self.db.execute(query)
-            documents = list(result.scalars().all())
+            cursor = self.db.application_documents.find(query, {"file_data": 0})
+            documents = await cursor.to_list(length=None)
             
             return documents
         except NotFoundError:
@@ -495,38 +476,24 @@ class ApplicationService:
         self, 
         application_id: str, 
         document_id: str
-    ) -> Optional[ApplicationDocumentWithData]:
+    ) -> Optional[Dict[str, Any]]:
         """Récupérer un document avec ses données binaires"""
         try:
-            # Vérifier que l'application existe
-            await self.get_application_by_id(application_id)
-            
-            result = await self.db.execute(
-                select(ApplicationDocument).where(
-                    and_(
-                        ApplicationDocument.id == UUID(document_id),
-                        ApplicationDocument.application_id == UUID(application_id)
-                    )
-                )
-            )
-            document = result.scalar_one_or_none()
+            query = {"_id": document_id, "application_id": application_id}
+            if len(document_id) == 24:
+                query["_id"] = ObjectId(document_id)
+                
+            document = await self.db.application_documents.find_one(query)
             
             if not document:
                 raise NotFoundError("Document non trouvé")
             
             # Encoder les données en base64 pour la réponse
-            file_data_b64 = base64.b64encode(document.file_data).decode('utf-8')  # type: ignore
+            file_data_b64 = base64.b64encode(document["file_data"]).decode('utf-8')
             
-            return ApplicationDocumentWithData(
-                id=document.id,  # type: ignore
-                application_id=document.application_id,  # type: ignore
-                document_type=document.document_type,  # type: ignore
-                file_name=document.file_name,  # type: ignore
-                file_size=document.file_size,  # type: ignore
-                file_type=document.file_type,  # type: ignore
-                uploaded_at=document.uploaded_at,  # type: ignore
-                file_data=file_data_b64
-            )
+            document["file_data"] = file_data_b64
+            document["id"] = document.pop("_id", document_id)
+            return document
         except NotFoundError:
             raise
         except ValueError:
@@ -541,21 +508,14 @@ class ApplicationService:
             # Vérifier que l'application existe
             await self.get_application_by_id(application_id)
             
-            result = await self.db.execute(
-                select(ApplicationDocument).where(
-                    and_(
-                        ApplicationDocument.id == UUID(document_id),
-                        ApplicationDocument.application_id == UUID(application_id)
-                    )
-                )
-            )
-            document = result.scalar_one_or_none()
+            query = {"_id": document_id, "application_id": application_id}
+            if len(document_id) == 24:
+                query["_id"] = ObjectId(document_id)
+                
+            result = await self.db.application_documents.delete_one(query)
             
-            if not document:
+            if result.deleted_count == 0:
                 raise NotFoundError("Document non trouvé")
-            
-            await self.db.delete(document)
-            #  PAS de commit ici
             
             logger.info("Document supprimé", document_id=document_id, application_id=application_id)
         except NotFoundError:
@@ -570,22 +530,21 @@ class ApplicationService:
         """Récupérer les statistiques des candidatures"""
         try:
             # Compter par statut
-            status_result = await self.db.execute(
-                select(Application.status, func.count(Application.id))
-                .group_by(Application.status)
-            )
-            status_counts = {str(row[0]): int(row[1]) for row in status_result.fetchall()}
+            status_pipeline = [
+                {"$group": {"_id": "$status", "count": {"$sum": 1}}}
+            ]
+            status_cursor = self.db.applications.aggregate(status_pipeline)
+            status_counts = {str(doc["_id"]): int(doc["count"]) async for doc in status_cursor if doc.get("_id")}
             
             # Compter le total
-            total_result = await self.db.execute(select(func.count(Application.id)))
-            total = total_result.scalar()
+            total = await self.db.applications.count_documents({})
             
             # Compter les documents par type
-            doc_type_result = await self.db.execute(
-                select(ApplicationDocument.document_type, func.count(ApplicationDocument.id))
-                .group_by(ApplicationDocument.document_type)
-            )
-            doc_type_counts = {str(row[0]): int(row[1]) for row in doc_type_result.fetchall()}
+            doc_type_pipeline = [
+                {"$group": {"_id": "$document_type", "count": {"$sum": 1}}}
+            ]
+            doc_type_cursor = self.db.application_documents.aggregate(doc_type_pipeline)
+            doc_type_counts = {str(doc["_id"]): int(doc["count"]) async for doc in doc_type_cursor if doc.get("_id")}
             
             return {
                 "total_applications": total,
@@ -597,7 +556,7 @@ class ApplicationService:
             raise BusinessLogicError("Erreur lors de la récupération des statistiques")
     
     # Méthodes pour les brouillons (inchangées)
-    async def save_draft(self, draft_data: dict) -> ApplicationDraft:
+    async def save_draft(self, draft_data: dict) -> Dict[str, Any]:
         """
         Sauvegarder un brouillon de candidature
         
@@ -625,64 +584,47 @@ class ApplicationService:
                         details={"provided_fields": list(draft_data.keys())}
                     )
             
-            user_id = draft_data["user_id"]
-            job_offer_id = draft_data["job_offer_id"]
+            user_id = str(draft_data["user_id"])
+            job_offer_id = str(draft_data["job_offer_id"])
             
-            logger.debug("🔍 Recherche brouillon existant", user_id=str(user_id), job_offer_id=str(job_offer_id))
+            logger.debug("🔍 Recherche brouillon existant", user_id=user_id, job_offer_id=job_offer_id)
             
-            # Vérifier si un brouillon existe déjà
-            result = await self.db.execute(
-                select(ApplicationDraft).where(
-                    ApplicationDraft.user_id == user_id,
-                    ApplicationDraft.job_offer_id == job_offer_id
-                )
-            )
-            draft = result.scalar_one_or_none()
+            query = {"user_id": user_id, "job_offer_id": job_offer_id}
             
-            if draft:
-                # Mettre à jour le brouillon existant
-                logger.debug("🔄 Mise à jour brouillon existant", user_id=str(user_id), job_offer_id=str(job_offer_id))
-                
-                # Utilisation de notre utilitaire JSON sécurisé
-                parsed_draft_data = JSONDataHandler.safe_parse_json(draft_data, {})
-                
-                draft.form_data = JSONDataHandler.safe_get_dict_value(parsed_draft_data, "form_data")  # type: ignore
-                draft.ui_state = JSONDataHandler.safe_get_dict_value(parsed_draft_data, "ui_state")  # type: ignore
-                
-                # Flush pour persister les modifications
-                await self.db.flush()
-                logger.debug("✅ Brouillon mis à jour et flushed")
-                
-            else:
-                # Créer un nouveau brouillon
-                logger.debug("🆕 Création nouveau brouillon", user_id=str(user_id), job_offer_id=str(job_offer_id))
-                
-                # Préparer les données pour la création
-                draft_create_data = {
+            import uuid
+            from datetime import datetime
+            import pymongo
+            
+            parsed_draft_data = JSONDataHandler.safe_parse_json(draft_data, {})
+            form_data = JSONDataHandler.safe_get_dict_value(parsed_draft_data, "form_data")
+            ui_state = JSONDataHandler.safe_get_dict_value(parsed_draft_data, "ui_state")
+            
+            update_data = {
+                "$set": {
                     "user_id": user_id,
                     "job_offer_id": job_offer_id,
-                    "form_data": JSONDataHandler.safe_get_dict_value(draft_data, "form_data"),
-                    "ui_state": JSONDataHandler.safe_get_dict_value(draft_data, "ui_state")
+                    "form_data": form_data,
+                    "ui_state": ui_state,
+                    "updated_at": datetime.utcnow()
+                },
+                "$setOnInsert": {
+                    "_id": str(uuid.uuid4()),
+                    "created_at": datetime.utcnow()
                 }
-                
-                draft = ApplicationDraft(**draft_create_data)
-                self.db.add(draft)
-                
-                # Flush pour persister l'objet dans la session
-                await self.db.flush()
-                logger.debug("✅ Nouveau brouillon créé et flushed")
+            }
             
-            # Refresh pour obtenir les valeurs mises à jour de la DB
-            await self.db.refresh(draft)
-            logger.debug("✅ Brouillon refreshed")
-            
-            #  PAS de commit ici - le commit sera fait par l'endpoint
+            draft = await self.db.application_drafts.find_one_and_update(
+                query,
+                update_data,
+                upsert=True,
+                return_document=pymongo.ReturnDocument.AFTER
+            )
             
             logger.info("✅ Brouillon sauvegardé avec succès", 
-                       user_id=str(draft.user_id), 
-                       job_offer_id=str(draft.job_offer_id),
-                       has_form_data=draft.form_data is not None,
-                       has_ui_state=draft.ui_state is not None)
+                       user_id=user_id, 
+                       job_offer_id=job_offer_id,
+                       has_form_data=form_data is not None,
+                       has_ui_state=ui_state is not None)
             return draft
             
         except ValidationError:
@@ -707,17 +649,12 @@ class ApplicationService:
                 details={"error_type": type(e).__name__, "error_message": str(e)}
             )
     
-    async def get_draft(self, user_id: str, job_offer_id: str) -> Optional[ApplicationDraft]:
+    async def get_draft(self, user_id: str, job_offer_id: str) -> Optional[Dict[str, Any]]:
         """Récupérer un brouillon de candidature"""
         logger = structlog.get_logger(__name__)
         try:
-            result = await self.db.execute(
-                select(ApplicationDraft).where(
-                    ApplicationDraft.user_id == UUID(user_id),
-                    ApplicationDraft.job_offer_id == UUID(job_offer_id)
-                )
-            )
-            return result.scalar_one_or_none()
+            query = {"user_id": str(user_id), "job_offer_id": str(job_offer_id)}
+            return await self.db.application_drafts.find_one(query)
         except ValueError:
             raise ValidationError("IDs invalides")
         except Exception as e:
@@ -727,17 +664,10 @@ class ApplicationService:
     async def delete_draft(self, user_id: str, job_offer_id: str) -> None:
         """Supprimer un brouillon de candidature"""
         try:
-            result = await self.db.execute(
-                select(ApplicationDraft).where(
-                    ApplicationDraft.user_id == UUID(user_id),
-                    ApplicationDraft.job_offer_id == UUID(job_offer_id)
-                )
-            )
-            draft = result.scalar_one_or_none()
+            query = {"user_id": str(user_id), "job_offer_id": str(job_offer_id)}
+            result = await self.db.application_drafts.delete_one(query)
             
-            if draft:
-                await self.db.delete(draft)
-                #  PAS de commit ici
+            if result.deleted_count > 0:
                 logger.info("Brouillon supprimé", user_id=user_id, job_offer_id=job_offer_id)
         except ValueError:
             raise ValidationError("IDs invalides")
@@ -745,19 +675,19 @@ class ApplicationService:
             logger.error("Erreur suppression brouillon", error=str(e))
             raise BusinessLogicError("Erreur lors de la suppression du brouillon")
 
-    async def get_application_draft(self, application_id: str, user_id: str) -> Optional[ApplicationDraft]:
+    async def get_application_draft(self, application_id: str, user_id: str) -> Optional[Dict[str, Any]]:
         """Récupérer le brouillon lié à une candidature (via son job_offer_id)."""
         logger = structlog.get_logger(__name__)
         try:
             application = await self.get_application_by_id(application_id)
             if not application:
                 raise NotFoundError("Candidature non trouvée")
-            return await self.get_draft(user_id=user_id, job_offer_id=str(application.job_offer_id))
+            return await self.get_draft(user_id=user_id, job_offer_id=str(application.get("job_offer_id")))
         except Exception as e:
             logger.error("Erreur get_application_draft", application_id=application_id, error=str(e))
             raise BusinessLogicError("Erreur lors de la récupération du brouillon")
 
-    async def upsert_application_draft(self, application_id: str, user_id: str, draft_data: "ApplicationDraftUpdate") -> ApplicationDraft:
+    async def upsert_application_draft(self, application_id: str, user_id: str, draft_data: "ApplicationDraftUpdate") -> Dict[str, Any]:
         """Créer/met à jour le brouillon pour la candidature donnée (basé sur user_id + job_offer_id)."""
         logger = structlog.get_logger(__name__)
         try:
@@ -766,7 +696,7 @@ class ApplicationService:
                 raise NotFoundError("Candidature non trouvée")
             payload = {
                 "user_id": user_id,
-                "job_offer_id": str(application.job_offer_id),
+                "job_offer_id": str(application.get("job_offer_id")),
                 "form_data": draft_data.form_data if hasattr(draft_data, "form_data") else None,
                 "ui_state": draft_data.ui_state if hasattr(draft_data, "ui_state") else None,
             }
@@ -782,46 +712,50 @@ class ApplicationService:
             application = await self.get_application_by_id(application_id)
             if not application:
                 raise NotFoundError("Candidature non trouvée")
-            await self.delete_draft(user_id=user_id, job_offer_id=str(application.job_offer_id))
+            await self.delete_draft(user_id=user_id, job_offer_id=str(application.get("job_offer_id")))
         except Exception as e:
             logger.error("Erreur delete_application_draft", application_id=application_id, error=str(e))
             raise BusinessLogicError("Erreur lors de la suppression du brouillon")
 
-    async def list_application_history(self, application_id: str) -> List[ApplicationHistory]:
+    async def list_application_history(self, application_id: str) -> List[Dict[str, Any]]:
         """Lister l'historique des statuts d'une candidature."""
         try:
+            import pymongo
             await self.get_application_by_id(application_id)
-            result = await self.db.execute(
-                select(ApplicationHistory)
-                .where(ApplicationHistory.application_id == UUID(application_id))
-                .order_by(desc(ApplicationHistory.changed_at))
-            )
-            return list(result.scalars().all())
+            cursor = self.db.application_history.find({"application_id": str(application_id)}).sort("changed_at", pymongo.DESCENDING)
+            return await cursor.to_list(length=None)
         except Exception as e:
             logger.error("Erreur list_application_history", application_id=application_id, error=str(e))
             raise BusinessLogicError("Erreur lors de la récupération de l'historique")
 
-    async def add_application_history(self, application_id: str, item: "ApplicationHistoryCreate", changed_by_user_id: str | None) -> ApplicationHistory:
+    async def add_application_history(self, application_id: str, item: "ApplicationHistoryCreate", changed_by_user_id: str | None) -> Dict[str, Any]:
         """Ajouter une entrée d'historique et éventuellement mettre à jour le statut de la candidature."""
         try:
             application = await self.get_application_by_id(application_id)
             if not application:
                 raise NotFoundError("Candidature non trouvée")
                 
-            history = ApplicationHistory(
-                application_id=UUID(application_id),  # type: ignore
-                changed_by=UUID(changed_by_user_id) if changed_by_user_id else None,  # type: ignore
-                previous_status=item.previous_status or application.status,  # type: ignore
-                new_status=item.new_status or application.status,  # type: ignore
-                notes=item.notes,  # type: ignore
-            )
-            self.db.add(history)
+            import uuid
+            from datetime import datetime
+            from bson import ObjectId
+            
+            history_dict = {
+                "_id": str(uuid.uuid4()),
+                "application_id": str(application_id),
+                "changed_by": str(changed_by_user_id) if changed_by_user_id else None,
+                "previous_status": item.previous_status or application.get("status"),
+                "new_status": item.new_status or application.get("status"),
+                "notes": item.notes,
+                "changed_at": datetime.utcnow()
+            }
+            await self.db.application_history.insert_one(history_dict)
+            
             # Mettre à jour le statut de l'application si new_status fourni
-            if item.new_status and item.new_status != application.status:  # type: ignore
-                application.status = item.new_status  # type: ignore
-            #  PAS de commit ici
-            await self.db.refresh(history)
-            return history
+            if item.new_status and item.new_status != application.get("status"):
+                query = {"_id": ObjectId(application_id)} if len(application_id) == 24 else {"_id": application_id}
+                await self.db.applications.update_one(query, {"$set": {"status": item.new_status, "updated_at": datetime.utcnow()}})
+            
+            return history_dict
         except Exception as e:
             logger.error("Erreur add_application_history", application_id=application_id, error=str(e))
             raise BusinessLogicError("Erreur lors de l'ajout à l'historique")
@@ -829,39 +763,37 @@ class ApplicationService:
     async def get_advanced_statistics(self) -> Dict[str, Any]:
         """Statistiques avancées des candidatures: par statut, par offre, par mois, documents par type."""
         try:
+            total = await self.db.applications.count_documents({})
+            
             # Totaux par statut
-            status_rows = await self.db.execute(
-                select(Application.status, func.count(Application.id)).group_by(Application.status)
-            )
-            status_breakdown = {row[0]: int(row[1]) for row in status_rows.fetchall()}
-
-            # Total applications
-            total = (await self.db.execute(select(func.count(Application.id)))).scalar() or 0
+            status_pipeline = [{"$group": {"_id": "$status", "count": {"$sum": 1}}}]
+            status_cursor = self.db.applications.aggregate(status_pipeline)
+            status_breakdown = {str(doc["_id"]): doc["count"] async for doc in status_cursor if doc.get("_id")}
 
             # Par offre (counts)
-            by_job_rows = await self.db.execute(
-                select(Application.job_offer_id, func.count(Application.id))
-                .group_by(Application.job_offer_id)
-            )
-            by_job_offer = {str(row[0]): int(row[1]) for row in by_job_rows.fetchall() if row[0] is not None}
+            job_pipeline = [{"$group": {"_id": "$job_offer_id", "count": {"$sum": 1}}}]
+            job_cursor = self.db.applications.aggregate(job_pipeline)
+            by_job_offer = {str(doc["_id"]): doc["count"] async for doc in job_cursor if doc.get("_id")}
 
-            # Par mois (date_trunc)
-            by_month_rows = await self.db.execute(
-                select(func.date_trunc('month', Application.created_at), func.count(Application.id))
-                .group_by(func.date_trunc('month', Application.created_at))
-                .order_by(func.date_trunc('month', Application.created_at))
-            )
-            by_month = {row[0].date().isoformat(): int(row[1]) for row in by_month_rows.fetchall() if row[0] is not None}
+            # Par mois (dateToString)
+            month_pipeline = [
+                {"$match": {"created_at": {"$ne": None}}},
+                {"$group": {
+                    "_id": {"$dateToString": {"format": "%Y-%m", "date": "$created_at"}},
+                    "count": {"$sum": 1}
+                }},
+                {"$sort": {"_id": 1}}
+            ]
+            month_cursor = self.db.applications.aggregate(month_pipeline)
+            by_month = {f"{doc['_id']}-01": doc["count"] async for doc in month_cursor if doc.get("_id")}
 
             # Documents par type
-            doc_rows = await self.db.execute(
-                select(ApplicationDocument.document_type, func.count(ApplicationDocument.id))
-                .group_by(ApplicationDocument.document_type)
-            )
-            documents_by_type = {row[0]: int(row[1]) for row in doc_rows.fetchall() if row[0] is not None}
+            doc_pipeline = [{"$group": {"_id": "$document_type", "count": {"$sum": 1}}}]
+            doc_cursor = self.db.application_documents.aggregate(doc_pipeline)
+            documents_by_type = {str(doc["_id"]): doc["count"] async for doc in doc_cursor if doc.get("_id")}
 
             return {
-                "total_applications": int(total),
+                "total_applications": total,
                 "status_breakdown": status_breakdown,
                 "by_job_offer": by_job_offer,
                 "by_month": by_month,
@@ -880,7 +812,7 @@ class ApplicationService:
     
     async def get_complete_application_details(
         self,
-        application_id: UUID
+        application_id: str
     ) -> Dict[str, Any]:
         """
         Récupérer les détails complets d'une candidature
@@ -896,10 +828,10 @@ class ApplicationService:
         - Open/Closed : Extensible sans modification
         - Liskov Substitution : Peut être utilisée partout où une méthode de récupération est attendue
         - Interface Segregation : Interface claire et unique
-        - Dependency Inversion : Dépend d'abstractions (AsyncSession)
+        - Dependency Inversion : Dépend d'abstractions (AsyncIOMotorDatabase)
         
         Args:
-            application_id: UUID de la candidature
+            application_id: UUID ou ObjectId de la candidature
             
         Returns:
             Dict contenant toutes les informations complètes
@@ -914,19 +846,9 @@ class ApplicationService:
                 application_id=str(application_id)
             )
             
-            # Récupérer la candidature avec toutes les relations chargées (eager loading)
-            # Principe : Éviter le problème N+1 queries
-            stmt = (
-                select(Application)
-                .options(
-                    joinedload(Application.candidate),  # Charger l'utilisateur
-                    selectinload(Application.documents),  # Charger les documents
-                )
-                .where(Application.id == application_id)
-            )
-            
-            result = await self.db.execute(stmt)
-            application = result.unique().scalar_one_or_none()
+            from bson import ObjectId
+            query = {"_id": ObjectId(application_id)} if len(str(application_id)) == 24 else {"_id": str(application_id)}
+            application = await self.db.applications.find_one(query)
             
             if not application:
                 logger.warning(
@@ -939,81 +861,74 @@ class ApplicationService:
                     resource_id=str(application_id)
                 )
             
+            # Charger les documents
+            documents_cursor = self.db.application_documents.find({"application_id": str(application["_id"])})
+            documents = await documents_cursor.to_list(length=None)
+            
+            # Charger l'utilisateur
+            candidate_id = application.get("candidate_id")
+            candidate_query = {"_id": ObjectId(candidate_id)} if candidate_id and len(str(candidate_id)) == 24 else {"_id": str(candidate_id)}
+            candidate = await self.db.users.find_one(candidate_query) if candidate_id else None
+            
             # Récupérer le profil candidat
-            candidate_profile_stmt = (
-                select(CandidateProfile)
-                .where(CandidateProfile.user_id == application.candidate_id)
-            )
-            candidate_profile_result = await self.db.execute(candidate_profile_stmt)
-            candidate_profile = candidate_profile_result.scalar_one_or_none()
+            candidate_profile = await self.db.candidate_profiles.find_one({"user_id": str(candidate_id)}) if candidate_id else None
             
             # Récupérer l'offre d'emploi
-            job_offer_stmt = (
-                select(JobOffer)
-                .where(JobOffer.id == application.job_offer_id)
-            )
-            job_offer_result = await self.db.execute(job_offer_stmt)
-            job_offer = job_offer_result.scalar_one_or_none()
+            job_offer_id = application.get("job_offer_id")
+            job_offer_query = {"_id": ObjectId(job_offer_id)} if job_offer_id and len(str(job_offer_id)) == 24 else {"_id": str(job_offer_id)}
+            job_offer = await self.db.job_offers.find_one(job_offer_query) if job_offer_id else None
             
             if not job_offer:
                 logger.warning(
                     "Offre d'emploi non trouvée",
-                    job_offer_id=str(application.job_offer_id)
+                    job_offer_id=str(application.get("job_offer_id"))
                 )
                 raise NotFoundError(
                     "Offre d'emploi associée non trouvée",
                     resource="JobOffer",
-                    resource_id=str(application.job_offer_id)
+                    resource_id=str(application.get("job_offer_id"))
                 )
             
             # Construire les détails du candidat
-            # Parser les skills et languages si ce sont des chaînes JSON
-            skills_value = getattr(candidate_profile, 'skills', None) if candidate_profile else None
-            if skills_value and isinstance(skills_value, str):
+            skills_value = candidate_profile.get("skills", []) if candidate_profile else []
+            if isinstance(skills_value, str):
                 try:
                     skills_value = json.loads(skills_value)
                 except:
                     skills_value = []
-            elif not skills_value:
-                skills_value = []
-            
-            # Note: CandidateProfile n'a pas de champ languages dans la DB actuelle
-            # On le récupère depuis le modèle User si disponible
-            
+                    
             candidate_data = {
-                "user_id": str(application.candidate.id),
-                "email": application.candidate.email,
-                "firstname": application.candidate.first_name,
-                "lastname": application.candidate.last_name,
-                "phone": application.candidate.phone,
-                "address": getattr(candidate_profile, 'address', None) if candidate_profile else None,
-                "city": None,  # Pas dans le modèle actuel
-                "country": None,  # Pas dans le modèle actuel
-                "birth_date": getattr(candidate_profile, 'birth_date', None) if candidate_profile else None,
-                "nationality": None,  # Pas dans le modèle actuel
-                "current_job_title": getattr(candidate_profile, 'current_position', None) if candidate_profile else None,
-                "years_of_experience": getattr(candidate_profile, 'years_experience', None) if candidate_profile else None,
-                "education_level": getattr(candidate_profile, 'education', None) if candidate_profile else None,
+                "user_id": str(candidate.get("_id")) if candidate else None,
+                "email": candidate.get("email") if candidate else None,
+                "firstname": candidate.get("first_name") if candidate else None,
+                "lastname": candidate.get("last_name") if candidate else None,
+                "phone": candidate.get("phone") if candidate else None,
+                "address": candidate_profile.get("address") if candidate_profile else None,
+                "city": None,
+                "country": None,
+                "birth_date": candidate_profile.get("birth_date") if candidate_profile else None,
+                "nationality": None,
+                "current_job_title": candidate_profile.get("current_position") if candidate_profile else None,
+                "years_of_experience": candidate_profile.get("years_experience") if candidate_profile else None,
+                "education_level": candidate_profile.get("education") if candidate_profile else None,
                 "skills": skills_value,
-                "languages": [],  # Pas dans le modèle actuel
+                "languages": [],
                 "documents": []
             }
             
-            # Ajouter les documents téléversés
-            for doc in application.documents:
+            for doc in documents:
                 candidate_data["documents"].append({
-                    "id": str(doc.id),
-                    "document_type": doc.document_type,
-                    "file_name": doc.file_name,
-                    "file_path": f"/api/v1/applications/{application_id}/documents/{doc.id}/download",
-                    "file_size": doc.file_size,
-                    "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None
+                    "id": str(doc.get("_id", doc.get("id"))),
+                    "document_type": doc.get("document_type"),
+                    "file_name": doc.get("file_name"),
+                    "file_path": f"/api/v1/applications/{application_id}/documents/{str(doc.get('_id', doc.get('id')))}/download",
+                    "file_size": doc.get("file_size"),
+                    "uploaded_at": doc.get("uploaded_at").isoformat() if doc.get("uploaded_at") else None
                 })
             
             # Construire les détails de l'offre
-            # Construire salary_range à partir de salary_min et salary_max
-            salary_min = getattr(job_offer, 'salary_min', None)
-            salary_max = getattr(job_offer, 'salary_max', None)
+            salary_min = job_offer.get("salary_min")
+            salary_max = job_offer.get("salary_max")
             salary_range = None
             if salary_min and salary_max:
                 salary_range = f"{salary_min} - {salary_max} FCFA"
@@ -1021,34 +936,34 @@ class ApplicationService:
                 salary_range = f"À partir de {salary_min} FCFA"
             elif salary_max:
                 salary_range = f"Jusqu'à {salary_max} FCFA"
-            
-            # Utiliser application_deadline ou date_limite
-            deadline_val = getattr(job_offer, 'application_deadline', None) or getattr(job_offer, 'date_limite', None)
+                
+            deadline_val = job_offer.get("application_deadline") or job_offer.get("date_limite")
             
             job_offer_data = {
-                "id": str(job_offer.id),
-                "title": job_offer.title,
-                "description": job_offer.description,
-                "location": job_offer.location,
-                "contract_type": job_offer.contract_type,
+                "id": str(job_offer.get("_id", job_offer.get("id"))),
+                "title": job_offer.get("title"),
+                "description": job_offer.get("description"),
+                "location": job_offer.get("location"),
+                "contract_type": job_offer.get("contract_type"),
                 "salary_range": salary_range,
-                "requirements": job_offer.requirements or [],
-                "responsibilities": job_offer.responsibilities or [],
-                "benefits": job_offer.benefits or [],
-                "status": job_offer.status,
-                "offer_status": getattr(job_offer, 'offer_status', 'tous'),
-                "created_at": job_offer.created_at.isoformat() if job_offer.created_at else None,
-                "updated_at": job_offer.updated_at.isoformat() if job_offer.updated_at else None,
+                "requirements": job_offer.get("requirements", []),
+                "responsibilities": job_offer.get("responsibilities", []),
+                "benefits": job_offer.get("benefits", []),
+                "status": job_offer.get("status"),
+                "offer_status": job_offer.get("offer_status", "tous"),
+                "created_at": job_offer.get("created_at").isoformat() if job_offer.get("created_at") else None,
+                "updated_at": job_offer.get("updated_at").isoformat() if job_offer.get("updated_at") else None,
                 "deadline": deadline_val.isoformat() if deadline_val else None,
                 "questions_mtp": None
             }
             
-            # Ajouter les questions MTP si elles existent
-            questions_mtp_value = getattr(job_offer, 'questions_mtp', None)
-            if questions_mtp_value is not None:
-                questions_mtp = questions_mtp_value
+            questions_mtp = job_offer.get("questions_mtp")
+            if questions_mtp is not None:
                 if isinstance(questions_mtp, str):
-                    questions_mtp = json.loads(questions_mtp)
+                    try:
+                        questions_mtp = json.loads(questions_mtp)
+                    except:
+                        questions_mtp = {}
                 
                 job_offer_data["questions_mtp"] = {
                     "questions_metier": questions_mtp.get("questions_metier", []),
@@ -1056,13 +971,14 @@ class ApplicationService:
                     "questions_paradigme": questions_mtp.get("questions_paradigme", [])
                 }
             
-            # Construire les réponses MTP du candidat
             mtp_answers_data = None
-            mtp_answers_value = getattr(application, 'mtp_answers', None)
-            if mtp_answers_value is not None:
-                mtp_answers = mtp_answers_value
+            mtp_answers = application.get("mtp_answers")
+            if mtp_answers is not None:
                 if isinstance(mtp_answers, str):
-                    mtp_answers = json.loads(mtp_answers)
+                    try:
+                        mtp_answers = json.loads(mtp_answers)
+                    except:
+                        mtp_answers = {}
                 
                 mtp_answers_data = {
                     "reponses_metier": mtp_answers.get("reponses_metier", []),
@@ -1070,28 +986,25 @@ class ApplicationService:
                     "reponses_paradigme": mtp_answers.get("reponses_paradigme", [])
                 }
             
-            # Construire les informations de référence
             reference_data = None
-            ref_entreprise_value = getattr(application, 'ref_entreprise', None)
-            ref_fullname_value = getattr(application, 'ref_fullname', None)
-            if ref_entreprise_value or ref_fullname_value:
+            if application.get("ref_entreprise") or application.get("ref_fullname"):
                 reference_data = {
-                    "entreprise": application.ref_entreprise,
-                    "fullname": application.ref_fullname,
-                    "email": application.ref_mail,
-                    "contact": application.ref_contact
+                    "entreprise": application.get("ref_entreprise"),
+                    "fullname": application.get("ref_fullname"),
+                    "email": application.get("ref_mail"),
+                    "contact": application.get("ref_contact")
                 }
             
-            # Construire la réponse complète
-            availability_start_value = getattr(application, 'availability_start', None)
+            availability_start = application.get("availability_start")
+            
             complete_details = {
-                "application_id": str(application.id),
-                "status": application.status,
-                "created_at": application.created_at.isoformat() if application.created_at else None,
-                "updated_at": application.updated_at.isoformat() if application.updated_at else None,
-                "reference_contacts": application.reference_contacts,
-                "availability_start": availability_start_value.isoformat() if availability_start_value else None,
-                "has_been_manager": application.has_been_manager,
+                "application_id": str(application.get("_id", application.get("id"))),
+                "status": application.get("status"),
+                "created_at": application.get("created_at").isoformat() if application.get("created_at") else None,
+                "updated_at": application.get("updated_at").isoformat() if application.get("updated_at") else None,
+                "reference_contacts": application.get("reference_contacts"),
+                "availability_start": availability_start.isoformat() if availability_start else None,
+                "has_been_manager": application.get("has_been_manager"),
                 "reference": reference_data,
                 "candidate": candidate_data,
                 "job_offer": job_offer_data,
@@ -1101,8 +1014,8 @@ class ApplicationService:
             logger.info(
                 "Détails complets récupérés avec succès",
                 application_id=str(application_id),
-                candidate_email=application.candidate.email,
-                job_title=job_offer.title
+                candidate_email=candidate.get("email") if candidate else None,
+                job_title=job_offer.get("title")
             )
             
             return complete_details

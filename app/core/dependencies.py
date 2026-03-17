@@ -4,14 +4,12 @@ Système d'authentification unique et robuste
 """
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import Optional
+from motor.motor_asyncio import AsyncIOMotorDatabase
 import structlog
+from bson import ObjectId
 
-from app.db.database import get_db
-from app.models.user import User
 from app.core.security.security import TokenManager
+from app.db.database import get_db
 
 logger = structlog.get_logger(__name__)
 
@@ -20,8 +18,8 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 async def get_current_user(
     token: str = Depends(oauth2_scheme),
-    db: AsyncSession = Depends(get_db)
-) -> User:
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
     """
     Récupérer l'utilisateur actuel à partir du token JWT
     
@@ -62,35 +60,46 @@ async def get_current_user(
     
     # Récupérer l'utilisateur depuis la base de données
     try:
-        result = await db.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
+        user_doc = await db.users.find_one({"_id": ObjectId(user_id)})
         
-        if user is None:
+        if user_doc is None:
             logger.warning("Utilisateur non trouvé", user_id=user_id)
             raise credentials_exception
             
-        logger.debug("Utilisateur récupéré", user_id=str(user.id), email=user.email)
-        return user
+        logger.debug("Utilisateur récupéré", user_id=str(user_doc["_id"]), email=user_doc.get("email"))
+        
+        # Pour l'instant, on retourne un objet mock pour la compatibilité.
+        # Plus tard, il faudra utiliser un schéma Pydantic complet.
+        class UserMock:
+            """Objet mock pour l'utilisateur authentifié (compatibilité descendante)"""
+            def __init__(self, doc):
+                self.id = str(doc.get("_id"))
+                self.email = doc.get("email")
+                self.role = doc.get("role")
+                self.is_internal_candidate = doc.get("is_internal_candidate", False)
+                self.candidate_status = doc.get("candidate_status")
+        
+        return UserMock(user_doc)
         
     except Exception as e:
         logger.error("Erreur lors de la récupération de l'utilisateur", error=str(e))
         raise credentials_exception
 
-async def get_current_active_user(current_user: User = Depends(get_current_user)) -> User:
+async def get_current_active_user(current_user: any = Depends(get_current_user)):
     """
     Récupérer l'utilisateur actuel actif
     
     Args:
-        current_user: Utilisateur authentifié
+        current_user: Utilisateur authentifié (UserMock)
         
     Returns:
-        User: Utilisateur actif
+        UserMock: Utilisateur actif
     """
     # Pour l'instant, on considère que tous les utilisateurs sont actifs
     # Dans le futur, on pourrait ajouter une vérification d'état
     return current_user
 
-async def get_current_admin_user(current_user: User = Depends(get_current_active_user)) -> User:
+async def get_current_admin_user(current_user: any = Depends(get_current_active_user)):
     """
     Récupérer l'utilisateur actuel s'il est administrateur
     
@@ -98,7 +107,7 @@ async def get_current_admin_user(current_user: User = Depends(get_current_active
         current_user: Utilisateur authentifié
         
     Returns:
-        User: Utilisateur administrateur
+        UserMock: Utilisateur administrateur
         
     Raises:
         HTTPException: Si l'utilisateur n'est pas administrateur
@@ -113,7 +122,7 @@ async def get_current_admin_user(current_user: User = Depends(get_current_active
         )
     return current_user
 
-async def get_current_recruiter_user(current_user: User = Depends(get_current_active_user)) -> User:
+async def get_current_recruiter_user(current_user: any = Depends(get_current_active_user)):
     """
     Récupérer l'utilisateur actuel s'il est recruteur ou administrateur.
     
@@ -128,7 +137,7 @@ async def get_current_recruiter_user(current_user: User = Depends(get_current_ac
         current_user: Utilisateur authentifié
         
     Returns:
-        User: Utilisateur recruteur ou administrateur
+        UserMock: Utilisateur recruteur ou administrateur
         
     Raises:
         HTTPException: Si l'utilisateur n'a pas les permissions de recruteur
@@ -143,7 +152,7 @@ async def get_current_recruiter_user(current_user: User = Depends(get_current_ac
         )
     return current_user
 
-async def get_current_observer_user(current_user: User = Depends(get_current_active_user)) -> User:
+async def get_current_observer_user(current_user: any = Depends(get_current_active_user)):
     """
     Récupérer l'utilisateur actuel s'il est observateur, recruteur ou administrateur.
     
@@ -160,7 +169,7 @@ async def get_current_observer_user(current_user: User = Depends(get_current_act
         current_user: Utilisateur authentifié
         
     Returns:
-        User: Utilisateur observateur, recruteur ou administrateur
+        UserMock: Utilisateur observateur, recruteur ou administrateur
         
     Raises:
         HTTPException: Si l'utilisateur n'a pas les permissions d'observateur
@@ -175,7 +184,7 @@ async def get_current_observer_user(current_user: User = Depends(get_current_act
         )
     return current_user
 
-async def get_current_candidate_user(current_user: User = Depends(get_current_active_user)) -> User:
+async def get_current_candidate_user(current_user: any = Depends(get_current_active_user)):
     """
     Récupérer l'utilisateur actuel s'il est candidat.
     
@@ -191,7 +200,7 @@ async def get_current_candidate_user(current_user: User = Depends(get_current_ac
         current_user: Utilisateur authentifié
         
     Returns:
-        User: Utilisateur candidat
+        UserMock: Utilisateur candidat
         
     Raises:
         HTTPException: Si l'utilisateur n'est pas un candidat

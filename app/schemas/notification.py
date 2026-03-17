@@ -111,9 +111,9 @@ class NotificationResponse(NotificationBase):
     """
     Schéma de réponse pour une notification avec métadonnées.
     """
-    id: int = Field(..., description="ID unique de la notification")
-    user_id: UUID = Field(..., description="ID de l'utilisateur destinataire")
-    related_application_id: Optional[UUID] = Field(None, description="ID de la candidature liée")
+    id: str = Field(..., description="ID unique de la notification")
+    user_id: str = Field(..., description="ID de l'utilisateur destinataire")
+    related_application_id: Optional[str] = Field(None, description="ID de la candidature liée")
     created_at: datetime = Field(..., description="Date de création de la notification")
     
     model_config = {

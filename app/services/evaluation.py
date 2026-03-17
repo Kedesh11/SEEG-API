@@ -2,15 +2,10 @@
 Service pour la gestion des Ã©valuations (Protocol 1 et Protocol 2)
 """
 from typing import List, Optional, Dict, Any
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update, delete, func, and_, or_, desc
-from sqlalchemy.orm import selectinload
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from bson import ObjectId
 from datetime import datetime, timezone
 import structlog
-
-from app.models.evaluation import Protocol1Evaluation, Protocol2Evaluation
-from app.models.application import Application
-from app.models.user import User
 from app.schemas.evaluation import (
     Protocol1EvaluationCreate, Protocol1EvaluationUpdate, Protocol1EvaluationResponse,
     Protocol2EvaluationCreate, Protocol2EvaluationUpdate, Protocol2EvaluationResponse
@@ -23,7 +18,7 @@ logger = structlog.get_logger(__name__)
 class EvaluationService:
     """Service pour la gestion des Ã©valuations"""
     
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
     
     # Protocol 1 Evaluation Methods
@@ -43,53 +38,46 @@ class EvaluationService:
             Protocol1EvaluationResponse: Ã‰valuation crÃ©Ã©e
         """
         try:
-            # VÃ©rification de l'existence de la candidature
-            app_result = await self.db.execute(
-                select(Application).where(Application.id == evaluation_data.application_id)
-            )
-            application = app_result.scalar_one_or_none()
+            # Vérification de l'existence de la candidature
+            app_id = str(evaluation_data.application_id)
+            app_query = {"_id": ObjectId(app_id)} if len(app_id) == 24 else {"_id": app_id}
+            application = await self.db.applications.find_one(app_query)
             
             if not application:
-                raise NotFoundError("Candidature non trouvÃ©e")
+                raise NotFoundError("Candidature non trouvée")
             
-            # VÃ©rification si une Ã©valuation existe dÃ©jÃ 
-            existing_eval = await self.db.execute(
-                select(Protocol1Evaluation).where(
-                    Protocol1Evaluation.application_id == evaluation_data.application_id
-                )
-            )
+            # Vérification si une évaluation existe déjà
+            existing_eval = await self.db.protocol1_evaluations.find_one({"application_id": app_id})
             
-            if existing_eval.scalar_one_or_none():
-                raise BusinessLogicError("Une Ã©valuation Protocol 1 existe dÃ©jÃ  pour cette candidature")
+            if existing_eval:
+                raise BusinessLogicError("Une évaluation Protocol 1 existe déjà pour cette candidature")
             
             # Calcul du score total
             total_score = self._calculate_protocol1_total_score(evaluation_data)
             
-            # CrÃ©ation de l'Ã©valuation avec les champs du schéma
-            eval_dict = evaluation_data.model_dump(exclude={'application_id', 'evaluator_id'})
-            eval_dict['application_id'] = evaluation_data.application_id
-            eval_dict['evaluator_id'] = evaluator_id
-            eval_dict['overall_score'] = total_score
+            # Création de l'évaluation avec les champs du schéma
+            evaluation_dict = evaluation_data.model_dump(exclude={'application_id', 'evaluator_id'})
+            evaluation_dict['application_id'] = app_id
+            evaluation_dict['evaluator_id'] = str(evaluator_id)
+            evaluation_dict['overall_score'] = total_score
+            evaluation_dict['created_at'] = datetime.now(timezone.utc)
+            evaluation_dict['updated_at'] = datetime.now(timezone.utc)
             
-            evaluation = Protocol1Evaluation(**eval_dict)
-            
-            self.db.add(evaluation)
-            #  PAS de commit ici
-            await self.db.flush()
-            await self.db.refresh(evaluation)
+            result = await self.db.protocol1_evaluations.insert_one(evaluation_dict)
+            evaluation_dict['_id'] = result.inserted_id
+            evaluation_dict['id'] = str(result.inserted_id)
             
             logger.info(
                 "Protocol 1 evaluation created",
-                evaluation_id=str(evaluation.id),
-                application_id=evaluation_data.application_id,
+                evaluation_id=str(result.inserted_id),
+                application_id=app_id,
                 evaluator_id=evaluator_id,
                 overall_score=total_score
             )
             
-            return Protocol1EvaluationResponse.model_validate(evaluation)
+            return Protocol1EvaluationResponse.model_validate(evaluation_dict)
             
         except Exception as e:
-            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to create Protocol 1 evaluation",
                 error=str(e),
@@ -116,50 +104,35 @@ class EvaluationService:
             Protocol1EvaluationResponse: Ã‰valuation mise Ã  jour
         """
         try:
-            # VÃ©rification de l'existence de l'Ã©valuation
-            result = await self.db.execute(
-                select(Protocol1Evaluation).where(Protocol1Evaluation.id == evaluation_id)
-            )
-            evaluation = result.scalar_one_or_none()
+            # Vérification de l'existence de l'évaluation
+            query = {"_id": ObjectId(evaluation_id)} if len(evaluation_id) == 24 else {"_id": evaluation_id}
+            evaluation = await self.db.protocol1_evaluations.find_one(query)
             
             if not evaluation:
-                raise NotFoundError(f"Ã‰valuation Protocol 1 avec l'ID {evaluation_id} non trouvÃ©e")
+                raise NotFoundError(f"Évaluation Protocol 1 avec l'ID {evaluation_id} non trouvée")
             
-            # Mise Ã  jour des champs
+            # Mise à jour des champs
             update_data = evaluation_data.model_dump(exclude_unset=True)
             
-            # Recalcul du score total si nÃ©cessaire
+            # Recalcul du score total si nécessaire
             if any(field in update_data for field in ['documentary_score', 'mtp_score', 'interview_score']):
-                # RÃ©cupÃ©ration des valeurs actuelles
-                current_data = evaluation_data.model_dump()
-                # Ajouter application_id et evaluator_id depuis l'objet existant
-                current_data['application_id'] = evaluation.application_id
-                current_data['evaluator_id'] = evaluation.evaluator_id
+                current_data = evaluation.copy()
+                current_data.update(update_data)
                 
-                for field in ['documentary_score', 'mtp_score', 'interview_score']:
-                    if field not in current_data or current_data[field] is None:
-                        current_data[field] = getattr(evaluation, field, None)
-                
-                # CrÃ©ation d'un objet temporaire pour le calcul
+                # Création d'un objet temporaire pour le calcul
                 temp_eval = Protocol1EvaluationCreate(**current_data)
                 update_data['overall_score'] = self._calculate_protocol1_total_score(temp_eval)
             
             if update_data:
                 update_data["updated_at"] = datetime.now(timezone.utc)
                 
-                await self.db.execute(
-                    update(Protocol1Evaluation)
-                    .where(Protocol1Evaluation.id == evaluation_id)
-                    .values(**update_data)
+                await self.db.protocol1_evaluations.update_one(
+                    query,
+                    {"$set": update_data}
                 )
                 
-                #  PAS de commit ici
-                
-                # RÃ©cupÃ©ration de l'Ã©valuation mise Ã  jour
-                result = await self.db.execute(
-                    select(Protocol1Evaluation).where(Protocol1Evaluation.id == evaluation_id)
-                )
-                evaluation = result.scalar_one()
+                evaluation = await self.db.protocol1_evaluations.find_one(query)
+                evaluation['id'] = str(evaluation['_id'])
                 
                 logger.info(
                     "Protocol 1 evaluation updated",
@@ -171,7 +144,6 @@ class EvaluationService:
             return Protocol1EvaluationResponse.model_validate(evaluation)
             
         except Exception as e:
-            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to update Protocol 1 evaluation",
                 evaluation_id=evaluation_id,
@@ -192,19 +164,24 @@ class EvaluationService:
         Returns:
             Protocol1EvaluationResponse: Ã‰valuation
         """
-        result = await self.db.execute(
-            select(Protocol1Evaluation)
-            .options(
-                selectinload(Protocol1Evaluation.application),
-                selectinload(Protocol1Evaluation.evaluator)
-            )
-            .where(Protocol1Evaluation.id == evaluation_id)
-        )
-        evaluation = result.scalar_one_or_none()
+        query = {"_id": ObjectId(evaluation_id)} if len(evaluation_id) == 24 else {"_id": evaluation_id}
+        evaluation = await self.db.protocol1_evaluations.find_one(query)
         
         if not evaluation:
-            raise NotFoundError(f"Ã‰valuation Protocol 1 avec l'ID {evaluation_id} non trouvÃ©e")
+            raise NotFoundError(f"Évaluation Protocol 1 avec l'ID {evaluation_id} non trouvée")
         
+        # Fetch relations
+        app_id = evaluation.get("application_id")
+        if app_id:
+            app_query = {"_id": ObjectId(app_id)} if len(app_id) == 24 else {"_id": app_id}
+            evaluation["application"] = await self.db.applications.find_one(app_query)
+        
+        evaluator_id = evaluation.get("evaluator_id")
+        if evaluator_id:
+            user_query = {"_id": ObjectId(evaluator_id)} if len(evaluator_id) == 24 else {"_id": evaluator_id}
+            evaluation["evaluator"] = await self.db.users.find_one(user_query)
+        
+        evaluation['id'] = str(evaluation['_id'])
         return Protocol1EvaluationResponse.model_validate(evaluation)
     
     async def get_protocol1_evaluations_by_application(
@@ -220,14 +197,16 @@ class EvaluationService:
         Returns:
             List[Protocol1EvaluationResponse]: Liste des Ã©valuations
         """
-        result = await self.db.execute(
-            select(Protocol1Evaluation)
-            .options(selectinload(Protocol1Evaluation.evaluator))
-            .where(Protocol1Evaluation.application_id == application_id)
-            .order_by(desc(Protocol1Evaluation.created_at))
-        )
+        cursor = self.db.protocol1_evaluations.find({"application_id": str(application_id)}).sort("created_at", -1)
+        evaluations = await cursor.to_list(length=100)
         
-        evaluations = result.scalars().all()
+        for eval in evaluations:
+            eval['id'] = str(eval['_id'])
+            evaluator_id = eval.get("evaluator_id")
+            if evaluator_id:
+                user_query = {"_id": ObjectId(evaluator_id)} if len(evaluator_id) == 24 else {"_id": evaluator_id}
+                eval["evaluator"] = await self.db.users.find_one(user_query)
+                
         return [Protocol1EvaluationResponse.model_validate(eval) for eval in evaluations]
     
     # Protocol 2 Evaluation Methods
@@ -247,53 +226,46 @@ class EvaluationService:
             Protocol2EvaluationResponse: Ã‰valuation crÃ©Ã©e
         """
         try:
-            # VÃ©rification de l'existence de la candidature
-            app_result = await self.db.execute(
-                select(Application).where(Application.id == evaluation_data.application_id)
-            )
-            application = app_result.scalar_one_or_none()
+            # Vérification de l'existence de la candidature
+            app_id = str(evaluation_data.application_id)
+            app_query = {"_id": ObjectId(app_id)} if len(app_id) == 24 else {"_id": app_id}
+            application = await self.db.applications.find_one(app_query)
             
             if not application:
-                raise NotFoundError("Candidature non trouvÃ©e")
+                raise NotFoundError("Candidature non trouvée")
             
-            # VÃ©rification si une Ã©valuation existe dÃ©jÃ 
-            existing_eval = await self.db.execute(
-                select(Protocol2Evaluation).where(
-                    Protocol2Evaluation.application_id == evaluation_data.application_id
-                )
-            )
+            # Vérification si une évaluation existe déjà
+            existing_eval = await self.db.protocol2_evaluations.find_one({"application_id": app_id})
             
-            if existing_eval.scalar_one_or_none():
-                raise BusinessLogicError("Une Ã©valuation Protocol 2 existe dÃ©jÃ  pour cette candidature")
+            if existing_eval:
+                raise BusinessLogicError("Une évaluation Protocol 2 existe déjà pour cette candidature")
             
             # Calcul du score total
             total_score = self._calculate_protocol2_total_score(evaluation_data)
             
-            # CrÃ©ation de l'Ã©valuation avec les champs du schéma
-            eval_dict = evaluation_data.model_dump(exclude={'application_id', 'evaluator_id'})
-            eval_dict['application_id'] = evaluation_data.application_id
-            eval_dict['evaluator_id'] = evaluator_id
-            eval_dict['overall_score'] = total_score
+            # Création de l'évaluation avec les champs du schéma
+            evaluation_dict = evaluation_data.model_dump(exclude={'application_id', 'evaluator_id'})
+            evaluation_dict['application_id'] = app_id
+            evaluation_dict['evaluator_id'] = str(evaluator_id)
+            evaluation_dict['overall_score'] = total_score
+            evaluation_dict['created_at'] = datetime.now(timezone.utc)
+            evaluation_dict['updated_at'] = datetime.now(timezone.utc)
             
-            evaluation = Protocol2Evaluation(**eval_dict)
-            
-            self.db.add(evaluation)
-            #  PAS de commit ici
-            await self.db.flush()
-            await self.db.refresh(evaluation)
+            result = await self.db.protocol2_evaluations.insert_one(evaluation_dict)
+            evaluation_dict['_id'] = result.inserted_id
+            evaluation_dict['id'] = str(result.inserted_id)
             
             logger.info(
                 "Protocol 2 evaluation created",
-                evaluation_id=str(evaluation.id),
-                application_id=evaluation_data.application_id,
+                evaluation_id=str(result.inserted_id),
+                application_id=app_id,
                 evaluator_id=evaluator_id,
                 overall_score=total_score
             )
             
-            return Protocol2EvaluationResponse.model_validate(evaluation)
+            return Protocol2EvaluationResponse.model_validate(evaluation_dict)
             
         except Exception as e:
-            #  PAS de rollback ici - géré par get_db()
             logger.error(
                 "Failed to create Protocol 2 evaluation",
                 error=str(e),
@@ -309,61 +281,46 @@ class EvaluationService:
         updated_by: str
     ) -> Protocol2EvaluationResponse:
         """
-        Mettre Ã  jour une Ã©valuation Protocol 2
+        Mettre à jour une évaluation Protocol 2
         
         Args:
-            evaluation_id: ID de l'Ã©valuation
-            evaluation_data: DonnÃ©es de mise Ã  jour
-            updated_by: ID de l'utilisateur qui effectue la mise Ã  jour
+            evaluation_id: ID de l'évaluation
+            evaluation_data: Données de mise à jour
+            updated_by: ID de l'utilisateur qui effectue la mise à jour
             
         Returns:
-            Protocol2EvaluationResponse: Ã‰valuation mise Ã  jour
+            Protocol2EvaluationResponse: Évaluation mise à jour
         """
         try:
-            # VÃ©rification de l'existence de l'Ã©valuation
-            result = await self.db.execute(
-                select(Protocol2Evaluation).where(Protocol2Evaluation.id == evaluation_id)
-            )
-            evaluation = result.scalar_one_or_none()
+            # Vérification de l'existence de l'évaluation
+            query = {"_id": ObjectId(evaluation_id)} if len(evaluation_id) == 24 else {"_id": evaluation_id}
+            evaluation = await self.db.protocol2_evaluations.find_one(query)
             
             if not evaluation:
-                raise NotFoundError(f"Ã‰valuation Protocol 2 avec l'ID {evaluation_id} non trouvÃ©e")
+                raise NotFoundError(f"Évaluation Protocol 2 avec l'ID {evaluation_id} non trouvée")
             
-            # Mise Ã  jour des champs
+            # Mise à jour des champs
             update_data = evaluation_data.model_dump(exclude_unset=True)
             
-            # Recalcul du score total si nÃ©cessaire
+            # Recalcul du score total si nécessaire
             if any(field in update_data for field in ['qcm_role_score', 'qcm_codir_score']):
-                # RÃ©cupÃ©ration des valeurs actuelles
-                current_data = evaluation_data.model_dump()
-                # Ajouter application_id et evaluator_id depuis l'objet existant
-                current_data['application_id'] = evaluation.application_id
-                current_data['evaluator_id'] = evaluation.evaluator_id
+                current_data = evaluation.copy()
+                current_data.update(update_data)
                 
-                for field in ['qcm_role_score', 'qcm_codir_score']:
-                    if field not in current_data or current_data[field] is None:
-                        current_data[field] = getattr(evaluation, field, None)
-                
-                # CrÃ©ation d'un objet temporaire pour le calcul
+                # Création d'un objet temporaire pour le calcul
                 temp_eval = Protocol2EvaluationCreate(**current_data)
                 update_data['overall_score'] = self._calculate_protocol2_total_score(temp_eval)
             
             if update_data:
                 update_data["updated_at"] = datetime.now(timezone.utc)
                 
-                await self.db.execute(
-                    update(Protocol2Evaluation)
-                    .where(Protocol2Evaluation.id == evaluation_id)
-                    .values(**update_data)
+                await self.db.protocol2_evaluations.update_one(
+                    query,
+                    {"$set": update_data}
                 )
                 
-                #  PAS de commit ici
-                
-                # RÃ©cupÃ©ration de l'Ã©valuation mise Ã  jour
-                result = await self.db.execute(
-                    select(Protocol2Evaluation).where(Protocol2Evaluation.id == evaluation_id)
-                )
-                evaluation = result.scalar_one()
+                evaluation = await self.db.protocol2_evaluations.find_one(query)
+                evaluation['id'] = str(evaluation['_id'])
                 
                 logger.info(
                     "Protocol 2 evaluation updated",
@@ -398,19 +355,24 @@ class EvaluationService:
         Returns:
             Protocol2EvaluationResponse: Ã‰valuation
         """
-        result = await self.db.execute(
-            select(Protocol2Evaluation)
-            .options(
-                selectinload(Protocol2Evaluation.application),
-                selectinload(Protocol2Evaluation.evaluator)
-            )
-            .where(Protocol2Evaluation.id == evaluation_id)
-        )
-        evaluation = result.scalar_one_or_none()
+        query = {"_id": ObjectId(evaluation_id)} if len(evaluation_id) == 24 else {"_id": evaluation_id}
+        evaluation = await self.db.protocol2_evaluations.find_one(query)
         
         if not evaluation:
-            raise NotFoundError(f"Ã‰valuation Protocol 2 avec l'ID {evaluation_id} non trouvÃ©e")
+            raise NotFoundError(f"Évaluation Protocol 2 avec l'ID {evaluation_id} non trouvée")
         
+        # Fetch relations
+        app_id = evaluation.get("application_id")
+        if app_id:
+            app_query = {"_id": ObjectId(app_id)} if len(app_id) == 24 else {"_id": app_id}
+            evaluation["application"] = await self.db.applications.find_one(app_query)
+        
+        evaluator_id = evaluation.get("evaluator_id")
+        if evaluator_id:
+            user_query = {"_id": ObjectId(evaluator_id)} if len(evaluator_id) == 24 else {"_id": evaluator_id}
+            evaluation["evaluator"] = await self.db.users.find_one(user_query)
+        
+        evaluation['id'] = str(evaluation['_id'])
         return Protocol2EvaluationResponse.model_validate(evaluation)
     
     async def get_protocol2_evaluations_by_application(
@@ -426,14 +388,16 @@ class EvaluationService:
         Returns:
             List[Protocol2EvaluationResponse]: Liste des Ã©valuations
         """
-        result = await self.db.execute(
-            select(Protocol2Evaluation)
-            .options(selectinload(Protocol2Evaluation.evaluator))
-            .where(Protocol2Evaluation.application_id == application_id)
-            .order_by(desc(Protocol2Evaluation.created_at))
-        )
+        cursor = self.db.protocol2_evaluations.find({"application_id": str(application_id)}).sort("created_at", -1)
+        evaluations = await cursor.to_list(length=100)
         
-        evaluations = result.scalars().all()
+        for eval in evaluations:
+            eval['id'] = str(eval['_id'])
+            evaluator_id = eval.get("evaluator_id")
+            if evaluator_id:
+                user_query = {"_id": ObjectId(evaluator_id)} if len(evaluator_id) == 24 else {"_id": evaluator_id}
+                eval["evaluator"] = await self.db.users.find_one(user_query)
+                
         return [Protocol2EvaluationResponse.model_validate(eval) for eval in evaluations]
     
     # Helper Methods
@@ -503,22 +467,24 @@ class EvaluationService:
             Dict[str, Any]: Statistiques des Ã©valuations
         """
         # Statistiques Protocol 1
-        p1_total = await self.db.execute(select(func.count(Protocol1Evaluation.id)))
-        p1_count = p1_total.scalar()
+        p1_count = await self.db.protocol1_evaluations.count_documents({})
         
-        p1_avg_score = await self.db.execute(
-            select(func.avg(Protocol1Evaluation.overall_score))
-        )
-        p1_avg = p1_avg_score.scalar() or 0
+        p1_pipeline = [
+            {"$group": {"_id": None, "avg_score": {"$avg": "$overall_score"}}}
+        ]
+        p1_cursor = self.db.protocol1_evaluations.aggregate(p1_pipeline)
+        p1_avg_res = await p1_cursor.to_list(length=1)
+        p1_avg = p1_avg_res[0]["avg_score"] if p1_avg_res else 0
         
         # Statistiques Protocol 2
-        p2_total = await self.db.execute(select(func.count(Protocol2Evaluation.id)))
-        p2_count = p2_total.scalar()
+        p2_count = await self.db.protocol2_evaluations.count_documents({})
         
-        p2_avg_score = await self.db.execute(
-            select(func.avg(Protocol2Evaluation.overall_score))
-        )
-        p2_avg = p2_avg_score.scalar() or 0
+        p2_pipeline = [
+            {"$group": {"_id": None, "avg_score": {"$avg": "$overall_score"}}}
+        ]
+        p2_cursor = self.db.protocol2_evaluations.aggregate(p2_pipeline)
+        p2_avg_res = await p2_cursor.to_list(length=1)
+        p2_avg = p2_avg_res[0]["avg_score"] if p2_avg_res else 0
         
         return {
             "protocol1": {

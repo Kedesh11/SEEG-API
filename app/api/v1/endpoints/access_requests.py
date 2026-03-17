@@ -9,17 +9,14 @@ Ces endpoints permettent aux recruteurs de :
 """
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import List, Optional
-from uuid import UUID
+from typing import Any, Optional
 
 from app.db.database import get_db
-from app.models.user import User
+
 from app.services.access_request import AccessRequestService
 from app.services.email import EmailService
 from app.core.dependencies import get_current_user
-from app.core.exceptions import NotFoundError, ValidationError, BusinessLogicError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.schemas.access_request import (
     AccessRequestListResponse,
     AccessRequestResponse,
@@ -30,7 +27,8 @@ from app.schemas.access_request import (
 
 logger = structlog.get_logger(__name__)
 router = APIRouter(
-    tags=["🔑 Demandes d'accès"],)
+    tags=["🔑 Demandes d'accès"],
+)
 
 
 def safe_log(level: str, message: str, **kwargs):
@@ -41,31 +39,34 @@ def safe_log(level: str, message: str, **kwargs):
         print(f"{level.upper()}: {message} - {kwargs}")
 
 
-def require_recruiter_or_admin(current_user: User) -> None:
+def require_recruiter_or_admin(current_user: Any) -> None:
     """
     Vérifier que l'utilisateur est recruteur ou admin.
-    
+
     Raises:
         HTTPException: Si l'utilisateur n'a pas les permissions
     """
     # Accepter les deux formats pour compatibilité : 'recruiter'
-    if current_user.role not in ['recruiter', 'admin']:
-        # 🔴 LOG: Accès refusé - logging de sécurité
-        safe_log("warning", "🚨 ACCÈS REFUSÉ - Access-requests",
-                user_id=str(current_user.id),
-                user_role=current_user.role,
-                user_email=current_user.email,
-                required_roles=['recruiter', 'admin'],
-                security_event="unauthorized_access_attempt")
+    if current_user.get("role") not in ['recruiter', 'admin']:
+        safe_log(
+            "warning", "🚨 ACCÈS REFUSÉ - Access-requests",
+            user_id=str(current_user.get("_id", current_user.get("id"))),
+            user_role=current_user.get("role"),
+            user_email=current_user.get("email"),
+            required_roles=['recruiter', 'admin'],
+            security_event="unauthorized_access_attempt"
+        )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Accès réservé aux recruteurs et administrateurs"
         )
-    
+
     # ✅ LOG: Accès autorisé
-    safe_log("debug", "✅ Accès autorisé - Access-requests",
-            user_id=str(current_user.id),
-            user_role=current_user.role)
+    safe_log(
+        "debug", "✅ Accès autorisé - Access-requests",
+        user_id=str(current_user.get("_id", current_user.get("id"))),
+        user_role=current_user.get("role")
+    )
 
 
 @router.get(
@@ -74,14 +75,14 @@ def require_recruiter_or_admin(current_user: User) -> None:
     summary="Lister les demandes d'accès",
     description="""
     Récupérer la liste des demandes d'accès avec filtres.
-    
+
     **Filtres disponibles** :
     - `status` : Filtrer par statut (pending, approved, rejected)
     - `viewed` : Filtrer par état vu/non vu (true/false)
     - `skip` et `limit` : Pagination
-    
+
     **Permissions** : Recruteur, Admin
-    
+
     **Retourne également** :
     - `pending_count` : Nombre de demandes en attente
     - `unviewed_count` : Nombre de demandes non vues (pour le badge de notification)
@@ -92,32 +93,32 @@ async def list_access_requests(
     viewed_filter: Optional[bool] = Query(None, description="Filtrer par état vu/non vu"),
     skip: int = Query(0, ge=0, description="Nombre d'éléments à ignorer"),
     limit: int = Query(100, ge=1, le=500, description="Nombre d'éléments à retourner"),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """Lister toutes les demandes d'accès avec filtres."""
     import time
     start_time = time.time()
-    
+
     try:
         # 📊 LOG: Début de requête
         safe_log("info", "🔍 Début récupération access-requests",
-                user_id=str(current_user.id),
-                user_role=current_user.role,
+                user_id=str(current_user.get("_id", current_user.get("id"))),
+                user_role=current_user.get("role"),
                 status_filter=status_filter,
                 viewed_filter=viewed_filter,
                 skip=skip,
                 limit=limit)
-        
+
         # Vérifier les permissions
         safe_log("debug", "🔐 Vérification permissions...")
         require_recruiter_or_admin(current_user)
         safe_log("debug", "✅ Permissions OK")
-        
+
         # Créer le service
         safe_log("debug", "🏗️ Création AccessRequestService...")
         service = AccessRequestService(db)
-        
+
         # Récupérer les demandes
         safe_log("debug", "📋 Récupération demandes depuis DB...")
         requests, total, pending_count, unviewed_count = await service.get_all_requests(
@@ -126,17 +127,16 @@ async def list_access_requests(
             skip=skip,
             limit=limit
         )
-        
+
         safe_log("info", "✅ Demandes récupérées",
                 count=len(requests),
                 total=total,
                 pending_count=pending_count,
                 unviewed_count=unviewed_count)
-        
-        # Commit (pour marquer comme vues si nécessaire)
-        safe_log("debug", "💾 Commit transaction...")
-        await db.commit()
-        
+
+        # MongoDB no commit needed for reads
+        pass
+
         # Convertir en schémas Pydantic
         safe_log("debug", "🔄 Conversion vers schémas Pydantic...")
         request_data = [
@@ -158,20 +158,20 @@ async def list_access_requests(
             )
             for req in requests
         ]
-        
+
         # 📊 LOG: Performance
         duration = time.time() - start_time
         safe_log("info", "⏱️ Performance list_access_requests",
                 duration_seconds=round(duration, 3),
                 total_count=total,
                 returned_count=len(request_data))
-        
+
         safe_log("info", "✅ SUCCESS - Access-requests retournées",
                 total=total,
                 returned=len(request_data),
                 pending=pending_count,
                 unviewed=unviewed_count)
-        
+
         return AccessRequestListResponse(
             success=True,
             message=f"{total} demande(s) d'accès trouvée(s)",
@@ -180,27 +180,29 @@ async def list_access_requests(
             pending_count=pending_count,
             unviewed_count=unviewed_count
         )
-        
+
     except HTTPException as he:
         # 🔴 LOG: Erreur HTTP (permissions, etc.)
         safe_log("warning", "⚠️ HTTPException dans list_access_requests",
-                user_id=str(current_user.id),
+                user_id=str(current_user.get("_id", current_user.get("id"))),
                 status_code=he.status_code,
                 detail=he.detail)
         raise
     except Exception as e:
         # 🔴 LOG: Erreur critique avec contexte complet
         import traceback
-        safe_log("error", "❌ ERREUR CRITIQUE - list_access_requests",
-                user_id=str(current_user.id),
-                user_role=current_user.role,
-                error_type=type(e).__name__,
-                error_message=str(e),
-                traceback=traceback.format_exc(),
-                status_filter=status_filter,
-                viewed_filter=viewed_filter,
-                duration_seconds=round(time.time() - start_time, 3))
-        await db.rollback()
+        safe_log(
+            "error", "❌ ERREUR CRITIQUE - list_access_requests",
+            user_id=str(current_user.get("_id", current_user.get("id"))),
+            user_role=current_user.get("role"),
+            error_type=type(e).__name__,
+            error_message=str(e),
+            traceback=traceback.format_exc(),
+            status_filter=status_filter,
+            viewed_filter=viewed_filter,
+            duration_seconds=round(time.time() - start_time, 3)
+        )
+
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erreur interne: {str(e)}"
@@ -213,70 +215,66 @@ async def list_access_requests(
     summary="Approuver une demande d'accès",
     description="""
     Approuver une demande d'accès.
-    
+
     **Actions effectuées** :
     1. Vérifier que la demande existe et est 'pending'
     2. Mettre à jour `users.statut = 'actif'`
     3. Mettre à jour `access_requests.status = 'approved'`
     4. Enregistrer `reviewed_at` et `reviewed_by`
     5. Envoyer un email de confirmation au candidat
-    
+
     **Permissions** : Recruteur, Admin
     """
 )
 async def approve_access_request(
     request_data: AccessRequestApprove,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """Approuver une demande d'accès."""
     try:
         # Vérifier les permissions
         require_recruiter_or_admin(current_user)
-        
+
         # Créer les services
         access_service = AccessRequestService(db)
         email_service = EmailService(db)
-        
+
         # Approuver la demande
         approved_request = await access_service.approve_request(
             request_id=request_data.request_id,
-            reviewer_id=current_user.id
+            reviewer_id=str(current_user.get("_id", current_user.get("id")))
         )
-        
-        # Commit
-        await db.commit()
-        await db.refresh(approved_request)
-        
+
         # Récupérer le sexe de l'utilisateur pour la salutation
-        user_result = await db.execute(
-            select(User).where(User.id == approved_request.user_id)
-        )
-        approved_user = user_result.scalar_one_or_none()
-        
+        from bson import ObjectId
+        user_id = approved_request.user_id if hasattr(approved_request, 'user_id') else approved_request.get('user_id')
+        user_query = {"_id": ObjectId(user_id) if len(str(user_id)) == 24 else user_id}
+        approved_user = await db.users.find_one(user_query)
+
         # Email 4 : Approbation
         try:
             first_name_str = str(approved_request.first_name) if approved_request.first_name is not None else ""
             last_name_str = str(approved_request.last_name) if approved_request.last_name is not None else ""
-            sexe_str = str(approved_user.sexe) if approved_user and approved_user.sexe is not None else None
-            
+            sexe_str = str(approved_user.get("sexe")) if approved_user and approved_user.get("sexe") is not None else None
+
             await email_service.send_access_approved_email(
                 to_email=str(approved_request.email),
                 first_name=first_name_str,
                 last_name=last_name_str,
                 sexe=sexe_str
             )
-            safe_log("info", "Email d'approbation envoyé", 
+            safe_log("info", "Email d'approbation envoyé",
                     request_id=str(approved_request.id),
                     to=approved_request.email)
         except Exception as e:
             safe_log("warning", "Erreur envoi email approbation", error=str(e))
-        
+
         safe_log("info", "Demande d'accès approuvée",
                 request_id=str(approved_request.id),
                 user_id=str(approved_request.user_id),
-                reviewer_id=str(current_user.id))
-        
+                reviewer_id=str(current_user.get("_id", current_user.get("id"))))
+
         return AccessRequestResponse(
             success=True,
             message="Demande d'accès approuvée avec succès. Le candidat peut maintenant se connecter.",
@@ -297,7 +295,7 @@ async def approve_access_request(
                 reviewed_by=approved_request.reviewed_by
             )
         )
-        
+
     except NotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -312,7 +310,6 @@ async def approve_access_request(
         raise
     except Exception as e:
         safe_log("error", "Erreur approbation demande", error=str(e), request_id=str(request_data.request_id))
-        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erreur lors de l'approbation de la demande: {str(e)}"
@@ -325,7 +322,7 @@ async def approve_access_request(
     summary="Refuser une demande d'accès",
     description="""
     Refuser une demande d'accès avec un motif.
-    
+
     **Actions effectuées** :
     1. Vérifier que la demande existe et est 'pending'
     2. Vérifier que le motif fait au moins 20 caractères
@@ -333,49 +330,45 @@ async def approve_access_request(
     4. Mettre à jour `access_requests.status = 'rejected'`
     5. Enregistrer `rejection_reason`, `reviewed_at` et `reviewed_by`
     6. Envoyer un email au candidat avec le motif du refus
-    
+
     **Permissions** : Recruteur, Admin
-    
+
     **Note** : Le motif de refus doit contenir au moins 20 caractères pour expliquer clairement la raison.
     """
 )
 async def reject_access_request(
     request_data: AccessRequestReject,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """Refuser une demande d'accès."""
     try:
         # Vérifier les permissions
         require_recruiter_or_admin(current_user)
-        
+
         # Créer les services
         access_service = AccessRequestService(db)
         email_service = EmailService(db)
-        
+
         # Refuser la demande
         rejected_request = await access_service.reject_request(
             request_id=request_data.request_id,
-            reviewer_id=current_user.id,
+            reviewer_id=str(current_user.get("_id", current_user.get("id"))),
             rejection_reason=request_data.rejection_reason
         )
-        
-        # Commit
-        await db.commit()
-        await db.refresh(rejected_request)
-        
+
         # Récupérer le sexe de l'utilisateur pour la salutation
-        user_result = await db.execute(
-            select(User).where(User.id == rejected_request.user_id)
-        )
-        rejected_user = user_result.scalar_one_or_none()
-        
+        from bson import ObjectId
+        user_id = rejected_request.user_id if hasattr(rejected_request, 'user_id') else rejected_request.get('user_id')
+        user_query = {"_id": ObjectId(user_id) if len(str(user_id)) == 24 else user_id}
+        rejected_user = await db.users.find_one(user_query)
+
         # Email 5 : Refus avec motif
         try:
             first_name_str = str(rejected_request.first_name) if rejected_request.first_name is not None else ""
             last_name_str = str(rejected_request.last_name) if rejected_request.last_name is not None else ""
-            sexe_str = str(rejected_user.sexe) if rejected_user and rejected_user.sexe is not None else None
-            
+            sexe_str = str(rejected_user.get("sexe")) if rejected_user and rejected_user.get("sexe") is not None else None
+
             await email_service.send_access_rejected_email(
                 to_email=str(rejected_request.email),
                 first_name=first_name_str,
@@ -383,17 +376,17 @@ async def reject_access_request(
                 rejection_reason=request_data.rejection_reason,
                 sexe=sexe_str
             )
-            safe_log("info", "Email de refus envoyé", 
+            safe_log("info", "Email de refus envoyé",
                     request_id=str(rejected_request.id),
                     to=rejected_request.email)
         except Exception as e:
             safe_log("warning", "Erreur envoi email refus", error=str(e))
-        
+
         safe_log("info", "Demande d'accès refusée",
                 request_id=str(rejected_request.id),
                 user_id=str(rejected_request.user_id),
-                reviewer_id=str(current_user.id))
-        
+                reviewer_id=str(current_user.get("_id", current_user.get("id"))))
+
         return AccessRequestResponse(
             success=True,
             message="Demande d'accès refusée. Le candidat a été informé par email.",
@@ -414,7 +407,7 @@ async def reject_access_request(
                 reviewed_by=rejected_request.reviewed_by
             )
         )
-        
+
     except NotFoundError as e:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -429,7 +422,6 @@ async def reject_access_request(
         raise
     except Exception as e:
         safe_log("error", "Erreur refus demande", error=str(e), request_id=str(request_data.request_id))
-        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erreur lors du refus de la demande: {str(e)}"
@@ -441,50 +433,48 @@ async def reject_access_request(
     summary="Marquer toutes les demandes comme vues",
     description="""
     Marquer toutes les demandes en attente comme vues.
-    
+
     **Usage** : Appelé automatiquement quand un recruteur visite la page des demandes d'accès.
     Cela réinitialise le badge de notification.
-    
+
     **Permissions** : Recruteur, Admin, Observateur
     """
 )
 async def mark_all_as_viewed(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """Marquer toutes les demandes pending comme vues."""
     try:
         # Vérifier les permissions (y compris observateur)
-        if current_user.role not in ['recruiter', 'admin', 'observer']:
+        if current_user.get("role") not in ['recruiter', 'admin', 'observer']:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Accès réservé aux recruteurs, administrateurs et observateurs"
             )
-        
+
         # Créer le service
         service = AccessRequestService(db)
-        
+
         # Marquer comme vues
         count = await service.mark_all_as_viewed()
-        
-        # Commit
-        await db.commit()
-        
+
+
+
         safe_log("info", "Demandes marquées comme vues",
                 count=count,
-                user_id=str(current_user.id))
-        
+                user_id=str(current_user.get("_id", current_user.get("id"))))
+
         return {
             "success": True,
             "message": f"{count} demande(s) marquée(s) comme vue(s)",
             "count": count
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        safe_log("error", "Erreur marquage viewed", error=str(e), user_id=str(current_user.id))
-        await db.rollback()
+        safe_log("error", "Erreur marquage viewed", error=str(e), user_id=str(current_user.get("_id", current_user.get("id"))))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Erreur lors du marquage des demandes: {str(e)}"
@@ -496,36 +486,36 @@ async def mark_all_as_viewed(
     summary="Obtenir le nombre de demandes non vues",
     description="""
     Obtenir le nombre de demandes pending et non vues.
-    
+
     **Usage** : Pour afficher le badge de notification dans l'interface.
-    
+
     **Permissions** : Recruteur, Admin, Observateur
     """
 )
 async def get_unviewed_count(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """Obtenir le nombre de demandes non vues (pour le badge)."""
     try:
         # Vérifier les permissions
-        if current_user.role not in ['recruiter', 'admin', 'observer']:
+        if current_user.get("role") not in ['recruiter', 'admin', 'observer']:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Accès réservé aux recruteurs, administrateurs et observateurs"
             )
-        
+
         # Créer le service
         service = AccessRequestService(db)
-        
+
         # Compter
         count = await service.get_unviewed_count()
-        
+
         return {
             "success": True,
             "count": count
         }
-        
+
     except HTTPException:
         raise
     except Exception as e:

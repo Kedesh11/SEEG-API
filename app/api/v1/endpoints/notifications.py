@@ -1,9 +1,9 @@
 """
 Endpoints pour la gestion des notifications
 """
-from typing import List, Dict, Set, Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, status, WebSocket, WebSocketDisconnect
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any, Dict, Set, Optional
+
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, status
 
 from app.db.database import get_db
 from app.services.notification import NotificationService
@@ -11,7 +11,6 @@ from app.schemas.notification import (
     NotificationResponse, NotificationListResponse, NotificationStatsResponse
 )
 from app.core.dependencies import get_current_user
-from app.models.user import User
 from app.core.exceptions import NotFoundError
 from app.core.security.security import TokenManager
 import structlog
@@ -21,7 +20,7 @@ logger = structlog.get_logger(__name__)
 
 
 def safe_log(level: str, message: str, **kwargs):
-    """Log avec gestion d'erreur pour Ã©viter les problÃ¨mes de handler."""
+    """Log avec gestion d'erreur pour éviter les problèmes de handler."""
     try:
         getattr(logger, level)(message, **kwargs)
     except (TypeError, AttributeError):
@@ -67,15 +66,15 @@ manager = NotificationConnectionManager()
 @router.websocket("/ws")
 async def websocket_notifications(websocket: WebSocket):
     """
-    WebSocket temps rÃ©el pour les notifications.
-    
-    - Authentification: fournir un token JWT via le paramÃ¨tre de requÃªte `?token=...`.
-    - Alternatives: certaines bibliothÃ¨ques envoient le token dans l'en-tÃªte `Sec-WebSocket-Protocol`.
-    - Messages Ã©mis: `notifications:new`, `notifications:updated`, `notifications:updated_all`, `notifications:unread_count`.
+    WebSocket temps réel pour les notifications.
+
+    - Authentification: fournir un token JWT via le paramètre de requÃªte `?token=...`.
+    - Alternatives: certaines bibliothèques envoient le token dans l'en-tÃªte `Sec-WebSocket-Protocol`.
+    - Messages émis: `notifications:new`, `notifications:updated`, `notifications:updated_all`, `notifications:unread_count`.
     """
     token = websocket.query_params.get("token")
     if not token:
-        # Essai via header Sec-WebSocket-Protocol (certaines libs passent le token lÃ )
+        # Essai via header Sec-WebSocket-Protocol (certaines libs passent le token là)
         token = websocket.headers.get("sec-websocket-protocol")
     if not token:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
@@ -102,37 +101,55 @@ async def websocket_notifications(websocket: WebSocket):
             pass
 
 
-async def _broadcast_unread_count(db: AsyncSession, user_id: str) -> None:
+async def _broadcast_unread_count(db: Any, user_id: str) -> None:
     service = NotificationService(db)
     count = await service.get_unread_count(user_id)
     await manager.send_to_user(user_id, {"type": "notifications:unread_count", "count": count})
 
 
-@router.get("/", response_model=NotificationListResponse, summary="Lister mes notifications (filtres avancÃ©s)", openapi_extra={
-    "responses": {"200": {"content": {"application/json": {"example": {"items": [], "total": 0, "skip": 0, "limit": 100, "has_more": False}}}}}
-})
+@router.get(
+    "/",
+    response_model=NotificationListResponse,
+    summary="Lister mes notifications (filtres avancés)",
+    openapi_extra={
+        "responses": {
+            "200": {
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "items": [], "total": 0, "skip": 0,
+                            "limit": 100, "has_more": False
+                        }
+                    }
+                }
+            }
+        }
+    }
+)
 async def get_notifications(
-    skip: int = Query(0, ge=0, description="Nombre d'Ã©lÃ©ments Ã  ignorer"),
-    limit: int = Query(100, ge=1, le=1000, description="Nombre maximum d'Ã©lÃ©ments Ã  retourner"),
-    unread_only: bool = Query(False, description="Afficher seulement les notifications non lues"),
-    q: Optional[str] = Query(None, description="Recherche texte (titre, message)"),
-    type: Optional[str] = Query(None, description="Filtrer par type de notification"),
-    date_from: Optional[str] = Query(None, description="Date de dÃ©but (YYYY-MM-DD ou ISO8601)"),
-    date_to: Optional[str] = Query(None, description="Date de fin (YYYY-MM-DD ou ISO8601)"),
+    skip: int = Query(0, ge=0, description="Nombre d'éléments à ignorer"),
+    limit: int = Query(100, ge=1, le=1000, description="Nombre maximum d'éléments à retourner"),
+    unread_only: bool = Query(
+        False, description="Afficher seulement les non lues"
+    ),
+    q: Optional[str] = Query(None, description="Recherche texte"),
+    type: Optional[str] = Query(None, description="Filtrer par type"),
+    date_from: Optional[str] = Query(None, description="Date début"),
+    date_to: Optional[str] = Query(None, description="Date fin"),
     sort: Optional[str] = Query(None, description="Champ de tri (created_at)"),
     order: Optional[str] = Query("desc", description="Ordre de tri: asc|desc"),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """
-    RÃ©cupÃ©rer la liste des notifications de l'utilisateur.
-    
-    Utiliser les paramÃ¨tres de filtre pour restreindre les rÃ©sultats et le tri pour l'ordre d'affichage.
+    Récupérer la liste des notifications de l'utilisateur.
+
+    Utiliser les paramètres de filtre pour restreindre les résultats et le tri pour l'ordre d'affichage.
     """
     try:
         notification_service = NotificationService(db)
-        return await notification_service.get_user_notifications(
-            user_id=str(current_user.id),
+        return_value = await notification_service.get_user_notifications(
+            user_id=str(current_user.get("_id", current_user.get("id"))),
             skip=skip,
             limit=limit,
             unread_only=unread_only,
@@ -143,132 +160,221 @@ async def get_notifications(
             sort=sort,
             order=order
         )
-        safe_log("info", "Notifications rÃ©cupÃ©rÃ©es", user_id=str(current_user.id), count=len(return_value.items) if hasattr(return_value, 'items') else 0)
+        u_id = str(current_user.get("_id", current_user.get("id")))
+        safe_log("info", "Notifications récupérées", user_id=u_id,
+                 count=len(return_value.items) if hasattr(return_value, 'items')
+                 else 0)
         return return_value
     except Exception as e:
-        safe_log("error", "Erreur rÃ©cupÃ©ration notifications", user_id=str(current_user.id), error=str(e))
+        u_id = str(current_user.get("_id", current_user.get("id")))
+        safe_log("error", "Erreur récupération notifications",
+                 user_id=u_id, error=str(e))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
-@router.get("/{notification_id}", response_model=NotificationResponse, summary="RÃ©cupÃ©rer une notification par ID", openapi_extra={
-    "responses": {"200": {"content": {"application/json": {"example": {"id": 1, "title": "Nouvelle candidature", "message": "Un candidat a postulÃ©", "is_read": False}}}}, "404": {"description": "Non trouvÃ©e"}}
-})
+@router.get(
+    "/{notification_id}",
+    response_model=NotificationResponse,
+    summary="Récupérer une notification par ID",
+    openapi_extra={
+        "responses": {
+            "200": {
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "id": 1, "title": "Nouvelle candidature",
+                            "message": "Un candidat a postulé",
+                            "is_read": False
+                        }
+                    }
+                }
+            },
+            "404": {"description": "Non trouvée"}
+        }
+    }
+)
 async def get_notification(
     notification_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """
-    RÃ©cupÃ©rer une notification par son ID unique.
+    Récupérer une notification par son ID unique.
     """
     try:
         notification_service = NotificationService(db)
-        result = await notification_service.get_notification(notification_id, str(current_user.id))
-        safe_log("info", "Notification rÃ©cupÃ©rÃ©e", notification_id=notification_id, user_id=str(current_user.id))
+        n_id = notification_id
+        u_id = str(current_user.get("_id", current_user.get("id")))
+        result = await notification_service.get_notification(n_id, u_id)
+        safe_log("info", "Notification récupérée",
+                 notification_id=n_id, user_id=u_id)
         return result
     except NotFoundError as e:
-        safe_log("warning", "Notification non trouvÃ©e", notification_id=notification_id, user_id=str(current_user.id))
+        u_id = str(current_user.get("_id", current_user.get("id")))
+        safe_log("warning", "Notification non trouvée",
+                 notification_id=notification_id, user_id=u_id)
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        safe_log("error", "Erreur rÃ©cupÃ©ration notification", notification_id=notification_id, error=str(e))
+        safe_log("error", "Erreur récupération notification", notification_id=notification_id, error=str(e))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
-@router.put("/{notification_id}/read", response_model=NotificationResponse, summary="Marquer une notification comme lue", openapi_extra={
-    "responses": {"200": {"content": {"application/json": {"example": {"id": 1, "is_read": True}}}}, "404": {"description": "Non trouvÃ©e"}}
-})
+@router.put(
+    "/{notification_id}/read",
+    response_model=NotificationResponse,
+    summary="Marquer une notification comme lue",
+    openapi_extra={
+        "responses": {
+            "200": {
+                "content": {
+                    "application/json": {
+                        "example": {"id": 1, "is_read": True}
+                    }
+                }
+            },
+            "404": {"description": "Non trouvée"}
+        }
+    }
+)
 async def mark_notification_as_read(
     notification_id: str,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """
-    Marquer une notification comme lue et diffuser l'Ã©tat vers les clients.
+    Marquer une notification comme lue et diffuser l'état vers les clients.
     """
     try:
         notification_service = NotificationService(db)
-        resp = await notification_service.mark_as_read(notification_id, str(current_user.id))
-        # Emettre la mise Ã  jour du compteur non lus
-        await _broadcast_unread_count(db, str(current_user.id))
-        # Emettre l'Ã©vÃ©nement de notification mise Ã  jour
-        await manager.send_to_user(str(current_user.id), {"type": "notifications:updated", "id": notification_id})
-        safe_log("info", "Notification marquÃ©e comme lue", notification_id=notification_id, user_id=str(current_user.id))
+        u_id = str(current_user.get("_id", current_user.get("id")))
+        resp = await notification_service.mark_as_read(notification_id, u_id)
+        # Emettre la mise à jour du compteur non lus
+        await _broadcast_unread_count(db, u_id)
+        # Emettre l'événement de notification mise à jour
+        await manager.send_to_user(u_id, {
+            "type": "notifications:updated",
+            "id": notification_id
+        })
+        safe_log("info", "Notification marquée comme lue",
+                 notification_id=notification_id, user_id=u_id)
         return resp
     except NotFoundError as e:
-        safe_log("warning", "Notification non trouvÃ©e pour marquer lue", notification_id=notification_id, user_id=str(current_user.id))
+        u_id = str(current_user.get("_id", current_user.get("id")))
+        safe_log("warning", "Notification non trouvée pour marquer lue",
+                 notification_id=notification_id, user_id=u_id)
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
-        safe_log("error", "Erreur marquage notification lue", notification_id=notification_id, error=str(e))
-        raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+        safe_log("error", "Erreur marquage notification lue",
+                 notification_id=notification_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Erreur interne")
 
 
-@router.put("/read-all", status_code=status.HTTP_204_NO_CONTENT, summary="Marquer toutes mes notifications comme lues", openapi_extra={
-    "responses": {"204": {"description": "Toutes les notifications marquÃ©es comme lues"}}
-})
+@router.put(
+    "/read-all",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Marquer toutes mes notifications comme lues",
+    openapi_extra={
+        "responses": {
+            "204": {
+                "description": "Toutes les notifications marquées comme lues"
+            }
+        }
+    }
+)
 async def mark_all_notifications_as_read(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """
-    Marquer toutes les notifications de l'utilisateur comme lues et diffuser l'Ã©tat.
+    Marquer toutes les notifications de l'utilisateur comme lues et diffuser l'état.
     """
     try:
         notification_service = NotificationService(db)
-        await notification_service.mark_all_as_read(str(current_user.id))
-        # Emettre la mise Ã  jour du compteur non lus
-        await _broadcast_unread_count(db, str(current_user.id))
-        await manager.send_to_user(str(current_user.id), {"type": "notifications:updated_all"})
-        safe_log("info", "Toutes notifications marquÃ©es comme lues", user_id=str(current_user.id))
+        u_id = str(current_user.get("_id", current_user.get("id")))
+        await notification_service.mark_all_as_read(u_id)
+        # Emettre la mise à jour du compteur non lus
+        await _broadcast_unread_count(db, u_id)
+        await manager.send_to_user(u_id, {"type": "notifications:updated_all"})
+        safe_log("info", "Toutes notifications marquées comme lues",
+                 user_id=u_id)
         return None
     except Exception as e:
-        safe_log("error", "Erreur marquage toutes notifications lues", user_id=str(current_user.id), error=str(e))
-        raise HTTPException(status_code=500, detail="Erreur interne du serveur")
+        u_id = str(current_user.get("_id", current_user.get("id")))
+        safe_log("error", "Erreur marquage toutes notifications lues",
+                 user_id=u_id, error=str(e))
+        raise HTTPException(status_code=500, detail="Erreur interne")
 
 
-@router.get("/stats/unread-count", response_model=dict, summary="Compter mes notifications non lues", openapi_extra={
-    "responses": {"200": {"content": {"application/json": {"example": {"count": 0}}}}}
-})
+@router.get(
+    "/stats/unread-count",
+    response_model=dict,
+    summary="Compter mes notifications non lues",
+    openapi_extra={
+        "responses": {
+            "200": {
+                "content": {
+                    "application/json": {
+                        "example": {"count": 0}
+                    }
+                }
+            }
+        }
+    }
+)
 async def get_unread_notifications_count(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """
     Retourne le nombre de notifications non lues sous la forme `{ "count": <nombre> }`.
     """
     try:
         notification_service = NotificationService(db)
-        count = await notification_service.get_unread_count(str(current_user.id))
-        # Harmonisation de la rÃ©ponse
-        safe_log("info", "Compteur notifications non lues rÃ©cupÃ©rÃ©", user_id=str(current_user.id), count=count)
+        count = await notification_service.get_unread_count(str(current_user.get("_id", current_user.get("id"))))
+        # Harmonisation de la reponse
+        safe_log("info", "Compteur notifications non lues récupéré", user_id=str(current_user.get("_id", current_user.get("id"))), count=count)
         return {"count": count}
     except Exception as e:
-        safe_log("error", "Erreur rÃ©cupÃ©ration compteur notifications", user_id=str(current_user.id), error=str(e))
+        safe_log("error", "Erreur récupération compteur notifications", user_id=str(current_user.get("_id", current_user.get("id"))), error=str(e))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")
 
 
-@router.get("/stats/overview", response_model=NotificationStatsResponse, openapi_extra={
-    "responses": {"200": {"content": {"application/json": {"example": {
-        "total_notifications": 0, "unread_count": 0, "type_distribution": {}, "monthly_trend": {}
-    }}}}}
-})
+@router.get(
+    "/stats/overview",
+    response_model=NotificationStatsResponse,
+    openapi_extra={
+        "responses": {
+            "200": {
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "total_notifications": 0, "unread_count": 0,
+                            "type_distribution": {}, "monthly_trend": {}
+                        }
+                    }
+                }
+            }
+        }
+    }
+)
 async def get_notification_statistics(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """
-    RÃ©cupÃ©rer les statistiques des notifications
-    
+    Récupérer les statistiques des notifications
+
     Retourne:
     - Nombre total de notifications
     - Nombre de notifications non lues
-    - RÃ©partition par type
+    - Répartition par type
     - Tendance mensuelle
     """
     try:
         notification_service = NotificationService(db)
-        stats = await notification_service.get_user_notification_statistics(str(current_user.id))
-        safe_log("info", "Statistiques notifications rÃ©cupÃ©rÃ©es", user_id=str(current_user.id))
+        stats = await notification_service.get_user_notification_statistics(str(current_user.get("_id", current_user.get("id"))))
+        safe_log("info", "Statistiques notifications récupérées", user_id=str(current_user.get("_id", current_user.get("id"))))
         return stats
     except Exception as e:
-        safe_log("error", "Erreur rÃ©cupÃ©ration statistiques notifications", user_id=str(current_user.id), error=str(e))
+        safe_log("error", "Erreur récupération statistiques notifications", user_id=str(current_user.get("_id", current_user.get("id"))), error=str(e))
         raise HTTPException(status_code=500, detail="Erreur interne du serveur")

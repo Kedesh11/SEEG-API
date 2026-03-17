@@ -1,11 +1,12 @@
 """
 Point d'entrée principal de l'application One HCM SEEG
 """
+from app.api.v1.endpoints.monitoring import router as monitoring_router
+from app.api.v1.endpoints import auth, users, jobs, applications, evaluations, notifications, interviews, emails, optimized, webhooks, access_requests, public
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request, Depends
-from fastapi.responses import JSONResponse, Response
+from fastapi import FastAPI, Depends
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import AsyncSession
 # from slowapi.errors import RateLimitExceeded  # ⚠️ Désactivé temporairement
 import structlog
 import os
@@ -13,17 +14,13 @@ import os
 from app.core.config.config import settings
 from app.core.dependencies import get_current_user, get_current_admin_user
 from app.core.logging.logging import LoggingConfig
-# from app.core.rate_limit import limiter  # ⚠️ Désactivé temporairement - Problème avec slowapi
-from app.core.monitoring import app_insights
-from app.core.monitoring.middleware import ApplicationInsightsMiddleware
 
 # Import des nouveaux modules de monitoring
 from app.core.logging.enhanced_logging import setup_enhanced_logging
 from app.core.tracing import setup_tracing
-from app.core.metrics import metrics_collector
 from app.core.cache import cache_manager
 from app.middleware.monitoring import (
-    MonitoringMiddleware, 
+    MonitoringMiddleware,
     PerformanceLoggingMiddleware,
     SecurityHeadersMiddleware,
     ErrorTrackingMiddleware
@@ -34,7 +31,7 @@ if os.getenv("LOG_FORMAT") == "json":
     setup_enhanced_logging()
 else:
     LoggingConfig.setup_logging()
-    
+
 logger = structlog.get_logger(__name__)
 
 
@@ -45,12 +42,9 @@ def safe_log(level: str, message: str, **kwargs):
     """
     try:
         getattr(logger, level)(message, **kwargs)
-    except (TypeError, AttributeError) as e:
+    except (TypeError, AttributeError):
         print(f"{level.upper()}: {message} - {kwargs}")
 
-
-# Configuration d'Application Insights
-app_insights.setup()
 
 # Configuration du tracing
 if settings.ENABLE_TRACING:
@@ -60,28 +54,32 @@ if settings.ENABLE_TRACING:
 # GESTION DU CYCLE DE VIE
 # ============================================================================
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gestion du cycle de vie de l'application avec monitoring"""
     # Startup
-    safe_log("info", "Démarrage de l'API One HCM SEEG", version=settings.APP_VERSION)
-    
+    safe_log(
+        "info",
+        "Démarrage de l'API One HCM SEEG",
+        version=settings.APP_VERSION)
+
     # Le cache Redis s'initialise automatiquement dans le constructeur de CacheManager
     # Aucune action nécessaire ici
-    
+
     # Les métriques sont collectées automatiquement à la demande
     if settings.METRICS_ENABLED:
         safe_log("info", "Collecte de métriques Prometheus activée")
-    
+
     # Validation de la configuration en production
     if settings.ENVIRONMENT == "production":
         validate_production_config()
-    
+
     yield
-    
+
     # Shutdown
     safe_log("info", "Arrêt de l'API One HCM SEEG")
-    
+
     # Le cache Redis se ferme automatiquement
     # Les métriques Prometheus s'arrêtent automatiquement
 
@@ -89,14 +87,13 @@ async def lifespan(app: FastAPI):
 # CRÉATION DE L'APPLICATION FASTAPI
 # ============================================================================
 
-app = FastAPI(
-    title=settings.APP_NAME,
-    version=settings.APP_VERSION,
-    description="""
+app = FastAPI(title=settings.APP_NAME,
+              version=settings.APP_VERSION,
+              description="""
     ## API One HCM SEEG - Système de Gestion des Ressources Humaines
-    
+
     Cette API permet de gérer l'ensemble du processus de recrutement de la SEEG :
-    
+
     * **Authentification** : Connexion, inscription (internes/externes), gestion des tokens
     * **Utilisateurs** : Gestion des profils candidats, recruteurs et administrateurs
     * **Offres d'emploi** : Création, modification et consultation avec filtrage automatique (internes/externes)
@@ -105,17 +102,17 @@ app = FastAPI(
     * **Notifications** : Système de notifications
     * **Entretiens** : Planification et gestion des entretiens
     * **Documents PDF** : Upload, stockage et gestion sécurisée des fichiers PDF (CV, lettres, diplômes, etc.)
-    
+
     ### Frontend
     Interface utilisateur disponible sur : https://www.seeg-talentsource.com
-    
+
     ### Rate Limiting
     L'API est protégée par rate limiting :
     - **Authentification** : 5 requêtes/minute, 20/heure
     - **Inscription** : 3 requêtes/minute, 10/heure
     - **Upload de fichiers** : 10 requêtes/minute, 50/heure
     - **Autres endpoints** : 60 requêtes/minute, 500/heure
-    
+
     ### Monitoring
     L'API est équipée d'un système de monitoring complet :
     - **Métriques** : Prometheus (admin seulement)
@@ -123,56 +120,31 @@ app = FastAPI(
     - **Tracing** : OpenTelemetry + Jaeger
     - **Health Check** : Endpoints de santé
     """,
-    docs_url="/docs",
-    redoc_url="/redoc",
-    lifespan=lifespan,
-    openapi_tags=[
-        {
-            "name": "🏠 Accueil",
-            "description": "Endpoints généraux de l'API - Statut, santé, informations"
-        },
-        {
-            "name": "🔐 Authentification",
-            "description": "Gestion de l'authentification - Connexion, inscription, tokens JWT"
-        },
-        {
-            "name": "👥 Gestion des Demandes d'Accès",
-            "description": "Gestion des demandes d'accès à la plateforme - Approbation/refus par les recruteurs pour les candidats internes sans email SEEG"
-        },
-        {
-            "name": "👥 Utilisateurs",
-            "description": "Gestion des utilisateurs - Profils, rôles, permissions"
-        },
-        {
-            "name": "💼 Offres d'emploi",
-            "description": "Gestion des offres d'emploi avec questions MTP (Métier, Talent, Paradigme) - Création, modification, consultation des offres internes et externes"
-        },
-        {
-            "name": "📝 Candidatures",
-            "description": "Gestion des candidatures - Soumission, suivi, statuts"
-        },
-        {
-            "name": "📄 Documents PDF",
-            "description": "Gestion des documents PDF liés aux candidatures (CV, lettres de motivation, diplômes, certificats)"
-        },
-        {
-            "name": "📊 Évaluations",
-            "description": "Gestion des évaluations - Protocoles MTP, scores, recommandations"
-        },
-        {
-            "name": "🔔 Notifications",
-            "description": "Système de notifications - Alertes, messages, suivi"
-        },
-        {
-            "name": "🎯 Entretiens",
-            "description": "Gestion des entretiens - Planification, créneaux, suivi"
-        },
-        {
-            "name": "Webhooks",
-            "description": "Intégrations externes via webhooks"
-        }
-    ]
-)
+              docs_url="/docs",
+              redoc_url="/redoc",
+              lifespan=lifespan,
+              openapi_tags=[{"name": "🏠 Accueil",
+                             "description": "Endpoints généraux de l'API - Statut, santé, informations"},
+                            {"name": "🔐 Authentification",
+                             "description": "Gestion de l'authentification - Connexion, inscription, tokens JWT"},
+                            {"name": "👥 Gestion des Demandes d'Accès",
+                             "description": "Gestion des demandes d'accès à la plateforme - Approbation/refus par les recruteurs pour les candidats internes sans email SEEG"},
+                            {"name": "👥 Utilisateurs",
+                             "description": "Gestion des utilisateurs - Profils, rôles, permissions"},
+                            {"name": "💼 Offres d'emploi",
+                             "description": "Gestion des offres d'emploi avec questions MTP (Métier, Talent, Paradigme) - Création, modification, consultation des offres internes et externes"},
+                            {"name": "📝 Candidatures",
+                             "description": "Gestion des candidatures - Soumission, suivi, statuts"},
+                            {"name": "📄 Documents PDF",
+                             "description": "Gestion des documents PDF liés aux candidatures (CV, lettres de motivation, diplômes, certificats)"},
+                            {"name": "📊 Évaluations",
+                             "description": "Gestion des évaluations - Protocoles MTP, scores, recommandations"},
+                            {"name": "🔔 Notifications",
+                             "description": "Système de notifications - Alertes, messages, suivi"},
+                            {"name": "🎯 Entretiens",
+                             "description": "Gestion des entretiens - Planification, créneaux, suivi"},
+                            {"name": "Webhooks",
+                             "description": "Intégrations externes via webhooks"}])
 
 # Configuration du rate limiter
 # ⚠️ TEMPORAIREMENT DÉSACTIVÉ - Problème de compatibilité avec slowapi
@@ -187,12 +159,6 @@ app = FastAPI(
 # ))
 
 # Configuration des middlewares
-# Application Insights - doit être en premier pour tracker toutes les requêtes
-try:
-    app.add_middleware(ApplicationInsightsMiddleware)
-except Exception as e:
-    print(f"WARNING: ApplicationInsightsMiddleware failed: {e}")
-
 # Monitoring complet
 try:
     app.add_middleware(MonitoringMiddleware)
@@ -230,8 +196,20 @@ app.add_middleware(
 # 🏠 MODULE ACCUEIL
 # ============================================================================
 
-@app.get("/", tags=["🏠 Accueil"], summary="Point d'entrée de l'API (Auth requise)")
-async def root(current_user = Depends(get_current_user)):
+
+@app.get(
+    "/ping",
+    tags=["🏠 Accueil"],
+    summary="Health check public (sans authentification)",
+)
+async def ping():
+    """Health check public sans authentification (Render, load balancers)."""
+    return {"status": "ok", "service": "seeg-api"}
+
+
+@app.get("/", tags=["🏠 Accueil"],
+         summary="Point d'entrée de l'API (Auth requise)")
+async def root(current_user=Depends(get_current_user)):
     """Point d'entrée principal de l'API One HCM SEEG (authentification requise)"""
     return {
         "message": "API One HCM SEEG",
@@ -245,8 +223,11 @@ async def root(current_user = Depends(get_current_user)):
         }
     }
 
-@app.get("/health", tags=["🏠 Accueil"], summary="Vérifier l'état de santé de l'API (Auth requise)")
-async def health_check(current_user = Depends(get_current_user)):
+
+@app.get("/health",
+         tags=["🏠 Accueil"],
+         summary="Vérifier l'état de santé de l'API (Auth requise)")
+async def health_check(current_user=Depends(get_current_user)):
     """Vérifier que l'API et la base de données sont opérationnelles (authentification requise)"""
     from datetime import datetime
     health_status = {
@@ -257,28 +238,30 @@ async def health_check(current_user = Depends(get_current_user)):
         "pdf_storage": "enabled",
         "timestamp": datetime.utcnow().isoformat() + "Z"
     }
-    
+
     # Vérifier Redis si configuré
     if settings.REDIS_URL and cache_manager.async_redis_client:
         try:
             await cache_manager.async_redis_client.ping()
             health_status["cache"] = "connected"
-        except:
+        except BaseException:
             health_status["cache"] = "disconnected"
             health_status["status"] = "degraded"
-    
+
     return health_status
 
-@app.get("/monitoring/health", tags=["🏠 Accueil"], summary="Health check détaillé pour le monitoring (Auth requise)")
-async def monitoring_health_check(current_user = Depends(get_current_user)):
+
+@app.get("/monitoring/health", tags=["🏠 Accueil"],
+         summary="Health check détaillé pour le monitoring (Auth requise)")
+async def monitoring_health_check(current_user=Depends(get_current_user)):
     """Health check détaillé incluant toutes les dépendances (authentification requise)"""
     from datetime import datetime
     import psutil
-    
+
     # Métriques système
     cpu_percent = psutil.cpu_percent(interval=0.1)
     memory = psutil.virtual_memory()
-    
+
     health_details = {
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -296,24 +279,21 @@ async def monitoring_health_check(current_user = Depends(get_current_user)):
             "cache": "unknown",
             "monitoring": {
                 "metrics": "enabled" if settings.METRICS_ENABLED else "disabled",
-                "tracing": "enabled" if settings.ENABLE_TRACING else "disabled",
-                "application_insights": "enabled" if app_insights.enabled else "disabled"
+                "tracing": "enabled" if settings.ENABLE_TRACING else "disabled"
             }
         }
     }
-    
+
     # Vérifier la base de données
     try:
-        from app.db.database import async_engine
-        from sqlalchemy import text
-        async with async_engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
+        from app.db.database import db_client
+        await db_client.client.admin.command('ping')
         health_details["services"]["database"] = "up"
     except Exception as e:
         health_details["services"]["database"] = "down"
         health_details["status"] = "degraded"
         safe_log("error", "Database health check failed", error=str(e))
-    
+
     # Vérifier Redis
     if settings.REDIS_URL and cache_manager.async_redis_client:
         try:
@@ -323,11 +303,14 @@ async def monitoring_health_check(current_user = Depends(get_current_user)):
             health_details["services"]["cache"] = "down"
             health_details["status"] = "degraded"
             safe_log("error", "Redis health check failed", error=str(e))
-    
+
     return health_details
 
-@app.get("/info", tags=["🏠 Accueil"], summary="Informations détaillées sur l'API (Auth requise)")
-async def info(current_user = Depends(get_current_user)):
+
+@app.get("/info",
+         tags=["🏠 Accueil"],
+         summary="Informations détaillées sur l'API (Auth requise)")
+async def info(current_user=Depends(get_current_user)):
     """Obtenir des informations détaillées sur la configuration de l'API (authentification requise)"""
     return {
         "app_name": settings.APP_NAME,
@@ -337,8 +320,8 @@ async def info(current_user = Depends(get_current_user)):
         "allowed_origins": settings.ALLOWED_ORIGINS,
         "database_url": settings.DATABASE_URL[:50] + "..." if len(settings.DATABASE_URL) > 50 else settings.DATABASE_URL,
         "monitoring": {
-            "application_insights": "enabled" if app_insights.enabled else "disabled",
-            "instrumentation": app_insights.enabled
+            "metrics": "enabled" if settings.METRICS_ENABLED else "disabled",
+            "tracing": "enabled" if settings.ENABLE_TRACING else "disabled"
         },
         "features": [
             "Authentification JWT",
@@ -350,8 +333,7 @@ async def info(current_user = Depends(get_current_user)):
             "Évaluations automatisées (MTP)",
             "Planification d'entretiens",
             "Rate Limiting",
-            "CI/CD automatisé",
-            "Monitoring Azure (Application Insights)"
+            "CI/CD automatisé"
         ],
         "pdf_support": {
             "allowed_types": ["cover_letter", "cv", "certificats", "diplome"],
@@ -372,29 +354,66 @@ async def info(current_user = Depends(get_current_user)):
 # ============================================================================
 
 # Import des routes API
-from app.api.v1.endpoints import auth, users, jobs, applications, evaluations, notifications, interviews, emails, optimized, webhooks, access_requests, public
-from app.api.v1.endpoints.monitoring import router as monitoring_router
 
 # Inclusion des routes dans l'application
-app.include_router(auth.router, prefix="/api/v1/auth", tags=["🔐 Authentification"])
-app.include_router(access_requests.router, prefix="/api/v1/access-requests", tags=["🔐 Authentification", "👥 Gestion des Demandes d'Accès"])
-app.include_router(users.router, prefix="/api/v1/users", tags=["👥 Utilisateurs"])
-app.include_router(jobs.router, prefix="/api/v1/jobs", tags=["💼 Offres d'emploi (filtrage auto interne/externe)"])
-app.include_router(public.router, prefix="/api/v1/public", tags=["🌐 Endpoints Publics (SANS authentification)"])
-app.include_router(applications.router, prefix="/api/v1/applications", tags=["📝 Candidatures", "📄 Documents PDF"])
-app.include_router(evaluations.router, prefix="/api/v1/evaluations", tags=["📊 Évaluations"])
-app.include_router(notifications.router, prefix="/api/v1/notifications", tags=["🔔 Notifications"])
-app.include_router(optimized.router, prefix="/api/v1/optimized", tags=["⚡ Requêtes Optimisées"])
-app.include_router(interviews.router, prefix="/api/v1/interviews", tags=["🎯 Entretiens"])
+app.include_router(
+    auth.router,
+    prefix="/api/v1/auth",
+    tags=["🔐 Authentification"])
+app.include_router(
+    access_requests.router,
+    prefix="/api/v1/access-requests",
+    tags=[
+        "🔐 Authentification",
+        "👥 Gestion des Demandes d'Accès"])
+app.include_router(
+    users.router,
+    prefix="/api/v1/users",
+    tags=["👥 Utilisateurs"])
+app.include_router(
+    jobs.router,
+    prefix="/api/v1/jobs",
+    tags=["💼 Offres d'emploi (filtrage auto interne/externe)"])
+app.include_router(public.router, prefix="/api/v1/public",
+                   tags=["🌐 Endpoints Publics (SANS authentification)"])
+app.include_router(
+    applications.router,
+    prefix="/api/v1/applications",
+    tags=[
+        "📝 Candidatures",
+        "📄 Documents PDF"])
+app.include_router(
+    evaluations.router,
+    prefix="/api/v1/evaluations",
+    tags=["📊 Évaluations"])
+app.include_router(
+    notifications.router,
+    prefix="/api/v1/notifications",
+    tags=["🔔 Notifications"])
+app.include_router(
+    optimized.router,
+    prefix="/api/v1/optimized",
+    tags=["⚡ Requêtes Optimisées"])
+app.include_router(
+    interviews.router,
+    prefix="/api/v1/interviews",
+    tags=["🎯 Entretiens"])
 app.include_router(emails.router, prefix="/api/v1/emails", tags=["📧 Emails"])
-app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["Webhooks"])
+app.include_router(
+    webhooks.router,
+    prefix="/api/v1/webhooks",
+    tags=["Webhooks"])
 
 # Routes de monitoring
-app.include_router(monitoring_router, prefix="/monitoring", tags=["📊 Monitoring"])
+app.include_router(
+    monitoring_router,
+    prefix="/monitoring",
+    tags=["📊 Monitoring"])
 
 # ============================================================================
 # GESTIONNAIRE D'ERREURS GLOBAL
 # ============================================================================
+
 
 @app.exception_handler(404)
 async def not_found_handler(request, exc):
@@ -406,13 +425,20 @@ async def not_found_handler(request, exc):
         "path": str(request.url.path)
     }, status_code=404)
 
+
 @app.exception_handler(500)
 async def internal_error_handler(request, exc):
     """Gestionnaire pour les erreurs 500 - MODE DEBUG"""
     import traceback
     tb = traceback.format_exc()
-    safe_log("error", "Erreur interne du serveur", error=str(exc), path=str(request.url.path), traceback=tb)
-    
+    safe_log(
+        "error",
+        "Erreur interne du serveur",
+        error=str(exc),
+        path=str(
+            request.url.path),
+        traceback=tb)
+
     # En mode DEBUG, retourner les détails de l'erreur
     if settings.DEBUG:
         return JSONResponse(content={
@@ -422,7 +448,7 @@ async def internal_error_handler(request, exc):
             "status_code": 500,
             "path": str(request.url.path)
         }, status_code=500)
-    
+
     return JSONResponse(content={
         "error": "Internal Server Error",
         "message": "Une erreur interne du serveur s'est produite",
@@ -433,66 +459,15 @@ async def internal_error_handler(request, exc):
 # ÉVÉNEMENTS DE L'APPLICATION
 # ============================================================================
 
-# ========================================
-# DEBUG: Migration MTP Questions
-# ========================================
-@app.post("/debug/apply-mtp-questions-migration", tags=["🔧 Debug (Admin uniquement)"])
-async def apply_mtp_questions_migration(current_user = Depends(get_current_admin_user)):
-    """Appliquer la migration MTP: ajouter questions_mtp a job_offers et supprimer anciennes colonnes de applications (admin uniquement)"""
-    from app.db.database import get_db
-    import sqlalchemy as sa
-    import traceback
-    
-    try:
-        async for db in get_db():
-            try:
-                # 1. Ajouter la colonne JSON MTP aux offres d'emploi
-                await db.execute(sa.text("ALTER TABLE job_offers ADD COLUMN IF NOT EXISTS questions_mtp JSONB;"))
-                await db.execute(sa.text("COMMENT ON COLUMN job_offers.questions_mtp IS 'Questions MTP sous forme de tableau auto-incremente (format: {questions_metier: [...], questions_talent: [...], questions_paradigme: [...]})';"))
-                
-                # 2. Supprimer les anciennes colonnes MTP individuelles de applications
-                old_columns = [
-                    'mtp_metier_q1', 'mtp_metier_q2', 'mtp_metier_q3',
-                    'mtp_talent_q1', 'mtp_talent_q2', 'mtp_talent_q3',
-                    'mtp_paradigme_q1', 'mtp_paradigme_q2', 'mtp_paradigme_q3'
-                ]
-                
-                columns_dropped = []
-                for col in old_columns:
-                    try:
-                        await db.execute(sa.text(f"ALTER TABLE applications DROP COLUMN IF EXISTS {col};"))
-                        columns_dropped.append(col)
-                    except Exception as col_error:
-                        # Continuer même si une colonne n'existe pas
-                        pass
-                
-                await db.commit()
-                
-                return {
-                    "success": True,
-                    "message": "Migration MTP appliquee avec succes",
-                    "job_offers_column_added": "questions_mtp (JSONB)",
-                    "applications_columns_dropped": columns_dropped
-                }
-            except Exception as e:
-                await db.rollback()
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "type": type(e).__name__,
-                    "traceback": traceback.format_exc()
-                }
-    except Exception as e:
-        return {"success": False, "error": f"Erreur globale: {str(e)}"}
-
 # ============================================================================
 # FONCTIONS UTILITAIRES
 # ============================================================================
 
+
 def validate_production_config():
     """Valide la configuration pour la production"""
     safe_log("info", "Validation de la configuration de production...")
-    
+
     # Vérifier que SECRET_KEY est sécurisée
     weak_keys = [
         "your-super-secret-key-here-change-in-production-123456789",
@@ -503,25 +478,29 @@ def validate_production_config():
     if settings.SECRET_KEY in weak_keys:
         safe_log("error", "SECRET_KEY non sécurisée détectée en production !")
         raise ValueError("SECRET_KEY doit être changée en production !")
-    
+
     # Vérifier que la base de données n'est pas locale
-    if "localhost" in settings.DATABASE_URL or "127.0.0.1" in settings.DATABASE_URL:
+    if "localhost" in settings.MONGODB_URL or "127.0.0.1" in settings.MONGODB_URL:
         safe_log("error", "Base de données locale détectée en production !")
-        raise ValueError("DATABASE_URL ne doit pas pointer vers localhost en production !")
-    
+        raise ValueError(
+            "MONGODB_URL ne doit pas pointer vers localhost en production !")
+
     # Vérifier que DEBUG est désactivé
     if settings.DEBUG:
-        safe_log("warning", "DEBUG activé en production - Cela peut exposer des informations sensibles !")
-    
+        safe_log(
+            "warning",
+            "DEBUG activé en production - Cela peut exposer des informations sensibles !")
+
     safe_log("info", "Configuration de production validée avec succès")
 
 # ============================================================================
 # POINT D'ENTRÉE PRINCIPAL
 # ============================================================================
 
+
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("PORT", 8000))  # Azure App Service définit $PORT
+    port = int(os.getenv("PORT", 8000))
     uvicorn.run(
         "app.main:app",
         host="0.0.0.0",
@@ -529,4 +508,3 @@ if __name__ == "__main__":
         reload=settings.DEBUG,
         log_level="info"
     )
-

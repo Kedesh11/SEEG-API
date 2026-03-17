@@ -2,8 +2,8 @@
 Service pour la gestion des fichiers
 """
 from typing import List, Optional, Dict, Any, BinaryIO
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, insert, update, delete
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from bson import ObjectId
 from datetime import datetime, timezone
 import structlog
 import aiofiles
@@ -13,7 +13,6 @@ import mimetypes
 from pathlib import Path
 import hashlib
 
-from app.models.application import ApplicationDocument
 from app.core.config.config import settings
 from app.core.exceptions import FileError, ValidationError
 
@@ -23,7 +22,7 @@ logger = structlog.get_logger(__name__)
 class FileService:
     """Service pour la gestion des fichiers"""
     
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.upload_dir = Path(settings.UPLOAD_DIR)
         self.upload_dir.mkdir(exist_ok=True)
@@ -83,37 +82,36 @@ class FileService:
                 await f.write(file_content)
             
             # Enregistrement en base de donnÃ©es
-            document = ApplicationDocument(
-                application_id=application_id,
-                filename=filename,
-                file_path=str(file_path),
-                file_size=file_size,
-                mime_type=mime_type,
-                file_hash=file_hash,
-                document_type=document_type,
-                uploaded_by=uploaded_by,
-                uploaded_at=datetime.now(timezone.utc)
-            )
+            document = {
+                "application_id": str(application_id),
+                "filename": filename,
+                "file_path": str(file_path),
+                "file_size": file_size,
+                "mime_type": mime_type,
+                "file_hash": file_hash,
+                "document_type": document_type,
+                "uploaded_by": str(uploaded_by),
+                "uploaded_at": datetime.now(timezone.utc)
+            }
             
-            self.db.add(document)
-            #  PAS de commit ici
-            await self.db.refresh(document)
+            result = await self.db.application_documents.insert_one(document)
+            document["id"] = str(result.inserted_id)
             
             logger.info(
                 "File uploaded successfully",
-                file_id=str(document.id),
+                file_id=document["id"],
                 filename=filename,
                 file_size=file_size,
                 application_id=application_id
             )
             
             return {
-                "id": str(document.id),
+                "id": document["id"],
                 "filename": filename,
                 "file_size": file_size,
                 "mime_type": mime_type,
                 "document_type": document_type,
-                "uploaded_at": document.uploaded_at,
+                "uploaded_at": document["uploaded_at"],
                 "file_path": str(file_path)
             }
             
@@ -146,27 +144,25 @@ class FileService:
         Raises:
             FileError: Si le fichier n'existe pas
         """
-        result = await self.db.execute(
-            select(ApplicationDocument).where(ApplicationDocument.id == document_id)
-        )
-        document = result.scalar_one_or_none()
+        query = {"_id": ObjectId(document_id)} if len(document_id) == 24 else {"_id": document_id}
+        document = await self.db.application_documents.find_one(query)
         
         if not document:
             raise FileError(f"Document avec l'ID {document_id} non trouvÃ©")
         
         # VÃ©rification de l'existence du fichier
-        file_path = Path(document.file_path)
+        file_path = Path(document["file_path"])
         if not file_path.exists():
-            raise FileError(f"Le fichier physique n'existe pas: {document.file_path}")
+            raise FileError(f"Le fichier physique n'existe pas: {document['file_path']}")
         
         return {
-            "id": str(document.id),
-            "filename": document.filename,
-            "file_size": document.file_size,
-            "mime_type": document.mime_type,
-            "document_type": document.document_type,
-            "uploaded_at": document.uploaded_at,
-            "file_path": document.file_path
+            "id": str(document["_id"]),
+            "filename": document["filename"],
+            "file_size": document["file_size"],
+            "mime_type": document["mime_type"],
+            "document_type": document["document_type"],
+            "uploaded_at": document["uploaded_at"],
+            "file_path": document["file_path"]
         }
     
     async def download_file(self, document_id: str) -> bytes:
@@ -182,15 +178,13 @@ class FileService:
         Raises:
             FileError: Si le fichier n'existe pas ou ne peut pas Ãªtre lu
         """
-        result = await self.db.execute(
-            select(ApplicationDocument).where(ApplicationDocument.id == document_id)
-        )
-        document = result.scalar_one_or_none()
+        query = {"_id": ObjectId(document_id)} if len(document_id) == 24 else {"_id": document_id}
+        document = await self.db.application_documents.find_one(query)
         
         if not document:
             raise FileError(f"Document avec l'ID {document_id} non trouvÃ©")
         
-        file_path = Path(document.file_path)
+        file_path = Path(document["file_path"])
         if not file_path.exists():
             raise FileError(f"Le fichier physique n'existe pas: {document.file_path}")
         
@@ -201,7 +195,7 @@ class FileService:
             logger.info(
                 "File downloaded",
                 document_id=document_id,
-                filename=document.filename,
+                filename=document["filename"],
                 file_size=len(content)
             )
             
@@ -230,30 +224,26 @@ class FileService:
             FileError: Si le fichier n'existe pas
         """
         try:
-            result = await self.db.execute(
-                select(ApplicationDocument).where(ApplicationDocument.id == document_id)
-            )
-            document = result.scalar_one_or_none()
+            query = {"_id": ObjectId(document_id)} if len(document_id) == 24 else {"_id": document_id}
+            document = await self.db.application_documents.find_one(query)
             
             if not document:
                 raise FileError(f"Document avec l'ID {document_id} non trouvÃ©")
             
-            file_path = Path(document.file_path)
+            file_path = Path(document["file_path"])
+            filename = document["filename"]
             
             # Suppression du fichier physique
             if file_path.exists():
                 file_path.unlink()
             
             # Suppression de l'enregistrement en base
-            await self.db.execute(
-                delete(ApplicationDocument).where(ApplicationDocument.id == document_id)
-            )
-            #  PAS de commit ici
+            await self.db.application_documents.delete_one(query)
             
             logger.info(
                 "File deleted",
                 document_id=document_id,
-                filename=document.filename,
+                filename=filename,
                 deleted_by=deleted_by
             )
             
@@ -278,22 +268,17 @@ class FileService:
         Returns:
             List[Dict]: Liste des fichiers
         """
-        result = await self.db.execute(
-            select(ApplicationDocument)
-            .where(ApplicationDocument.application_id == application_id)
-            .order_by(ApplicationDocument.uploaded_at.desc())
-        )
-        
-        documents = result.scalars().all()
+        cursor = self.db.application_documents.find({"application_id": str(application_id)}).sort("uploaded_at", -1)
+        documents = await cursor.to_list(length=100)
         
         return [
             {
-                "id": str(doc.id),
-                "filename": doc.filename,
-                "file_size": doc.file_size,
-                "mime_type": doc.mime_type,
-                "document_type": doc.document_type,
-                "uploaded_at": doc.uploaded_at
+                "id": str(doc["_id"]),
+                "filename": doc["filename"],
+                "file_size": doc["file_size"],
+                "mime_type": doc["mime_type"],
+                "document_type": doc["document_type"],
+                "uploaded_at": doc["uploaded_at"]
             }
             for doc in documents
         ]
@@ -308,28 +293,31 @@ class FileService:
         from sqlalchemy import func
         
         # Nombre total de fichiers
-        total_result = await self.db.execute(select(func.count(ApplicationDocument.id)))
-        total_files = total_result.scalar()
+        # Nombre total de fichiers
+        total_files = await self.db.application_documents.count_documents({})
         
         # Taille totale des fichiers
-        size_result = await self.db.execute(select(func.sum(ApplicationDocument.file_size)))
-        total_size = size_result.scalar() or 0
+        pipeline = [
+            {"$group": {"_id": None, "total_size": {"$sum": "$file_size"}}}
+        ]
+        size_result = await self.db.application_documents.aggregate(pipeline).to_list(length=1)
+        total_size = size_result[0]["total_size"] if size_result else 0
         
         # Statistiques par type de document
-        type_result = await self.db.execute(
-            select(
-                ApplicationDocument.document_type,
-                func.count(ApplicationDocument.id),
-                func.sum(ApplicationDocument.file_size)
-            )
-            .group_by(ApplicationDocument.document_type)
-        )
+        type_pipeline = [
+            {"$group": {
+                "_id": "$document_type",
+                "count": {"$sum": 1},
+                "total_size": {"$sum": "$file_size"}
+            }}
+        ]
+        type_results = await self.db.application_documents.aggregate(type_pipeline).to_list(length=100)
         
         type_stats = {}
-        for row in type_result.fetchall():
-            type_stats[row[0]] = {
-                "count": row[1],
-                "total_size": row[2] or 0
+        for row in type_results:
+            type_stats[row["_id"]] = {
+                "count": row["count"],
+                "total_size": row["total_size"]
             }
         
         return {
@@ -371,8 +359,9 @@ class FileService:
         """
         try:
             # RÃ©cupÃ©ration de tous les fichiers en base
-            result = await self.db.execute(select(ApplicationDocument.file_path))
-            db_files = {Path(row[0]) for row in result.fetchall()}
+            cursor = self.db.application_documents.find({}, {"file_path": 1})
+            db_files_list = await cursor.to_list(length=10000)
+            db_files = {Path(doc["file_path"]) for doc in db_files_list}
             
             # RÃ©cupÃ©ration de tous les fichiers physiques
             physical_files = set(self.upload_dir.glob('*'))

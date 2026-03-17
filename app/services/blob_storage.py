@@ -6,10 +6,15 @@ import json
 import uuid
 from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
-from azure.storage.blob import BlobServiceClient, ContentSettings
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+try:
+    from azure.storage.blob import BlobServiceClient, ContentSettings
+except ModuleNotFoundError:  # pragma: no cover
+    BlobServiceClient = None  # type: ignore[assignment]
+    ContentSettings = None  # type: ignore[assignment]
 
 
 class BlobStorageService:
@@ -39,6 +44,11 @@ class BlobStorageService:
             connection_string: Connection string Azure Storage
             container_name: Nom du conteneur (raw, curated, features)
         """
+        if BlobServiceClient is None or ContentSettings is None:
+            raise RuntimeError(
+                "Dépendance manquante: installe `azure-storage-blob` pour activer "
+                "l'export Azure Blob Storage."
+            )
         self.blob_service_client = BlobServiceClient.from_connection_string(connection_string)
         self.container_name = container_name
         self.container_client = self.blob_service_client.get_container_client(container_name)

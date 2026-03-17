@@ -3,18 +3,17 @@ Endpoints pour la gestion des emails
 """
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any
 import structlog
 from datetime import datetime
 
 from app.db.database import get_db
 from app.services.email import EmailService
 from app.schemas.email import (
-    EmailSend, InterviewEmailRequest, EmailResponse, 
+    EmailSend, InterviewEmailRequest, EmailResponse,
     EmailLogsResponse, EmailLogResponse
 )
 from app.core.dependencies import get_current_user
-from app.models.user import User
 from app.core.exceptions import EmailError
 
 logger = structlog.get_logger(__name__)
@@ -22,7 +21,7 @@ router = APIRouter()
 
 
 def safe_log(level: str, message: str, **kwargs):
-    """Log avec gestion d'erreur pour Ã©viter les problÃ¨mes de handler."""
+    """Log avec gestion d'erreur pour éviter les problèmes de handler."""
     try:
         getattr(logger, level)(message, **kwargs)
     except (TypeError, AttributeError):
@@ -32,22 +31,22 @@ def safe_log(level: str, message: str, **kwargs):
 @router.post("/send", response_model=EmailResponse, status_code=status.HTTP_201_CREATED)  # Standard REST : 201 pour création de ressource
 async def send_email(
     email_data: EmailSend,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """
-    Envoyer un email gÃ©nÃ©rique
-    
+    Envoyer un email générique
+
     - **to**: Adresse email du destinataire
     - **subject**: Sujet de l'email
     - **body**: Corps de l'email (texte)
     - **html_body**: Corps de l'email (HTML, optionnel)
     - **cc**: Copie carbone (optionnel)
-    - **bcc**: Copie carbone cachÃ©e (optionnel)
+    - **bcc**: Copie carbone cachée (optionnel)
     """
     try:
         email_service = EmailService(db)
-        
+
         success = await email_service.send_email(
             to=email_data.to,
             subject=email_data.subject,
@@ -56,7 +55,7 @@ async def send_email(
             cc=email_data.cc,
             bcc=email_data.bcc
         )
-        
+
         if success:
             safe_log("info", "Email envoyé avec succès", to=email_data.to, subject=email_data.subject)
             return EmailResponse(
@@ -69,7 +68,7 @@ async def send_email(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Ã‰chec de l'envoi de l'email"
             )
-            
+
     except EmailError as e:
         safe_log("error", "Erreur lors de l'envoi de l'email", error=str(e))
         raise HTTPException(
@@ -87,12 +86,12 @@ async def send_email(
 @router.post("/send-interview-email", response_model=EmailResponse, status_code=status.HTTP_201_CREATED)  # Standard REST : 201 pour création de ressource
 async def send_interview_email(
     email_data: InterviewEmailRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """
-    Envoyer un email d'invitation Ã  un entretien
-    
+    Envoyer un email d'invitation à un entretien
+
     - **to**: Email du candidat
     - **candidate_full_name**: Nom complet du candidat
     - **job_title**: Titre du poste
@@ -104,64 +103,64 @@ async def send_interview_email(
     """
     try:
         email_service = EmailService(db)
-        
+
         # Construire le HTML de l'email d'entretien
         date_obj = datetime.strptime(f"{email_data.date}T{email_data.time}", '%Y-%m-%dT%H:%M')
         formatted_date = date_obj.strftime('%d/%m/%Y')
         formatted_time = email_data.time
-        
-        subject = f"Convocation Ã  l'entretien â€“ {email_data.job_title}"
-        
+
+        subject = f"Convocation à l'entretien â€“ {email_data.job_title}"
+
         # Corps texte
         body = f"""
 Madame/Monsieur {email_data.candidate_full_name},
 
 Nous avons le plaisir de vous informer que votre candidature pour le poste de {email_data.job_title} a retenu notre attention.
 
-Nous vous invitons Ã  un entretien de recrutement qui se tiendra :
+Nous vous invitons à un entretien de recrutement qui se tiendra :
 
 Date : {formatted_date}
 Heure : {formatted_time}
 Lieu : {email_data.location}
 
-Nous vous prions de bien vouloir vous prÃ©senter 15 minutes avant l'heure de l'entretien, muni(e) de votre carte professionnelle, badge, ou de toute autre piÃ¨ce d'identitÃ© en cours de validitÃ©.
+Nous vous prions de bien vouloir vous présenter 15 minutes avant l'heure de l'entretien, muni(e) de votre carte professionnelle, badge, ou de toute autre pièce d'identité en cours de validité.
 
 {f"Notes additionnelles: {email_data.additional_notes}" if email_data.additional_notes else ""}
 
-Nous restons Ã  votre disposition pour toutes informations complÃ©mentaires.
+Nous restons à votre disposition pour toutes informations complémentaires.
 
 Cordialement,
-L'Ã©quipe RH - SEEG
+L'équipe RH - SEEG
         """
-        
+
         # Corps HTML
         html_body = f"""
         <div style="font-family: ui-serif, Georgia, 'Times New Roman', serif; color:#000; max-width:760px; margin:0 auto;">
             <p>Madame/Monsieur {email_data.candidate_full_name},</p>
             <p>Nous avons le plaisir de vous informer que votre candidature pour le poste de <strong>{email_data.job_title}</strong> a retenu notre attention.</p>
-            <p>Nous vous invitons Ã  un entretien de recrutement qui se tiendra :</p>
+            <p>Nous vous invitons à un entretien de recrutement qui se tiendra :</p>
             <p><strong>Date :</strong> {formatted_date}<br/>
             <strong>Heure :</strong> {formatted_time}<br/>
             <strong>Lieu :</strong> {email_data.location}</p>
-            <p>Nous vous prions de bien vouloir vous prÃ©senter <strong>15 minutes avant l'heure de l'entretien</strong>, muni(e) de votre carte professionnelle, badge, ou de toute autre piÃ¨ce d'identitÃ© en cours de validitÃ©.</p>
+            <p>Nous vous prions de bien vouloir vous présenter <strong>15 minutes avant l'heure de l'entretien</strong>, muni(e) de votre carte professionnelle, badge, ou de toute autre pièce d'identité en cours de validité.</p>
             {f"<p><strong>Notes additionnelles:</strong> {email_data.additional_notes}</p>" if email_data.additional_notes else ""}
-            <p>Nous restons Ã  votre disposition pour toutes informations complÃ©mentaires.</p>
-            <p>Cordialement,<br/>L'Ã©quipe RH - SEEG</p>
+            <p>Nous restons à votre disposition pour toutes informations complémentaires.</p>
+            <p>Cordialement,<br/>L'équipe RH - SEEG</p>
         </div>
         """
-        
+
         success = await email_service.send_email(
             to=email_data.to,
             subject=subject,
             body=body,
             html_body=html_body
         )
-        
+
         if success:
             safe_log(
                 "info",
-                "Email d'entretien envoyÃ© avec succÃ¨s", 
-                to=email_data.to, 
+                "Email d'entretien envoyé avec succès",
+                to=email_data.to,
                 candidate=email_data.candidate_full_name,
                 job_title=email_data.job_title,
                 date=email_data.date,
@@ -177,7 +176,7 @@ L'Ã©quipe RH - SEEG
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Ã‰chec de l'envoi de l'email d'entretien"
             )
-            
+
     except EmailError as e:
         safe_log("error", "Erreur lors de l'envoi de l'email d'entretien", error=str(e))
         raise HTTPException(
@@ -185,7 +184,7 @@ L'Ã©quipe RH - SEEG
             detail=f"Erreur lors de l'envoi de l'email d'entretien: {str(e)}"
         )
     except ValueError as e:
-        safe_log("warning", "Erreur de validation des donnÃ©es email", error=str(e))
+        safe_log("warning", "Erreur de validation des données email", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Erreur de validation: {str(e)}"
@@ -200,29 +199,29 @@ L'Ã©quipe RH - SEEG
 
 @router.get("/logs", response_model=EmailLogsResponse)
 async def get_email_logs(
-    skip: int = Query(0, ge=0, description="Nombre d'Ã©lÃ©ments Ã  ignorer"),
-    limit: int = Query(100, ge=1, le=1000, description="Nombre d'Ã©lÃ©ments Ã  retourner"),
+    skip: int = Query(0, ge=0, description="Nombre d'éléments à ignorer"),
+    limit: int = Query(100, ge=1, le=1000, description="Nombre d'éléments à retourner"),
     status_filter: Optional[str] = Query(None, description="Filtrer par statut (sent, failed)"),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    current_user: Any = Depends(get_current_user),
+    db: Any = Depends(get_db)
 ):
     """
-    RÃ©cupÃ©rer les logs des emails envoyÃ©s
-    
-    - **skip**: Nombre d'Ã©lÃ©ments Ã  ignorer (pagination)
-    - **limit**: Nombre d'Ã©lÃ©ments Ã  retourner (max 1000)
+    Récupérer les logs des emails envoyés
+
+    - **skip**: Nombre d'éléments à ignorer (pagination)
+    - **limit**: Nombre d'éléments à retourner (max 1000)
     - **status_filter**: Filtrer par statut (sent, failed)
     """
     try:
         email_service = EmailService(db)
-        
+
         logs_data = await email_service.get_email_logs(
             skip=skip,
             limit=limit,
             category=status_filter
         )
-        
-        # Conversion des donnÃ©es pour le schÃ©ma de rÃ©ponse
+
+        # Conversion des données pour le schéma de réponse
         logs = [
             EmailLogResponse(
                 id=log["id"],
@@ -234,7 +233,7 @@ async def get_email_logs(
             )
             for log in logs_data["items"]
         ]
-        
+
         return EmailLogsResponse(
             data=logs,
             total=logs_data["total"],
@@ -242,9 +241,9 @@ async def get_email_logs(
             limit=logs_data["limit"],
             has_more=logs_data["has_more"]
         )
-        
+
     except Exception as e:
-        safe_log("error", "Erreur lors de la rÃ©cupÃ©ration des logs d'email", error=str(e))
+        safe_log("error", "Erreur lors de la récupération des logs d'email", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Erreur interne du serveur"

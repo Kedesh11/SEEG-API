@@ -7,8 +7,8 @@ et autres informations de monitoring.
 from fastapi import APIRouter, Depends, Response
 from app.core.dependencies import get_current_admin_user
 from app.core.metrics import metrics_collector
-from app.models.user import User
 import structlog
+from typing import Any
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -16,17 +16,17 @@ logger = structlog.get_logger(__name__)
 
 @router.get("/metrics", response_class=Response)
 async def get_prometheus_metrics(
-    current_user: User = Depends(get_current_admin_user)
+    current_user: Any = Depends(get_current_admin_user),
 ):
     """
     Expose les métriques Prometheus.
-    
+
     Nécessite les droits administrateur.
     """
     try:
         # Générer les métriques au format Prometheus
         metrics_data = metrics_collector.generate_metrics()
-        
+
         return Response(
             content=metrics_data,
             media_type="text/plain; version=0.0.4; charset=utf-8"
@@ -42,11 +42,11 @@ async def get_prometheus_metrics(
 
 @router.get("/stats")
 async def get_application_stats(
-    current_user: User = Depends(get_current_admin_user)
+    current_user: Any = Depends(get_current_admin_user),
 ):
     """
     Retourne des statistiques détaillées sur l'application.
-    
+
     Nécessite les droits administrateur.
     """
     try:
@@ -67,7 +67,7 @@ async def get_application_stats(
                 "auth_attempts": metrics_collector.auth_attempts_total._value.sum()
             }
         }
-        
+
         return stats
     except Exception as e:
         logger.error("Erreur lors de la récupération des statistiques", error=str(e))

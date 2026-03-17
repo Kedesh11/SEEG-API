@@ -1,0 +1,165 @@
+# ============================================================================
+# render.yaml - Configuration Render pour SEEG-API
+# ============================================================================
+# Documentation: https://render.com/docs/blueprint-spec
+#
+# VARIABLES REQUISES (à définir dans le Dashboard Render ou Render Secrets):
+#   - MONGODB_URL           (ex: mongodb+srv://user:pass@cluster.mongodb.net/)
+#   - MONGODB_DB_NAME       (ex: seeg_db)
+#   - SECRET_KEY            (minimum 32 caractères)
+#   - SMTP_PASSWORD         (mot de passe Gmail App Password)
+#
+# MONGODB sur Render/Atlas: créer une base et copier la string dans MONGODB_URL.
+# ============================================================================
+
+services:
+  - type: web
+    name: seeg-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+
+    # Render détecte $PORT automatiquement via RENDER=true et PORT vars
+    # Le docker-entrypoint.sh utilise ${PORT:-8000}
+
+    healthCheckPath: /ping
+
+    # Plan Render (adapter selon les besoins)
+    # Options: free, starter, standard, pro
+    plan: starter
+
+    # Variables d'environnement (valeurs non-secrètes)
+    envVars:
+      # ----------------------------------------------------------------
+      # Environnement
+      # ----------------------------------------------------------------
+      - key: ENVIRONMENT
+        value: production
+
+      - key: DEBUG
+        value: "false"
+
+      - key: APP_NAME
+        value: "One HCM SEEG Backend API"
+
+      - key: APP_VERSION
+        value: "1.0.0"
+
+      # ----------------------------------------------------------------
+      # Migrations
+      # ----------------------------------------------------------------
+      # Mettre à false pour lancer les migrations au démarrage
+      # Recommandé: true (exécuter les migrations manuellement via shell)
+      - key: SKIP_MIGRATIONS
+        value: "true"
+
+      # ----------------------------------------------------------------
+      # Secrets (à définir via Dashboard Render → Environment → Secret Files)
+      # ----------------------------------------------------------------
+      - key: MONGODB_URL
+        sync: false  # À définir manuellement dans le dashboard
+
+      - key: MONGODB_DB_NAME
+        value: "seeg_db"
+
+      - key: SECRET_KEY
+        sync: false  # À définir manuellement dans le dashboard
+
+      # ----------------------------------------------------------------
+      # Sécurité / JWT
+      # ----------------------------------------------------------------
+      - key: ALGORITHM
+        value: HS256
+
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: "30"
+
+      - key: REFRESH_TOKEN_EXPIRE_DAYS
+        value: "7"
+
+      - key: JWT_ISSUER
+        value: seeg-hcm-api
+
+      - key: JWT_AUDIENCE
+        value: seeg-hcm-frontend
+
+      # ----------------------------------------------------------------
+      # CORS - Ajouter l'URL Render du frontend ici
+      # ----------------------------------------------------------------
+      - key: ALLOWED_ORIGINS
+        value: "https://www.seeg-talentsource.com,https://seeg-hcm.vercel.app"
+
+      - key: ALLOWED_CREDENTIALS
+        value: "true"
+
+      # ----------------------------------------------------------------
+      # Email SMTP
+      # ----------------------------------------------------------------
+      - key: SMTP_HOST
+        value: smtp.gmail.com
+
+      - key: SMTP_PORT
+        value: "587"
+
+      - key: SMTP_TLS
+        value: "true"
+
+      - key: SMTP_SSL
+        value: "false"
+
+      - key: SMTP_USERNAME
+        value: support@seeg-talentsource.com
+
+      - key: SMTP_PASSWORD
+        sync: false  # À définir manuellement dans le dashboard
+
+      - key: MAIL_FROM_EMAIL
+        value: support@seeg-talentsource.com
+
+      - key: MAIL_FROM_NAME
+        value: "One HCM - SEEG Talent Source"
+
+      # ----------------------------------------------------------------
+      # Frontend URL
+      # ----------------------------------------------------------------
+      - key: PUBLIC_APP_URL
+        value: "https://www.seeg-talentsource.com"
+
+      # Mettre à jour avec l'URL Render de l'API après déploiement
+      - key: API_URL
+        value: "https://seeg-api.onrender.com"
+
+      # ----------------------------------------------------------------
+      # Monitoring (optionnel)
+      # ----------------------------------------------------------------
+      - key: LOG_LEVEL
+        value: INFO
+
+      - key: LOG_FORMAT
+        value: json
+
+      - key: ENABLE_TRACING
+        value: "false"  # Désactivé par défaut sur Render (pas de Jaeger)
+
+      - key: METRICS_ENABLED
+        value: "true"
+
+
+      # ----------------------------------------------------------------
+      # Cache Redis (optionnel - laisser vide pour désactiver)
+      # ----------------------------------------------------------------
+      - key: REDIS_URL
+        value: ""  # Configurer si Redis est utilisé sur Render
+
+      # ----------------------------------------------------------------
+      # Feature flags
+      # ----------------------------------------------------------------
+      - key: RATE_LIMIT_ENABLED
+        value: "false"
+
+      - key: CREATE_INITIAL_USERS
+        value: "false"
+
+      # Workers Uvicorn (adapter selon le plan Render)
+      # starter: 1-2, standard: 2-4, pro: 4+
+      - key: WORKERS
+        value: "2"

@@ -1,270 +1,90 @@
 """
-Module d'optimisation des requêtes SQL pour l'application SEEG-API.
-
-Fournit des fonctions et des patterns pour optimiser les requêtes SQLAlchemy
-et réduire le nombre de requêtes à la base de données.
+Module d'optimisation des requêtes pour l'application SEEG-API (Version MongoDB).
 """
-from typing import List, Optional, Type, Any
-from sqlalchemy import select, func
-from sqlalchemy.orm import selectinload, joinedload, contains_eager, Query
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import Select
+from typing import List, Optional, Type, Any, Dict
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from bson import ObjectId
 import structlog
-
-# Import des modèles nécessaires
-from app.models.user import User
-from app.models.job_offer import JobOffer
-from app.models.application import Application
-from app.models.notification import Notification
 
 logger = structlog.get_logger(__name__)
 
-
 class QueryOptimizer:
-    """Classe pour optimiser les requêtes SQLAlchemy."""
+    """Classe pour optimiser les requêtes MongoDB."""
     
     @staticmethod
-    def optimize_user_query(query: Select) -> Select:
-        """
-        Optimise une requête sur la table User.
-        
-        Args:
-            query: Requête SQLAlchemy
-            
-        Returns:
-            Requête optimisée avec eager loading
-        """
-        # Charger le profil candidat si nécessaire
-        query = query.options(
-            selectinload(User.candidate_profile),
-            selectinload(User.notifications).selectinload(Notification.application)
-        )
-        return query
-    
+    async def get_user_with_full_profile(db: AsyncIOMotorDatabase, user_id: str) -> Optional[Dict[str, Any]]:
+        """Récupère un utilisateur avec son profil candidat"""
+        try:
+            query = {"_id": ObjectId(user_id)} if len(str(user_id)) == 24 else {"_id": str(user_id)}
+            user = await db.users.find_one(query)
+            if user:
+                profile = await db.candidate_profiles.find_one({"user_id": str(user_id)})
+                user["candidate_profile"] = profile
+            return user
+        except Exception as e:
+            logger.error("Error getting user with full profile", error=str(e), user_id=user_id)
+            return None
+
     @staticmethod
-    def optimize_job_offer_query(query: Select) -> Select:
-        """
-        Optimise une requête sur la table JobOffer.
-        
-        Args:
-            query: Requête SQLAlchemy
-            
-        Returns:
-            Requête optimisée avec eager loading
-        """
-        # Charger les relations nécessaires
-        query = query.options(
-            selectinload(JobOffer.recruiter),
-            selectinload(JobOffer.applications).selectinload(Application.candidate),
-            selectinload(JobOffer.application_drafts)
-        )
-        return query
-    
+    async def get_job_offer_with_relations(db: AsyncIOMotorDatabase, job_id: str) -> Optional[Dict[str, Any]]:
+        """Récupère une offre d'emploi avec ses relations (recruteur, candidatures)"""
+        try:
+            query = {"_id": ObjectId(job_id)} if len(str(job_id)) == 24 else {"_id": str(job_id)}
+            job = await db.job_offers.find_one(query)
+            if job:
+                # Recruiter
+                recruiter_id = job.get("recruiter_id")
+                if recruiter_id:
+                    rec_query = {"_id": ObjectId(recruiter_id)} if len(str(recruiter_id)) == 24 else {"_id": str(recruiter_id)}
+                    job["recruiter"] = await db.users.find_one(rec_query)
+                
+                # Applications
+                cursor = db.applications.find({"job_offer_id": str(job_id)})
+                job["applications"] = await cursor.to_list(length=100)
+            return job
+        except Exception as e:
+            logger.error("Error getting job offer with relations", error=str(e), job_id=job_id)
+            return None
+
     @staticmethod
-    def optimize_application_query(query: Select) -> Select:
-        """
-        Optimise une requête sur la table Application.
-        
-        Args:
-            query: Requête SQLAlchemy
+    async def get_application_complete(db: AsyncIOMotorDatabase, application_id: str) -> Optional[Dict[str, Any]]:
+        """Récupère une candidature avec toutes ses relations."""
+        try:
+            query = {"_id": ObjectId(application_id)} if len(str(application_id)) == 24 else {"_id": str(application_id)}
+            app = await db.applications.find_one(query)
+            if not app:
+                return None
             
-        Returns:
-            Requête optimisée avec eager loading
-        """
-        # Charger toutes les relations nécessaires en une seule requête
-        from app.models.application import Application
-        query = query.options(
-            selectinload(Application.candidate).selectinload(User.candidate_profile),
-            selectinload(Application.job_offer).selectinload(JobOffer.recruiter),
-            selectinload(Application.documents),
-            selectinload(Application.history),
-            selectinload(Application.interview_slots)
-        )
-        return query
-    
-    @staticmethod
-    def optimize_notification_query(query: Select) -> Select:
-        """
-        Optimise une requête sur la table Notification.
-        
-        Args:
-            query: Requête SQLAlchemy
+            # Candidate
+            candidate_id = app.get("candidate_id") or app.get("user_id")
+            if candidate_id:
+                app["candidate"] = await QueryOptimizer.get_user_with_full_profile(db, str(candidate_id))
             
-        Returns:
-            Requête optimisée avec eager loading
-        """
-        query = query.options(
-            selectinload(Notification.user),
-            selectinload(Notification.application).selectinload(Application.job_offer)
-        )
-        return query
-    
-    @staticmethod
-    async def get_paginated_results(
-        db: AsyncSession,
-        query: Select,
-        page: int = 1,
-        per_page: int = 20,
-        optimize: bool = True
-    ) -> tuple[List[Any], int]:
-        """
-        Récupère des résultats paginés avec le compte total.
-        
-        Args:
-            db: Session de base de données
-            query: Requête SQLAlchemy
-            page: Numéro de page (commence à 1)
-            per_page: Nombre d'éléments par page
-            optimize: Appliquer l'optimisation de requête
+            # Job Offer
+            job_id = app.get("job_offer_id")
+            if job_id:
+                job_query = {"_id": ObjectId(job_id)} if len(str(job_id)) == 24 else {"_id": str(job_id)}
+                app["job_offer"] = await db.job_offers.find_one(job_query)
             
-        Returns:
-            Tuple (résultats, total)
-        """
-        # Calculer l'offset
-        offset = (page - 1) * per_page
-        
-        # Obtenir le compte total en une seule requête
-        count_query = select(func.count()).select_from(query.subquery())
-        total_result = await db.execute(count_query)
-        total = total_result.scalar() or 0
-        
-        # Appliquer la pagination
-        paginated_query = query.offset(offset).limit(per_page)
-        
-        # Exécuter la requête
-        result = await db.execute(paginated_query)
-        items = result.scalars().all()
-        
-        return list(items), total
-    
-    @staticmethod
-    async def bulk_create(
-        db: AsyncSession,
-        model: Type[Any],
-        objects: List[dict]
-    ) -> List[Any]:
-        """
-        Création en masse d'objets pour réduire les requêtes.
-        
-        Args:
-            db: Session de base de données
-            model: Modèle SQLAlchemy
-            objects: Liste de dictionnaires avec les données
+            # Documents
+            doc_cursor = db.application_documents.find({"application_id": str(application_id)})
+            app["documents"] = await doc_cursor.to_list(length=50)
             
-        Returns:
-            Liste des objets créés
-        """
-        instances = [model(**obj) for obj in objects]
-        db.add_all(instances)
-        await db.commit()
-        
-        # Rafraîchir tous les objets en une seule requête
-        for instance in instances:
-            await db.refresh(instance)
-        
-        return instances
-    
-    @staticmethod
-    async def bulk_update(
-        db: AsyncSession,
-        model: Type[Any],
-        updates: List[dict]
-    ) -> int:
-        """
-        Mise à jour en masse pour réduire les requêtes.
-        
-        Args:
-            db: Session de base de données
-            model: Modèle SQLAlchemy
-            updates: Liste de dictionnaires avec 'id' et les champs à mettre à jour
+            # History
+            hist_cursor = db.application_history.find({"application_id": str(application_id)}).sort("created_at", -1)
+            app["history"] = await hist_cursor.to_list(length=100)
             
-        Returns:
-            Nombre d'objets mis à jour
-        """
-        if not updates:
-            return 0
-        
-        # Grouper les mises à jour par valeurs communes
-        update_groups = {}
-        for update in updates:
-            obj_id = update.pop('id')
-            update_key = str(sorted(update.items()))
-            
-            if update_key not in update_groups:
-                update_groups[update_key] = {'values': update, 'ids': []}
-            update_groups[update_key]['ids'].append(obj_id)
-        
-        total_updated = 0
-        
-        # Exécuter les mises à jour groupées
-        for group in update_groups.values():
-            stmt = (
-                model.__table__.update()
-                .where(model.id.in_(group['ids']))
-                .values(**group['values'])
-            )
-            result = await db.execute(stmt)
-            # SQLAlchemy async result doesn't have rowcount, we need to check differently
-            try:
-                total_updated += result.rowcount or 0  # type: ignore[attr-defined]
-            except AttributeError:
-                # For async results, we can't easily get rowcount
-                pass
-        
-        await db.commit()
-        return total_updated
+            return app
+        except Exception as e:
+            logger.error("Error getting complete application", error=str(e), application_id=application_id)
+            return None
 
+# Fonctions utilitaires (legacy compatible)
+async def get_user_with_full_profile(db: AsyncIOMotorDatabase, user_id: str):
+    return await QueryOptimizer.get_user_with_full_profile(db, str(user_id))
 
-# Décorateurs pour l'optimisation automatique
-def optimize_query(model_name: str):
-    """
-    Décorateur pour optimiser automatiquement une requête.
-    
-    Args:
-        model_name: Nom du modèle ('user', 'job_offer', 'application', etc.)
-    """
-    def decorator(func):
-        async def wrapper(*args, **kwargs):
-            # Récupérer la requête depuis la fonction
-            query = await func(*args, **kwargs)
-            
-            # Appliquer l'optimisation appropriée
-            optimizer = QueryOptimizer()
-            optimize_method = f"optimize_{model_name}_query"
-            
-            if hasattr(optimizer, optimize_method):
-                query = getattr(optimizer, optimize_method)(query)
-                logger.debug(f"Requête optimisée pour {model_name}")
-            
-            return query
-        
-        return wrapper
-    return decorator
+async def get_job_offer_with_applications(db: AsyncIOMotorDatabase, job_id: str):
+    return await QueryOptimizer.get_job_offer_with_relations(db, str(job_id))
 
-
-# Fonctions utilitaires pour les requêtes communes
-async def get_user_with_full_profile(db: AsyncSession, user_id: str):
-    """Récupère un utilisateur avec toutes ses relations."""
-    query = select(User).where(User.id == user_id)
-    query = QueryOptimizer.optimize_user_query(query)
-    
-    result = await db.execute(query)
-    return result.scalar_one_or_none()
-
-
-async def get_job_offer_with_applications(db: AsyncSession, job_id: str):
-    """Récupère une offre d'emploi avec toutes ses candidatures."""
-    query = select(JobOffer).where(JobOffer.id == job_id)
-    query = QueryOptimizer.optimize_job_offer_query(query)
-    
-    result = await db.execute(query)
-    return result.scalar_one_or_none()
-
-
-async def get_application_complete(db: AsyncSession, application_id: str):
-    """Récupère une candidature avec toutes ses relations."""
-    query = select(Application).where(Application.id == application_id)
-    query = QueryOptimizer.optimize_application_query(query)
-    
-    result = await db.execute(query)
-    return result.scalar_one_or_none()
+async def get_application_complete(db: AsyncIOMotorDatabase, application_id: str):
+    return await QueryOptimizer.get_application_complete(db, str(application_id))
